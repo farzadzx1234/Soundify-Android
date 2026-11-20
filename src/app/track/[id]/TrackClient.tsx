@@ -16,7 +16,14 @@ import {
   PlayIcon,
   ShareNetworkIcon,
 } from "@phosphor-icons/react";
-import { api, getCachedCatalogTracks, getTrackShareUrl } from "@/lib/api";
+import {
+  api,
+  externalTracksCache,
+  getCachedCatalogTracks,
+  getTrackShareUrl,
+  isExternalTrack,
+  synthesizeExternalTrack,
+} from "@/lib/api";
 import { FALLBACK_TRACKS } from "@/lib/fallbackSeedData";
 import { formatDuration } from "@/lib/lrc";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
@@ -78,9 +85,10 @@ export default function TrackClient() {
     if (!id) return null;
     if (currentTrack?.id === id) return currentTrack;
     return (
+      externalTracksCache.get(id) ??
       getCachedCatalogTracks()?.find((item) => item.id === id) ??
       FALLBACK_TRACKS.find((item) => item.id === id) ??
-      null
+      (isExternalTrack(id) ? synthesizeExternalTrack(id) : null)
     );
   });
   const [comments, setComments] = useState<TrackComment[]>([]);

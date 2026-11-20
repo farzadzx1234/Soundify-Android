@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Android Version](https://img.shields.io/badge/Android-10.0%2B%20(API%2029%2B)-green.svg)](android)
-[![Version](https://img.shields.io/badge/version-1.0.6-indigo.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.7-indigo.svg)](package.json)
 [![Package](https://img.shields.io/badge/package-com.soundify.app-orange.svg)](capacitor.config.ts)
 
 ---

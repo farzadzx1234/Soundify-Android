@@ -138,6 +138,69 @@ export function extractYouTubeIdClient(input: string): string | null {
 }
 
 /**
+ * Checks whether a track object or ID string represents an external media resource
+ * (YouTube, SoundCloud, Spotify, or proxy stream URL).
+ */
+export function isExternalTrack(trackOrId: Track | string | null | undefined): boolean {
+  if (!trackOrId) return false;
+  if (typeof trackOrId === "object") {
+    const t = trackOrId;
+    if (
+      t.source === "youtube" ||
+      t.source === "soundcloud" ||
+      t.source === "spotify" ||
+      t.source === "external"
+    ) {
+      return true;
+    }
+    if (
+      typeof t.audioUrl === "string" &&
+      (t.audioUrl.includes("/api/stream/external") ||
+        t.audioUrl.includes("/api/external/stream") ||
+        t.audioUrl.includes("googlevideo.com") ||
+        t.audioUrl.includes("sndcdn.com") ||
+        t.audioUrl.includes("spotifycdn.com"))
+    ) {
+      return true;
+    }
+    return isExternalTrack(t.id) || (Boolean(t.pageUrl) && isExternalTrack(t.pageUrl));
+  }
+
+  const str = trackOrId.trim();
+  if (!str) return false;
+
+  if (
+    str.startsWith("ext-") ||
+    str.startsWith("youtube-") ||
+    str.startsWith("soundcloud-") ||
+    str.startsWith("spotify-") ||
+    str.startsWith("yt-") ||
+    str.startsWith("sc-")
+  ) {
+    return true;
+  }
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(str)) {
+    return true;
+  }
+
+  if (
+    str.includes("/api/stream/external") ||
+    str.includes("/api/external/stream") ||
+    str.includes("watch?v=") ||
+    str.includes("youtu.be/") ||
+    str.includes("soundcloud.com") ||
+    str.includes("open.spotify.com") ||
+    str.includes("spotify:track:") ||
+    /(?:youtube\.com|youtu\.be|soundcloud\.com|spotify\.com|spotify:)/i.test(str)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Extracts the canonical original external media / page URL from any raw URL or track ID.
  * Unpacks proxy URLs (/api/stream/external?url=...) and canonicalizes YouTube / SoundCloud / Spotify.
  */
@@ -150,18 +213,15 @@ export function extractCanonicalExternalUrl(inputUrl?: string | null, trackId?: 
 
   let candidate = (inputUrl || "").trim();
   if (!candidate && trackId) {
-    if (trackId.startsWith("ext-soundcloud-") || trackId.startsWith("ext-sc-")) {
-      const slug = trackId.replace(/^ext-(?:soundcloud|sc)-/, "");
-      if (slug && !slug.startsWith("http")) {
-        return `https://soundcloud.com/${slug}`;
-      }
-    }
-    candidate = trackId;
+    candidate = trackId.trim();
   }
 
   try {
     if (candidate.includes("%")) {
       candidate = decodeURIComponent(candidate);
+      if (candidate.includes("%")) {
+        candidate = decodeURIComponent(candidate);
+      }
     }
   } catch {}
 
@@ -175,6 +235,46 @@ export function extractCanonicalExternalUrl(inputUrl?: string | null, trackId?: 
     if (nestedYt) return `https://www.youtube.com/watch?v=${nestedYt}`;
     if (extracted.startsWith("http://") || extracted.startsWith("https://")) {
       return extracted;
+    }
+  }
+
+  // SoundCloud canonicalization: support numeric track IDs (api.soundcloud.com/tracks/...) and slugs
+  if (
+    candidate.includes("soundcloud") ||
+    candidate.startsWith("ext-sc-") ||
+    candidate.startsWith("sc-") ||
+    (trackId && (trackId.includes("soundcloud") || trackId.startsWith("ext-sc-") || trackId.startsWith("sc-")))
+  ) {
+    const rawTarget = candidate || trackId || "";
+    if (rawTarget.startsWith("http://") || rawTarget.startsWith("https://")) {
+      return rawTarget;
+    }
+    const slug = rawTarget.replace(/^(?:ext-)?(?:soundcloud|sc)-/, "").trim();
+    if (slug) {
+      if (/^\d+$/.test(slug)) {
+        return `https://api.soundcloud.com/tracks/${slug}`;
+      }
+      return `https://soundcloud.com/${slug}`;
+    }
+  }
+
+  // Spotify canonicalization: support open.spotify.com and track IDs
+  if (
+    candidate.includes("spotify") ||
+    (trackId && trackId.includes("spotify"))
+  ) {
+    const rawTarget = candidate || trackId || "";
+    const spotifyUrlMatch = rawTarget.match(/https?:\/\/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/i);
+    if (spotifyUrlMatch) {
+      return `https://open.spotify.com/track/${spotifyUrlMatch[1]}`;
+    }
+    const spotifyUriMatch = rawTarget.match(/spotify:track:([a-zA-Z0-9]+)/i);
+    if (spotifyUriMatch) {
+      return `https://open.spotify.com/track/${spotifyUriMatch[1]}`;
+    }
+    const slug = rawTarget.replace(/^(?:ext-)?spotify-/, "").trim();
+    if (slug && /^[a-zA-Z0-9]{16,32}$/.test(slug)) {
+      return `https://open.spotify.com/track/${slug}`;
     }
   }
 
@@ -211,14 +311,16 @@ export function generateExternalWaveform(seed: string): number[] {
 export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): Track {
   const cleanId = id.trim();
   let source: "youtube" | "soundcloud" | "spotify" = "youtube";
-  if (cleanId.includes("soundcloud") || cleanId.startsWith("ext-sc-")) {
+  if (cleanId.includes("soundcloud") || cleanId.startsWith("ext-sc-") || cleanId.startsWith("sc-")) {
     source = "soundcloud";
   } else if (cleanId.includes("spotify")) {
     source = "spotify";
   }
 
-  const ytId = extractYouTubeIdClient(cleanId);
-  const canonical = ytId ? `https://www.youtube.com/watch?v=${ytId}` : extractCanonicalExternalUrl(partial?.pageUrl || partial?.audioUrl, id);
+  const ytId = extractYouTubeIdClient(cleanId) || extractYouTubeIdClient(partial?.pageUrl || "") || extractYouTubeIdClient(partial?.audioUrl || "");
+  const canonical = ytId
+    ? `https://www.youtube.com/watch?v=${ytId}`
+    : extractCanonicalExternalUrl(partial?.pageUrl || partial?.audioUrl, id);
 
   const accentColor = source === "youtube" ? "#EF4444" : source === "soundcloud" ? "#F97316" : "#1DB954";
   const defaultTitle = source === "youtube" ? "YouTube Music" : source === "soundcloud" ? "SoundCloud Track" : "Spotify Stream";
@@ -233,7 +335,10 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
           ? "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&auto=format&fit=crop&q=80"
           : "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80");
 
-  const audioUrl = `/api/stream/external?url=${encodeURIComponent(canonical)}&id=${encodeURIComponent(cleanId)}`;
+  const audioUrl =
+    partial?.audioUrl && !partial.audioUrl.includes("fallback-preview.mp3")
+      ? partial.audioUrl
+      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}`;
 
   const track: Track = {
     id: cleanId,
@@ -269,6 +374,130 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
   };
 
   externalTracksCache.set(cleanId, track);
+  return track;
+}
+
+/**
+ * Resolves a Spotify track to a playable stream by mapping title & artist to a matching YouTube stream.
+ * If the track metadata is synthetic or generic, queries Spotify oEmbed to discover real track name and artwork.
+ */
+export async function resolveSpotifyTrackStream(track: Track): Promise<Track> {
+  if (track.source !== "spotify") return track;
+
+  // If already mapped to a verified YouTube stream proxy
+  if (
+    track.audioUrl &&
+    track.audioUrl.includes("/api/stream/external") &&
+    track.pageUrl &&
+    (track.pageUrl.includes("youtube.com") || track.pageUrl.includes("youtu.be"))
+  ) {
+    return track;
+  }
+
+  let effectiveTitle = track.title;
+  const effectiveArtist = track.artistName;
+  let effectiveCover = track.coverUrl;
+
+  const isInitiallyGenericTitle =
+    !effectiveTitle ||
+    effectiveTitle === "External Track" ||
+    effectiveTitle === "Spotify Stream" ||
+    effectiveTitle === "Spotify Track" ||
+    effectiveTitle.startsWith("Track ") ||
+    effectiveTitle.startsWith("ext-spotify-") ||
+    effectiveTitle.startsWith("spotify-");
+  const isInitiallyGenericArtist =
+    !effectiveArtist || effectiveArtist === "Spotify Artist" || effectiveArtist === "Artist";
+
+  // Try extracting Spotify track URL to query Spotify oEmbed
+  let spotifyTrackUrl = "";
+  if (track.pageUrl && track.pageUrl.includes("open.spotify.com/track/")) {
+    spotifyTrackUrl = track.pageUrl;
+  } else {
+    const rawId = track.id.replace(/^(?:ext-)?(?:spotify-)?/, "");
+    if (/^[a-zA-Z0-9]{16,32}$/.test(rawId)) {
+      spotifyTrackUrl = `https://open.spotify.com/track/${rawId}`;
+    }
+  }
+
+  let foundOembedTitle = false;
+  if (spotifyTrackUrl && (isInitiallyGenericTitle || isInitiallyGenericArtist)) {
+    try {
+      const oembedRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyTrackUrl)}`);
+      if (oembedRes.ok) {
+        const odata = (await oembedRes.json()) as { title?: string; thumbnail_url?: string };
+        if (odata.title) {
+          effectiveTitle = odata.title;
+          foundOembedTitle = true;
+          if (odata.thumbnail_url) {
+            effectiveCover = odata.thumbnail_url;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const queryParts = [
+    effectiveArtist && !isInitiallyGenericArtist ? effectiveArtist : "",
+    effectiveTitle && (!isInitiallyGenericTitle || foundOembedTitle) ? effectiveTitle : "",
+  ].filter(Boolean);
+  const query = queryParts.join(" ").replace(/Spotify\s*Stream/i, "").trim() || effectiveTitle;
+  if (!query) return track;
+
+  try {
+    const searchRes = await api.searchExternal(query, "youtube", 3);
+    if (searchRes.results && searchRes.results.length > 0) {
+      const bestMatch = searchRes.results[0];
+      const resolved: Track = {
+        ...track,
+        title: foundOembedTitle || !isInitiallyGenericTitle ? effectiveTitle : bestMatch.title,
+        artistName: effectiveArtist && !isInitiallyGenericArtist ? effectiveArtist : bestMatch.artistName,
+        coverUrl: effectiveCover && !effectiveCover.includes("unsplash") ? effectiveCover : bestMatch.coverUrl,
+        audioUrl: bestMatch.audioUrl,
+        pageUrl: bestMatch.pageUrl || track.pageUrl,
+        qualityLabel: "Spotify High",
+        durationSec: bestMatch.durationSec || track.durationSec,
+        waveform: bestMatch.waveform || track.waveform,
+      };
+      externalTracksCache.set(track.id, resolved);
+      return resolved;
+    }
+  } catch {}
+
+  return track;
+}
+
+/**
+ * Resolves SoundCloud track metadata if generic via SoundCloud oEmbed.
+ */
+export async function resolveSoundCloudTrackStream(track: Track): Promise<Track> {
+  if (track.source !== "soundcloud") return track;
+  const isGeneric =
+    !track.title ||
+    track.title === "External Track" ||
+    track.title.startsWith("Track ") ||
+    track.artistName === "SoundCloud Artist" ||
+    track.artistName === "Artist";
+
+  if (!isGeneric) return track;
+
+  const targetUrl = track.pageUrl || (track.audioUrl ? extractCanonicalExternalUrl(track.audioUrl, track.id) : "");
+  if (targetUrl && targetUrl.includes("soundcloud.com/")) {
+    try {
+      const res = await fetch(`https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(targetUrl)}`);
+      if (res.ok) {
+        const data = (await res.json()) as { title?: string; author_name?: string; thumbnail_url?: string };
+        const resolved: Track = {
+          ...track,
+          title: data.title || track.title,
+          artistName: data.author_name || track.artistName,
+          coverUrl: data.thumbnail_url || track.coverUrl,
+        };
+        externalTracksCache.set(track.id, resolved);
+        return resolved;
+      }
+    } catch {}
+  }
   return track;
 }
 
@@ -633,8 +862,38 @@ export const api = {
     return { tracks: filtered.map(normalizeTrack) };
   },
   async searchExternal(q: string, source: "all" | "youtube" | "soundcloud" | "spotify" = "all", limit = 16) {
+    const cleanQ = q.trim();
+    if (!cleanQ || cleanQ.length < 2) {
+      return { query: q, source, results: [], total: 0 };
+    }
+
+    // Direct Spotify Track URL resolution: fetch metadata via Spotify oEmbed and map to YouTube
+    let effectiveQuery = cleanQ;
+    let spotifyTitle: string | null = null;
+    let spotifyCover: string | null = null;
+    const isSpotifyUrl = /https?:\/\/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/i.test(cleanQ);
+
+    if (isSpotifyUrl) {
+      try {
+        const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(cleanQ)}`;
+        const oembedRes = await fetch(oembedUrl);
+        if (oembedRes.ok) {
+          const odata = (await oembedRes.json()) as { title?: string; thumbnail_url?: string };
+          if (odata.title) {
+            spotifyTitle = odata.title;
+            effectiveQuery = odata.title;
+            spotifyCover = odata.thumbnail_url || null;
+          }
+        }
+      } catch {}
+    }
+
     try {
-      const sp = new URLSearchParams({ q, source, limit: String(limit) });
+      const sp = new URLSearchParams({
+        q: effectiveQuery,
+        source: isSpotifyUrl ? "youtube" : source,
+        limit: String(limit),
+      });
       const res = await apiFetch<{
         query: string;
         source: string;
@@ -645,29 +904,58 @@ export const api = {
       if (res?.results && Array.isArray(res.results)) {
         const normalized = res.results.map((tr) => {
           const norm = normalizeTrack(tr);
+          if (isSpotifyUrl && spotifyTitle) {
+            norm.source = "spotify";
+            norm.album = "Spotify";
+            norm.albumFa = "اسپاتیفای";
+            norm.qualityLabel = "Spotify High";
+            if (spotifyCover && (!norm.coverUrl || norm.coverUrl.includes("unsplash"))) {
+              norm.coverUrl = spotifyCover;
+            }
+          }
           externalTracksCache.set(norm.id, norm);
           return norm;
         });
         return { ...res, results: normalized };
       }
-    } catch {
-      // Graceful offline search over bundled catalog
+      if (res?.error) {
+        return { query: q, source, results: [], total: 0, error: res.error };
+      }
+    } catch (err) {
+      // If user searched a specific external provider (youtube/soundcloud/spotify), do NOT pollute with local seed tracks!
+      if (source !== "all") {
+        return {
+          query: q,
+          source,
+          results: [],
+          total: 0,
+          error: err instanceof Error ? err.message : "Failed to load external music streams",
+        };
+      }
+
+      // Graceful offline fallback over bundled catalog for broad "all" searches
+      const qLower = cleanQ.toLowerCase();
+      const matches = FALLBACK_TRACKS.filter(
+        (t) =>
+          t.title.toLowerCase().includes(qLower) ||
+          t.titleFa?.toLowerCase().includes(qLower) ||
+          t.artistName.toLowerCase().includes(qLower) ||
+          t.artistNameFa?.toLowerCase().includes(qLower) ||
+          t.album.toLowerCase().includes(qLower),
+      );
+      return {
+        query: q,
+        source: "offline-bundle",
+        results: matches.slice(0, limit).map(normalizeTrack),
+        total: matches.length,
+      };
     }
 
-    const qLower = q.toLowerCase().trim();
-    const matches = FALLBACK_TRACKS.filter(
-      (t) =>
-        t.title.toLowerCase().includes(qLower) ||
-        t.titleFa?.toLowerCase().includes(qLower) ||
-        t.artistName.toLowerCase().includes(qLower) ||
-        t.artistNameFa?.toLowerCase().includes(qLower) ||
-        t.album.toLowerCase().includes(qLower),
-    );
     return {
       query: q,
-      source: "offline-bundle",
-      results: matches.slice(0, limit).map(normalizeTrack),
-      total: matches.length,
+      source,
+      results: [],
+      total: 0,
     };
   },
   async getTrack(id: string) {
@@ -683,6 +971,14 @@ export const api = {
     // 1. Check in-memory external tracks cache
     const cachedExt = externalTracksCache.get(id);
     if (cachedExt) {
+      if (cachedExt.source === "spotify" && (!cachedExt.pageUrl || !cachedExt.pageUrl.includes("youtube"))) {
+        try {
+          const resolved = await resolveSpotifyTrackStream(cachedExt);
+          return { track: normalizeTrack(resolved) };
+        } catch {
+          return { track: normalizeTrack(cachedExt) };
+        }
+      }
       return { track: normalizeTrack(cachedExt) };
     }
 
@@ -699,13 +995,30 @@ export const api = {
       return { track: normalizeTrack(found) };
     }
 
-    // 4. If ID is an external track (ext-...), reconstruct a valid external track object
-    if (id.startsWith("ext-")) {
+    // 4. If ID is an external track (ext-..., youtube-..., soundcloud-..., spotify-..., or direct URL), reconstruct valid external track
+    if (isExternalTrack(id)) {
       const synth = synthesizeExternalTrack(id);
+      if (synth.source === "spotify") {
+        try {
+          const resolved = await resolveSpotifyTrackStream(synth);
+          return { track: resolved };
+        } catch {
+          return { track: synth };
+        }
+      }
+      if (synth.source === "soundcloud") {
+        try {
+          const resolved = await resolveSoundCloudTrackStream(synth);
+          return { track: resolved };
+        } catch {
+          return { track: synth };
+        }
+      }
       return { track: synth };
     }
 
-    return { track: normalizeTrack(FALLBACK_TRACKS[0]) };
+    // If ID is not found anywhere, throw an explicit error so callers/UI know the track is missing instead of playing the wrong track
+    throw new Error(`Track not found: ${id}`);
   },
   deleteTrack(id: string) {
     return apiFetch<{ deleted: boolean }>(`/api/tracks/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -802,8 +1115,21 @@ export const api = {
       },
     );
   },
-  refreshStreamUrl(id: string, url?: string) {
-    const canonical = extractCanonicalExternalUrl(url, id);
+  async refreshStreamUrl(id: string, url?: string) {
+    let canonical = extractCanonicalExternalUrl(url, id);
+
+    // If target is a Spotify track, resolve it to YouTube stream URL first because backend yt-dlp cannot stream Spotify DRM
+    if (id.includes("spotify") || (canonical && canonical.includes("spotify"))) {
+      try {
+        const cached = externalTracksCache.get(id);
+        const baseTrack = cached || synthesizeExternalTrack(id, { pageUrl: canonical || undefined });
+        const resolved = await resolveSpotifyTrackStream(baseTrack);
+        if (resolved.pageUrl && !resolved.pageUrl.includes("spotify")) {
+          canonical = resolved.pageUrl;
+        }
+      } catch {}
+    }
+
     return apiFetch<{ ok: boolean; streamUrl: string; audioUrl: string; canonicalUrl: string }>(
       "/api/external/refresh-stream",
       {

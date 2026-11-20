@@ -5,7 +5,7 @@ import { triggerHapticFeedback } from "./hapticFeedback";
 import { parseLrc } from "./lrc";
 import { isAndroidNative } from "./androidBridge";
 import { exportTrackToDeviceStorage } from "./mediaExport";
-import { api, extractYouTubeIdClient, getApiToken, resolveMediaUrl } from "./api";
+import { api, extractYouTubeIdClient, getApiToken, isExternalTrack, resolveMediaUrl } from "./api";
 import {
   clearAllDownloadedTracks,
   clearOfflineCache,
@@ -326,10 +326,9 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     });
 
     if (!audioRes.ok) {
-      // If it's an external YouTube track and initial fetch failed, attempt refreshing the stream token
+      // If it's an external track (YouTube / SoundCloud / Spotify) and initial fetch failed, attempt refreshing the stream token
       const isExternal =
-        track.id.startsWith("ext-") ||
-        track.source === "youtube" ||
+        isExternalTrack(track) ||
         rawAudioUrl.includes("/api/stream/external");
 
       if (isExternal) {

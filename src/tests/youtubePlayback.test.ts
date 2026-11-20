@@ -4,6 +4,7 @@ import {
   extractCanonicalExternalUrl,
   extractYouTubeIdClient,
   externalTracksCache,
+  isExternalTrack,
   synthesizeExternalTrack,
 } from "../lib/api";
 import type { Track } from "../lib/types";
@@ -186,6 +187,30 @@ describe("Frontend YouTube Playback, Cover Cascade, and Stream Refresh", () => {
     });
   });
 
+  describe("External Track Identification & isExternalTrack", () => {
+    it("identifies external tracks across all naming patterns and platforms", () => {
+      expect(isExternalTrack("ext-youtube-dQw4w9WgXcQ")).toBe(true);
+      expect(isExternalTrack("ext-yt-dQw4w9WgXcQ")).toBe(true);
+      expect(isExternalTrack("youtube-dQw4w9WgXcQ")).toBe(true);
+      expect(isExternalTrack("ext-soundcloud-12345")).toBe(true);
+      expect(isExternalTrack("soundcloud-12345")).toBe(true);
+      expect(isExternalTrack("sc-12345")).toBe(true);
+      expect(isExternalTrack("ext-spotify-4cOdK2wGLETKBW3PvgPWqT")).toBe(true);
+      expect(isExternalTrack("spotify-4cOdK2wGLETKBW3PvgPWqT")).toBe(true);
+      expect(isExternalTrack("dQw4w9WgXcQ")).toBe(true);
+      expect(isExternalTrack("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(true);
+      expect(isExternalTrack("https://soundcloud.com/artist/song")).toBe(true);
+      expect(isExternalTrack("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")).toBe(true);
+
+      // Internal IDs
+      expect(isExternalTrack("track-01")).toBe(false);
+      expect(isExternalTrack("local-123")).toBe(false);
+      expect(isExternalTrack("trk-seeded")).toBe(false);
+      expect(isExternalTrack(null)).toBe(false);
+      expect(isExternalTrack(undefined)).toBe(false);
+    });
+  });
+
   describe("External Track URL Canonicalization & Provider Identification", () => {
     it("extracts canonical URL from various external track formats", () => {
       // YouTube
@@ -199,11 +224,15 @@ describe("Frontend YouTube Playback, Cover Cascade, and Stream Refresh", () => {
       const proxyYt = "/api/stream/external?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&id=ext-youtube-dQw4w9WgXcQ";
       expect(extractCanonicalExternalUrl(proxyYt)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
 
-      // SoundCloud
+      // SoundCloud: slug vs numeric track ID
       expect(extractCanonicalExternalUrl("https://soundcloud.com/artist/great-track")).toBe("https://soundcloud.com/artist/great-track");
-      expect(extractCanonicalExternalUrl("", "ext-soundcloud-artist-great-track")).toBe("https://soundcloud.com/artist-great-track");
+      expect(extractCanonicalExternalUrl("", "ext-soundcloud-artist/great-track")).toBe("https://soundcloud.com/artist/great-track");
+      expect(extractCanonicalExternalUrl("", "ext-soundcloud-987654321")).toBe("https://api.soundcloud.com/tracks/987654321");
       const proxySc = "/api/stream/external?url=https%3A%2F%2Fsoundcloud.com%2Fartist%2Ftrack&id=ext-soundcloud-123";
       expect(extractCanonicalExternalUrl(proxySc)).toBe("https://soundcloud.com/artist/track");
+
+      // Spotify URL canonicalization
+      expect(extractCanonicalExternalUrl("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")).toBe("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT");
     });
 
     it("synthesizes valid external track structure without returning fallback tracks", () => {
@@ -226,17 +255,80 @@ describe("Frontend YouTube Playback, Cover Cascade, and Stream Refresh", () => {
       expect(spTrack.audioUrl).toContain("/api/stream/external?url=");
     });
 
-    it("api.getTrack synthesizes external tracks instead of returning FALLBACK_TRACKS[0]", async () => {
+    it("api.getTrack synthesizes external tracks across all prefixes instead of returning FALLBACK_TRACKS[0]", async () => {
       globalThis.fetch = vi.fn().mockImplementation(async () => {
         return new Response("Not found", { status: 404 });
       });
 
-      const res = await api.getTrack("ext-youtube-dQw4w9WgXcQ");
-      expect(res.track).toBeDefined();
-      expect(res.track.id).toBe("ext-youtube-dQw4w9WgXcQ");
-      expect(res.track.source).toBe("youtube");
-      expect(res.track.audioUrl).toContain("/api/stream/external");
-      expect(res.track.id).not.toBe("track-01");
+      // 1. ext-youtube-
+      const resYt = await api.getTrack("ext-youtube-dQw4w9WgXcQ");
+      expect(resYt.track.id).toBe("ext-youtube-dQw4w9WgXcQ");
+      expect(resYt.track.source).toBe("youtube");
+      expect(resYt.track.id).not.toBe("track-01");
+
+      // 2. youtube- prefix without ext-
+      const resRawYt = await api.getTrack("youtube-dQw4w9WgXcQ");
+      expect(resRawYt.track.id).toBe("youtube-dQw4w9WgXcQ");
+      expect(resRawYt.track.source).toBe("youtube");
+      expect(resRawYt.track.id).not.toBe("track-01");
+
+      // 3. soundcloud- prefix
+      const resSc = await api.getTrack("soundcloud-12345");
+      expect(resSc.track.id).toBe("soundcloud-12345");
+      expect(resSc.track.source).toBe("soundcloud");
+      expect(resSc.track.id).not.toBe("track-01");
+
+      // 4. spotify- prefix
+      const resSp = await api.getTrack("spotify-4cOdK2wGLETKBW3PvgPWqT");
+      expect(resSp.track.id).toBe("spotify-4cOdK2wGLETKBW3PvgPWqT");
+      expect(resSp.track.source).toBe("spotify");
+      expect(resSp.track.id).not.toBe("track-01");
+
+      // 5. Unknown internal IDs must throw instead of silently returning track 1
+      await expect(api.getTrack("completely-unknown-id-xyz")).rejects.toThrow("Track not found");
+    });
+
+    it("resolveSpotifyTrackStream queries Spotify oEmbed and maps to YouTube stream", async () => {
+      let ytSearchCalledWith = "";
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes("open.spotify.com/oembed")) {
+          return new Response(
+            JSON.stringify({
+              title: "Starboy - The Weeknd",
+              thumbnail_url: "https://i.scdn.co/image/starboy",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("/api/external/search")) {
+          ytSearchCalledWith = url;
+          return new Response(
+            JSON.stringify({
+              query: "Starboy - The Weeknd",
+              source: "youtube",
+              results: [
+                {
+                  id: "ext-youtube-dqt8Z1k08a4",
+                  title: "Starboy",
+                  artistName: "The Weeknd",
+                  audioUrl: "/api/stream/external?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Ddqt8Z1k08a4",
+                  pageUrl: "https://www.youtube.com/watch?v=dqt8Z1k08a4",
+                  durationSec: 230,
+                },
+              ],
+              total: 1,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("Not found", { status: 404 });
+      });
+
+      synthesizeExternalTrack("ext-spotify-7MXVkk9YM5FZ0wWACBRioq");
+      const resolved = await api.getTrack("ext-spotify-7MXVkk9YM5FZ0wWACBRioq");
+      expect(resolved.track.title).toContain("Starboy");
+      expect(resolved.track.audioUrl).toContain("dqt8Z1k08a4");
+      expect(ytSearchCalledWith).toContain("Starboy");
     });
 
     it("api.refreshStreamUrl unpackages proxy URLs and passes canonical URL", async () => {

@@ -94,7 +94,13 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
     if (isCurrent) {
       togglePlay();
     } else {
-      playTrack(track, queue.length > 0 ? queue : [track]);
+      const effectiveQueue =
+        queue.length > 0
+          ? queue.some((t) => t.id === track.id)
+            ? queue
+            : [track, ...queue]
+          : [track];
+      playTrack(track, effectiveQueue);
     }
   };
 

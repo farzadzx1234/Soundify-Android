@@ -177,6 +177,9 @@ type SyncMessage =
 
 function checkIsOffline(): boolean {
   if (typeof window === "undefined") return false;
+  // If top bar/backend connectivity is marked online or browser says online, we are NOT offline!
+  if (getServerConnectivityStatus() === "online") return false;
+  if (typeof navigator !== "undefined" && navigator.onLine) return false;
   return isNetworkEffectivelyOffline();
 }
 
@@ -191,7 +194,7 @@ function getSingletonAudio(): HTMLAudioElement | null {
     if (!existing) {
       existing = document.createElement("audio");
       existing.id = "soundify-global-audio";
-      existing.preload = "metadata";
+      existing.preload = "auto";
       if (!isAndroidNative()) {
         existing.crossOrigin = "anonymous";
       }
@@ -199,6 +202,8 @@ function getSingletonAudio(): HTMLAudioElement | null {
       if (document.body) {
         document.body.appendChild(existing);
       }
+    } else {
+      existing.preload = "auto";
     }
     singletonAudio = existing;
   }
@@ -909,20 +914,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isDownloaded = await isTrackDownloaded(normalizedTrack.id);
       }
 
-      // Check strictly if device is genuinely offline via navigator.onLine without prematurely blocking online streams
-      if (typeof navigator !== "undefined" && navigator.onLine === false && !isDownloaded) {
-        preservePlaybackIntent(normalizedTrack.id, startSec, resolvedAutoPlay);
-        setOfflineNotice(
-          t
-            ? t("offlinePlaybackNotice")
-            : "این قطعه دانلود نشده است. برای پخش آفلاین، ابتدا باید در حالت آنلاین دانلود شود",
-        );
-        setIsPlaying(false);
-        isPlayingRef.current = false;
-        broadcastLeaderState();
-        return;
-      }
-
       setCurrentlyPlayingTrackId(normalizedTrack.id);
       setOfflineNotice(null);
 
@@ -1295,7 +1286,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (!curr) return;
 
     // Ensure audio element has source loaded (e.g. after page refresh)
-    const isDeviceOffline = checkIsOffline();
     let isDownloadedSync = getTrackDownloadSnapshot(curr.id).status === "downloaded";
     if (!isDownloadedSync) {
       isDownloadedSync = await isTrackDownloaded(curr.id);
@@ -1303,19 +1293,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const shouldStartPlaying = audio.paused && !isPlayingRef.current && !isRetryingPlayRef.current;
     if (shouldStartPlaying) {
-      if (isDeviceOffline && !isDownloadedSync) {
-        const actuallyOnline = await triggerImmediateNetworkProbe();
-        if (!actuallyOnline) {
-          preservePlaybackIntent(curr.id, audio.currentTime || currentTimeRef.current, true);
-          setOfflineNotice(
-            t
-              ? t("offlinePlaybackNotice")
-              : "این قطعه دانلود نشده است. برای پخش آفلاین، ابتدا باید در حالت آنلاین دانلود شود",
-          );
-          return;
-        }
-      }
-
       if (isDownloadedSync) {
         setOfflineNotice(null);
         setCurrentlyPlayingTrackId(curr.id);
@@ -1388,7 +1365,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       broadcastLeaderState();
       broadcastCurrentState();
     }
-  }, [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, ensureAudioPrepared, getTabId, initAudioGraph, loadLyricsForTrack, playTrack, sendRemoteCommand, shouldActAsRemoteController, t]);
+  }, [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, ensureAudioPrepared, getTabId, initAudioGraph, loadLyricsForTrack, playTrack, sendRemoteCommand, shouldActAsRemoteController]);
 
   const seek = useCallback(
     (seconds: number) => {

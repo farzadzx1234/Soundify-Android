@@ -289,6 +289,8 @@ export function extractCanonicalExternalUrl(inputUrl?: string | null, trackId?: 
  * In-memory cache for recent external tracks discovered via search or playback.
  */
 export const externalTracksCache = new Map<string, Track>();
+const streamResolutionCache = new Map<string, { track: Track; resolvedAt: number }>();
+const STREAM_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 /**
  * Generates synthetic smooth waveform bars for external tracks when missing.
@@ -338,7 +340,7 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
   const audioUrl =
     partial?.audioUrl && !partial.audioUrl.includes("fallback-preview.mp3")
       ? partial.audioUrl
-      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}`;
+      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&fastStart=1`;
 
   const track: Track = {
     id: cleanId,
@@ -384,6 +386,12 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
 export async function resolveSpotifyTrackStream(track: Track): Promise<Track> {
   if (track.source !== "spotify") return track;
 
+  // Check in-memory stream resolution cache
+  const cachedStream = streamResolutionCache.get(track.id);
+  if (cachedStream && Date.now() - cachedStream.resolvedAt < STREAM_CACHE_TTL_MS) {
+    return cachedStream.track;
+  }
+
   // If already mapped to a verified YouTube stream proxy
   if (
     track.audioUrl &&
@@ -391,6 +399,7 @@ export async function resolveSpotifyTrackStream(track: Track): Promise<Track> {
     track.pageUrl &&
     (track.pageUrl.includes("youtube.com") || track.pageUrl.includes("youtu.be"))
   ) {
+    streamResolutionCache.set(track.id, { track, resolvedAt: Date.now() });
     return track;
   }
 
@@ -460,6 +469,7 @@ export async function resolveSpotifyTrackStream(track: Track): Promise<Track> {
         waveform: bestMatch.waveform || track.waveform,
       };
       externalTracksCache.set(track.id, resolved);
+      streamResolutionCache.set(track.id, { track: resolved, resolvedAt: Date.now() });
       return resolved;
     }
   } catch {}

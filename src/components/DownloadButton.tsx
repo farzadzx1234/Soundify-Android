@@ -4,7 +4,6 @@ import React, { memo, useState } from "react";
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
-  CircleNotchIcon,
   ClockIcon,
   DownloadSimpleIcon,
   PauseIcon,
@@ -172,8 +171,16 @@ export const DownloadButton = memo(function DownloadButton({
     );
   }
 
-  // Downloading state (with progress & pause action)
+  // Downloading state (with Apple HIG determinate circular progress & pause action)
   if (isDownloading) {
+    const ringParams =
+      size === "sm"
+        ? { dim: 32, center: 16, radius: 12, stroke: 2.5, circumference: 75.398 }
+        : size === "lg"
+          ? { dim: 44, center: 22, radius: 17, stroke: 3.5, circumference: 106.814 }
+          : { dim: 36, center: 18, radius: 14, stroke: 3, circumference: 87.964 };
+    const dashOffset = ringParams.circumference * (1 - Math.max(0.04, Math.min(1, progress / 100)));
+
     return (
       <button
         type="button"
@@ -185,17 +192,60 @@ export const DownloadButton = memo(function DownloadButton({
         title={`${t("downloading")} (${formatNum(progress)}%) - ${t("pauseDownload")}`}
         className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all cursor-pointer text-indigo-600 dark:text-indigo-400 bg-indigo-500/15 ${sizeClasses} ${className}`}
       >
-        {hovered ? (
-          <PauseIcon size={iconSize} weight="bold" className="text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
-        ) : (
-          <CircleNotchIcon size={iconSize} weight="bold" className="animate-spin text-indigo-500" aria-hidden="true" />
-        )}
-        <span
-          className="absolute -bottom-1 -end-1 text-[9px] font-mono font-black tabular-nums bg-indigo-600 text-white px-1 rounded-full leading-tight shadow-sm"
-          dir="ltr"
+        <svg
+          width={ringParams.dim}
+          height={ringParams.dim}
+          viewBox={`0 0 ${ringParams.dim} ${ringParams.dim}`}
+          className="absolute inset-0 pointer-events-none"
+          aria-hidden="true"
         >
-          {progress > 0 ? `${progress}%` : "..."}
-        </span>
+          <circle
+            cx={ringParams.center}
+            cy={ringParams.center}
+            r={ringParams.radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={ringParams.stroke}
+            className="opacity-20"
+          />
+          <circle
+            cx={ringParams.center}
+            cy={ringParams.center}
+            r={ringParams.radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={ringParams.stroke}
+            strokeDasharray={ringParams.circumference}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${ringParams.center} ${ringParams.center})`}
+            className="transition-[stroke-dashoffset] duration-200 ease-out"
+          />
+        </svg>
+
+        {hovered ? (
+          <PauseIcon
+            size={Math.max(12, Math.round(iconSize * 0.75))}
+            weight="bold"
+            className="text-indigo-600 dark:text-indigo-400 sf-spring-pop z-10"
+            aria-hidden="true"
+          />
+        ) : (
+          <span
+            className={`font-mono font-black tabular-nums tracking-tighter leading-none select-none z-10 ${
+              size === "sm" ? "text-[8px]" : size === "lg" ? "text-[11px]" : "text-[9px]"
+            }`}
+            dir="ltr"
+          >
+            {progress > 0 ? `${progress}%` : "0%"}
+          </span>
+        )}
+
+        {showLabel && (
+          <span className="ms-2 font-bold text-xs whitespace-nowrap z-10">
+            {hovered ? t("pauseDownload") : `${t("downloading")} ${formatNum(progress)}%`}
+          </span>
+        )}
       </button>
     );
   }

@@ -38,12 +38,25 @@ export interface TrackDownloadState {
   trackId: string;
   status: TrackDownloadStatus;
   progress: number; // 0 - 100
+  bytesDownloaded?: number;
+  totalBytes?: number;
   error?: string;
+}
+
+export interface ActiveDownloadProgress {
+  trackId: string;
+  track?: Track;
+  progress: number;
+  bytesDownloaded?: number;
+  totalBytes?: number;
 }
 
 interface ActiveDownloadSession {
   abortController: AbortController;
   progress: number;
+  track?: Track;
+  bytesDownloaded?: number;
+  totalBytes?: number;
 }
 
 interface DeferredDownload {
@@ -187,12 +200,16 @@ export function getTrackDownloadSnapshot(trackId: string): TrackDownloadState {
 
   let currentStatus: TrackDownloadStatus = "idle";
   let currentProgress = 0;
+  let currentBytesDownloaded: number | undefined = undefined;
+  let currentTotalBytes: number | undefined = undefined;
   let currentError: string | undefined = undefined;
 
   const active = activeDownloads.get(trackId);
   if (active) {
     currentStatus = "downloading";
     currentProgress = active.progress;
+    currentBytesDownloaded = active.bytesDownloaded;
+    currentTotalBytes = active.totalBytes;
   } else if (downloadQueue.some((t) => t.id === trackId)) {
     currentStatus = "queued";
     currentProgress = 0;
@@ -213,6 +230,8 @@ export function getTrackDownloadSnapshot(trackId: string): TrackDownloadState {
     cached &&
     cached.status === currentStatus &&
     cached.progress === currentProgress &&
+    cached.bytesDownloaded === currentBytesDownloaded &&
+    cached.totalBytes === currentTotalBytes &&
     cached.error === currentError
   ) {
     return cached;
@@ -222,10 +241,44 @@ export function getTrackDownloadSnapshot(trackId: string): TrackDownloadState {
     trackId,
     status: currentStatus,
     progress: currentProgress,
+    bytesDownloaded: currentBytesDownloaded,
+    totalBytes: currentTotalBytes,
     error: currentError,
   };
   snapshotCache.set(trackId, nextSnapshot);
   return nextSnapshot;
+}
+
+let activeDownloadsSnapshotCache: ActiveDownloadProgress[] = [];
+let activeDownloadsCacheKey = "";
+
+export function getActiveDownloadsSnapshot(): ActiveDownloadProgress[] {
+  const result: ActiveDownloadProgress[] = [];
+  let key = "";
+  for (const [trackId, session] of activeDownloads.entries()) {
+    result.push({
+      trackId,
+      track: session.track,
+      progress: session.progress,
+      bytesDownloaded: session.bytesDownloaded,
+      totalBytes: session.totalBytes,
+    });
+    key += `${trackId}:${session.progress}:${session.bytesDownloaded || 0};`;
+  }
+  if (key === activeDownloadsCacheKey) {
+    return activeDownloadsSnapshotCache;
+  }
+  activeDownloadsCacheKey = key;
+  activeDownloadsSnapshotCache = result;
+  return result;
+}
+
+export function useActiveDownloads(): ActiveDownloadProgress[] {
+  return useSyncExternalStore(
+    subscribeToDownloads,
+    getActiveDownloadsSnapshot,
+    () => []
+  );
 }
 
 /**
@@ -255,7 +308,13 @@ export function processDownloadQueue(): void {
       continue;
     }
     const abortController = new AbortController();
-    activeDownloads.set(trackId, { abortController, progress: 0 });
+    activeDownloads.set(trackId, {
+      abortController,
+      progress: 0,
+      track: nextTrack,
+      bytesDownloaded: 0,
+      totalBytes: 0,
+    });
     notifyListeners();
     void runDownloadPipeline(nextTrack, abortController);
   }
@@ -371,13 +430,23 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
               : track.durationSec
                 ? track.durationSec * 16000
                 : 3.5 * 1024 * 1024;
-          const pct = Math.min(95, Math.round((receivedBytes / effectiveTotal) * 90));
+          const pct = Math.min(95, Math.max(1, Math.round((receivedBytes / effectiveTotal) * 90)));
           const currentSession = activeDownloads.get(trackId);
-          if (currentSession && currentSession.progress !== pct) {
+          if (currentSession && (currentSession.progress !== pct || currentSession.bytesDownloaded !== receivedBytes)) {
             currentSession.progress = pct;
+            currentSession.bytesDownloaded = receivedBytes;
+            currentSession.totalBytes = totalBytes > 0 ? totalBytes : effectiveTotal;
             notifyListeners();
           }
         }
+      }
+
+      const currentSession = activeDownloads.get(trackId);
+      if (currentSession) {
+        currentSession.progress = 96;
+        currentSession.bytesDownloaded = receivedBytes;
+        currentSession.totalBytes = totalBytes > 0 ? totalBytes : receivedBytes;
+        notifyListeners();
       }
 
       const contentType = audioRes.headers.get("content-type") || "audio/mpeg";
@@ -515,6 +584,12 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       }
     }
 
+    const savingSession = activeDownloads.get(trackId);
+    if (savingSession) {
+      savingSession.progress = 98;
+      notifyListeners();
+    }
+
     // Save record to IndexedDB
     await saveDownloadedTrack(track, audioBlob, lyricsData, coverBlob, license);
 
@@ -626,6 +701,9 @@ export function startTrackDownload(track: Track): Promise<boolean> {
   activeDownloads.set(trackId, {
     abortController,
     progress: 0,
+    track,
+    bytesDownloaded: 0,
+    totalBytes: 0,
   });
   notifyListeners();
 

@@ -31,7 +31,7 @@ import { api, getPlaylistDetailHref } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n, type TranslationKey } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
-import { useDownloadedTracks } from "@/lib/downloadManager";
+import { useDownloadedTracks, useActiveDownloads } from "@/lib/downloadManager";
 import { exportTrackToDeviceStorage, getExportedTrackIds } from "@/lib/mediaExport";
 import { formatDuration } from "@/lib/lrc";
 import { Button, Glass, GlassSegmented, Input } from "@/components/GlassControls";
@@ -70,6 +70,7 @@ export default function LibraryPage() {
     batchDeleteTracks,
     clearCache,
   } = useDownloadedTracks();
+  const activeDownloads = useActiveDownloads();
 
   const [tab, setTab] = useState<LibraryTab>(() => (user ? "liked" : "downloaded"));
   const [likedTracks, setLikedTracks] = useState<Track[]>([]);
@@ -466,6 +467,37 @@ export default function LibraryPage() {
       ) : tab === "downloaded" ? (
         /* Downloaded Tracks Section with Storage Quota Meter & Batch Controls */
         <div className="space-y-5">
+          {activeDownloads.length > 0 && (
+            <Glass className="rounded-3xl p-4 sm:p-5 space-y-3 border border-indigo-500/25 bg-indigo-500/[0.04]">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-sm sm:text-base flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-indigo-500 animate-ping" />
+                  {pickText("Active Downloads", "دانلودهای در حال انجام")} ({formatNum(activeDownloads.length)})
+                </span>
+              </div>
+              <div className="space-y-2.5 divide-y divide-black/[0.04] dark:divide-white/[0.06]">
+                {activeDownloads.map((dl) => (
+                  <div key={dl.trackId} className="pt-2 first:pt-0 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold truncate max-w-[220px] sm:max-w-md">
+                        {dl.track ? pickText(dl.track.title, dl.track.titleFa) : dl.trackId}
+                      </span>
+                      <span className="font-mono tabular-nums font-black text-indigo-500" dir="ltr">
+                        {dl.progress}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-2 rounded-full overflow-hidden p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-teal-400 to-emerald-400 transition-all duration-300"
+                        style={{ width: `${Math.max(3, dl.progress)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Glass>
+          )}
+
           {/* Enhanced Storage Meter Card */}
           <Glass className="rounded-3xl p-4 sm:p-6 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

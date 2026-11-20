@@ -12,7 +12,9 @@
 
 import type { EncryptedEnvelope, SecurityHandshakeResult } from "./types";
 
-const APP_SECRET_BASE = "soundify-mobile-transport-secret-v3-e2ee-production-grade-shield-2026";
+const APP_SECRET_BASE =
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_APP_TRANSPORT_SECRET) ||
+  "soundify-mobile-transport-secret-v3-e2ee-production-grade-shield-2026";
 
 function getCryptoSubtle(): SubtleCrypto {
   if (typeof window !== "undefined" && window.crypto && window.crypto.subtle) {

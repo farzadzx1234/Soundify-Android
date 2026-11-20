@@ -8,9 +8,9 @@
 import { isAndroidNative } from "./androidBridge";
 import type { MobileHealthDiagnostic, MobileStatus } from "./types";
 
-export const PRODUCTION_SOUNDIFY_URL = "https://soundify.mashhad-ix.ir";
+export const PRODUCTION_SOUNDIFY_URL =
+  process.env.NEXT_PUBLIC_SOUNDIFY_URL || "https://soundify.mashhad-ix.ir";
 export const DEFAULT_ANDROID_EMULATOR_URL = "http://10.0.2.2:4100";
-export const DEFAULT_ANDROID_LAN_URL = "http://192.168.1.2:4100";
 export const MOBILE_V1_PREFIX = "/api/mobile/v1";
 export const MOBILE_API_VERSION = "v1";
 const STORAGE_KEY_SERVER_URL = "soundify_server_url";

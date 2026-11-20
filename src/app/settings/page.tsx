@@ -1,0 +1,649 @@
+"use client";
+
+import React, { useState, useSyncExternalStore } from "react";
+import {
+  CloudCheckIcon,
+  DeviceMobileIcon,
+  GearSixIcon,
+  GlobeIcon,
+  HardDriveIcon,
+  InfoIcon,
+  PaintBrushIcon,
+  SignOutIcon,
+  SparkleIcon,
+  TrashIcon,
+  UserCircleIcon,
+  WaveformIcon,
+} from "@phosphor-icons/react";
+import { useAuth } from "@/context/AuthContext";
+import { useI18n, type Lang } from "@/context/I18nContext";
+import { usePlayer } from "@/context/PlayerContext";
+import { useTheme, type ThemeChoice } from "@/context/ThemeContext";
+import { Button, GlassSegmented, Switch } from "@/components/GlassControls";
+import { useDownloadedTracks } from "@/lib/downloadManager";
+import { setStorageBudget } from "@/lib/offlineAudioStorage";
+import { APP_BUILD_NUMBER, APP_CHANNEL, APP_VERSION } from "@/lib/appVersion";
+import { isAndroidNative } from "@/lib/androidBridge";
+
+const LOCAL_PREF_EVENT = "soundify-local-pref-change";
+
+function useLocalStorageBool(key: string, defaultValue = true): [boolean, (next: boolean) => void] {
+  const value = useSyncExternalStore(
+    (onStoreChange) => {
+      const onStorage = (e: StorageEvent) => {
+        if (e.key === key) onStoreChange();
+      };
+      const onLocal = () => onStoreChange();
+      window.addEventListener("storage", onStorage);
+      window.addEventListener(LOCAL_PREF_EVENT, onLocal);
+      return () => {
+        window.removeEventListener("storage", onStorage);
+        window.removeEventListener(LOCAL_PREF_EVENT, onLocal);
+      };
+    },
+    () => {
+      try {
+        const stored = window.localStorage.getItem(key);
+        return stored === null ? defaultValue : stored === "true";
+      } catch {
+        return defaultValue;
+      }
+    },
+    () => defaultValue,
+  );
+
+  const setValue = (next: boolean) => {
+    try {
+      window.localStorage.setItem(key, String(next));
+      window.dispatchEvent(new Event(LOCAL_PREF_EVENT));
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
+
+  return [value, setValue];
+}
+
+export default function SettingsPage() {
+  const { user, updateProfile, changePassword, openAuthDialog, logout } = useAuth();
+  const { lang, setLang, t } = useI18n();
+  const { choice, setChoice } = useTheme();
+  const { visualizerEnabled, setVisualizerEnabled } = usePlayer();
+
+  const [highQuality, handleToggleHighQuality] = useLocalStorageBool("soundify_hq", true);
+  const [offlineCache, handleToggleOfflineCache] = useLocalStorageBool("soundify_offline_cache", true);
+  const [cacheCleared, setCacheCleared] = useState(false);
+
+  // Storage management & quota controls
+  const {
+    downloadedTracks,
+    storageBudgetInfo,
+    clearAll: clearAllOfflineTracks,
+    clearCache: clearOfflineAudioCache,
+    refresh: refreshStorage,
+  } = useDownloadedTracks();
+  const [offlineCacheCleared, setOfflineCacheCleared] = useState(false);
+  const [confirmClearOfflineCache, setConfirmClearOfflineCache] = useState(false);
+  const [confirmDeleteAllDownloads, setConfirmDeleteAllDownloads] = useState(false);
+
+  const formatSize = (bytes: number) => {
+    if (!bytes || bytes <= 0) return `0 MB`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (102.4 * 1024)) / 10} MB`;
+    return `${Math.round(bytes / (10.24 * 1024 * 1024)) / 100} GB`;
+  };
+
+  const handleSelectBudget = (bytes: number) => {
+    setStorageBudget({ maxStorageBytes: bytes });
+    void refreshStorage();
+  };
+
+  const handleClearOfflineCache = () => {
+    if (!confirmClearOfflineCache) {
+      setConfirmClearOfflineCache(true);
+      setTimeout(() => setConfirmClearOfflineCache(false), 4000);
+      return;
+    }
+    setConfirmClearOfflineCache(false);
+    clearOfflineAudioCache();
+    setOfflineCacheCleared(true);
+    setTimeout(() => setOfflineCacheCleared(false), 2500);
+  };
+
+  const handleDeleteAllDownloads = async () => {
+    if (!confirmDeleteAllDownloads) {
+      setConfirmDeleteAllDownloads(true);
+      setTimeout(() => setConfirmDeleteAllDownloads(false), 4000);
+      return;
+    }
+    setConfirmDeleteAllDownloads(false);
+    await clearAllOfflineTracks();
+  };
+
+  // Profile edit
+  const [editDisplayName, setEditDisplayName] = useState(user?.displayName || "");
+  const [editDisplayNameFa, setEditDisplayNameFa] = useState(user?.displayNameFa || "");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileFeedback, setProfileFeedback] = useState<string | null>(null);
+
+  // Change password
+  const [currentPwd, setCurrentPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [pwdSaving, setPwdSaving] = useState(false);
+  const [pwdFeedback, setPwdFeedback] = useState<string | null>(null);
+
+  const handleClearCache = () => {
+    if (typeof window !== "undefined" && "caches" in window) {
+      caches.keys().then((names) => {
+        names.forEach((name) => caches.delete(name));
+      });
+    }
+    setCacheCleared(true);
+    setTimeout(() => setCacheCleared(false), 2500);
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileSaving(true);
+    setProfileFeedback(null);
+    try {
+      await updateProfile({ displayName: editDisplayName, displayNameFa: editDisplayNameFa });
+      setProfileFeedback(lang === "fa" ? "پروفایل با موفقیت ذخیره شد." : "Profile updated successfully.");
+    } catch (err) {
+      setProfileFeedback(err instanceof Error ? err.message : "Error updating profile");
+    } finally {
+      setProfileSaving(false);
+      setTimeout(() => setProfileFeedback(null), 3500);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdSaving(true);
+    setPwdFeedback(null);
+    try {
+      await changePassword({ currentPassword: currentPwd, newPassword: newPwd });
+      setPwdFeedback(lang === "fa" ? "رمز عبور با موفقیت تغییر یافت." : "Password changed successfully.");
+      setCurrentPwd("");
+      setNewPwd("");
+    } catch (err) {
+      setPwdFeedback(err instanceof Error ? err.message : "Error changing password");
+    } finally {
+      setPwdSaving(false);
+      setTimeout(() => setPwdFeedback(null), 3500);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-7 sf-fade-up">
+      {/* Apple Settings Large Header */}
+      <div className="space-y-1">
+        <h1 className="text-3xl sm:text-4xl font-black tracking-tight flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-md">
+            <GearSixIcon size={22} weight="bold" aria-hidden="true" />
+          </span>
+          <span>{t("settingsTitle")}</span>
+        </h1>
+        <p className="text-xs text-[var(--sf-muted)]">
+          {t("settingsSubtitle")}
+        </p>
+      </div>
+
+      {/* Group 1: General (Appearance & Language) */}
+      <div className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
+          {t("settingsGeneralGroup")}
+        </span>
+        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+          {/* Language Row */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#007AFF] text-white shadow-sm shrink-0">
+                <GlobeIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div>
+                <span className="block font-semibold text-sm">{t("languageLabel")}</span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("languageDesc")}</span>
+              </div>
+            </div>
+            <GlassSegmented
+              aria-label={t("languageLabel")}
+              className="self-start sm:self-auto shrink-0"
+              value={lang}
+              onValueChange={(v) => setLang(v as Lang)}
+              items={[
+                { value: "fa", label: "فارسی (RTL)" },
+                { value: "en", label: "English" },
+              ]}
+            />
+          </div>
+
+          {/* Theme Row */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#5856D6] text-white shadow-sm shrink-0">
+                <PaintBrushIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div>
+                <span className="block font-semibold text-sm">{t("themeLabel")}</span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("themeDesc")}</span>
+              </div>
+            </div>
+            <GlassSegmented
+              aria-label={t("themeLabel")}
+              className="self-start sm:self-auto shrink-0"
+              value={choice}
+              onValueChange={(v) => setChoice(v as ThemeChoice)}
+              items={[
+                { value: "system", label: t("themeSystem") },
+                { value: "light", label: t("themeLight") },
+                { value: "dark", label: t("themeDark") },
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Group 2: Audio & Playback */}
+      <div className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
+          {t("settingsPlaybackGroup")}
+        </span>
+        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+          {/* Live Waveform Visualizer */}
+          <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#FF2D55] text-white shadow-sm shrink-0">
+                <WaveformIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div>
+                <span className="block font-semibold text-sm">{t("visualizerLabel")}</span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("visualizerDesc")}</span>
+              </div>
+            </div>
+            <Switch
+              aria-label={t("visualizerLabel")}
+              checked={visualizerEnabled}
+              onCheckedChange={setVisualizerEnabled}
+            />
+          </div>
+
+          {/* High Quality Audio (320kbps / Lossless) */}
+          <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#34C759] text-white shadow-sm shrink-0">
+                <SparkleIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div>
+                <span className="block font-semibold text-sm">{t("highQualityAudio")}</span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("highQualityDesc")}</span>
+              </div>
+            </div>
+            <Switch
+              aria-label={t("highQualityAudio")}
+              checked={highQuality}
+              onCheckedChange={handleToggleHighQuality}
+            />
+          </div>
+
+          {/* Smart Offline Caching */}
+          <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#00C7BE] text-white shadow-sm shrink-0">
+                <CloudCheckIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div>
+                <span className="block font-semibold text-sm">{t("offlineCacheTitle")}</span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("offlineCacheDesc")}</span>
+              </div>
+            </div>
+            <Switch
+              aria-label={t("offlineCacheTitle")}
+              checked={offlineCache}
+              onCheckedChange={handleToggleOfflineCache}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Group 3: App & Device */}
+      <div className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
+          {t("settingsAppGroup")}
+        </span>
+        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+          {/* Clear Cache */}
+          <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-500 text-white shadow-sm shrink-0">
+                <TrashIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div>
+                <span className="block font-semibold text-sm">{t("clearCacheTitle")}</span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("clearCacheDesc")}</span>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="glass"
+              onClick={handleClearCache}
+              className="text-xs font-semibold shrink-0"
+            >
+              {cacheCleared ? t("clearCacheDone") : t("clearCacheBtn")}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Storage & Offline Downloads Management */}
+      <div className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
+          {t("storageMeter")}
+        </span>
+        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+          {/* Storage Meter & Visual Usage Bar */}
+          <div className="p-4 sm:px-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-white shadow-sm shrink-0">
+                  <HardDriveIcon size={18} weight="bold" aria-hidden="true" />
+                </span>
+                <div>
+                  <span className="block font-semibold text-sm">{t("storageUsed")}</span>
+                  <span className="block text-xs text-[var(--sf-muted)]">
+                    {formatSize(storageBudgetInfo.usageBytes)} {t("storageUsedOf")} {formatSize(storageBudgetInfo.maxStorageBytes)} ({storageBudgetInfo.usagePercent}%) • {downloadedTracks.length} {t("tracksCount")}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--sf-muted)] mt-1">
+                    <span>{t("downloadedSongsSize")}: <strong className="text-[var(--sf-text)] font-semibold">{formatSize(storageBudgetInfo.songsBytes)}</strong></span>
+                    <span>•</span>
+                    <span>{t("cacheSize")}: <strong className="text-[var(--sf-muted)] font-semibold">{formatSize(storageBudgetInfo.cacheBytes)}</strong></span>
+                  </div>
+                </div>
+              </div>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                {storageBudgetInfo.usagePercent}%
+              </span>
+            </div>
+
+            <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-2.5 rounded-full overflow-hidden p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  storageBudgetInfo.usagePercent > 90
+                    ? "bg-gradient-to-r from-amber-500 to-rose-500"
+                    : "bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500"
+                }`}
+                style={{
+                  width: `${Math.min(100, Math.max(storageBudgetInfo.usageBytes > 0 ? 3 : 0, storageBudgetInfo.usagePercent))}%`,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Storage Quota Switcher */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:px-5">
+            <div>
+              <span className="block font-semibold text-sm">{t("storageQuota")}</span>
+              <span className="block text-xs text-[var(--sf-muted)]">{t("storageQuotaDesc")}</span>
+            </div>
+            <div className="shrink-0">
+              <GlassSegmented
+                aria-label={t("storageQuota")}
+                value={String(storageBudgetInfo.maxStorageBytes)}
+                onValueChange={(val) => handleSelectBudget(Number(val))}
+                items={[
+                  { value: String(250 * 1024 * 1024), label: t("quota250MB") },
+                  { value: String(500 * 1024 * 1024), label: t("quota500MB") },
+                  { value: String(1024 * 1024 * 1024), label: t("quota1GB") },
+                  { value: String(2 * 1024 * 1024 * 1024), label: t("quota2GB") },
+                ]}
+              />
+            </div>
+          </div>
+
+          {/* Clear Offline Cache */}
+          <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
+            <div>
+              <span className="block font-semibold text-sm">{t("clearOfflineCacheTitle")}</span>
+              <span className="block text-xs text-[var(--sf-muted)]">{t("clearOfflineCacheDesc")}</span>
+            </div>
+            <Button
+              type="button"
+              variant={confirmClearOfflineCache ? "filled" : "glass"}
+              destructive={confirmClearOfflineCache}
+              onClick={handleClearOfflineCache}
+              className="text-xs font-semibold shrink-0"
+            >
+              {confirmClearOfflineCache
+                ? t("confirmClearCache")
+                : offlineCacheCleared
+                  ? t("clearOfflineCacheDone")
+                  : t("clearOfflineCacheTitle")}
+            </Button>
+          </div>
+
+          {/* Delete All Downloads */}
+          <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
+            <div>
+              <span className="block font-semibold text-sm text-rose-500">{t("deleteAllDownloadsTitle")}</span>
+              <span className="block text-xs text-[var(--sf-muted)]">{t("deleteAllDownloadsDesc")}</span>
+            </div>
+            <Button
+              type="button"
+              variant={confirmDeleteAllDownloads ? "filled" : "ghost"}
+              destructive={confirmDeleteAllDownloads}
+              onClick={() => void handleDeleteAllDownloads()}
+              disabled={downloadedTracks.length === 0}
+              icon={<TrashIcon size={16} aria-hidden="true" />}
+              className="text-xs font-semibold shrink-0"
+            >
+              {confirmDeleteAllDownloads ? t("confirmClearDownloads") : t("clearAllDownloads")}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Group 4: Account */}
+      <div className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
+          {t("settingsAccountGroup")}
+        </span>
+        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-white/[0.06]">
+          {user ? (
+            <>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:px-5">
+                <div className="flex items-center gap-3.5">
+                  <span
+                    className="h-12 w-12 rounded-full flex items-center justify-center font-black text-base text-white shadow-md shrink-0"
+                    style={{ backgroundColor: user.avatarColor }}
+                  >
+                    {user.displayName.slice(0, 1).toUpperCase()}
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-extrabold text-base">{user.displayName}</p>
+                      {user.role === "admin" && (
+                        <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-bold text-violet-600 dark:text-violet-300">
+                          Admin
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-[var(--sf-muted)]">@{user.username} • {user.email}</p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="glass"
+                  destructive
+                  onClick={() => void logout()}
+                  icon={<SignOutIcon size={18} aria-hidden="true" />}
+                >
+                  {t("signOut")}
+                </Button>
+              </div>
+
+              {/* Edit Profile Form */}
+              <div className="p-4 sm:px-5 space-y-3">
+                <span className="block font-semibold text-sm">
+                  {lang === "fa" ? "ویرایش مشخصات کاربری" : "Edit Profile Details"}
+                </span>
+                <form onSubmit={(e) => void handleSaveProfile(e)} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={editDisplayName}
+                      onChange={(e) => setEditDisplayName(e.target.value)}
+                      placeholder={lang === "fa" ? "نام نمایشی (انگلیسی)" : "Display Name"}
+                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      required
+                    />
+                    <input
+                      type="text"
+                      value={editDisplayNameFa}
+                      onChange={(e) => setEditDisplayNameFa(e.target.value)}
+                      placeholder={lang === "fa" ? "نام نمایشی (فارسی)" : "Persian Display Name"}
+                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    {profileFeedback && (
+                      <span className="text-xs font-medium text-emerald-400">{profileFeedback}</span>
+                    )}
+                    <Button
+                      type="submit"
+                      variant="filled"
+                      disabled={profileSaving}
+                      className="text-xs font-semibold mr-auto ltr:mr-0 ltr:ml-auto"
+                    >
+                      {profileSaving
+                        ? lang === "fa"
+                          ? "در حال ذخیره..."
+                          : "Saving..."
+                        : lang === "fa"
+                          ? "ذخیره تغییرات"
+                          : "Save Changes"}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Change Password Form */}
+              <div className="p-4 sm:px-5 space-y-3">
+                <span className="block font-semibold text-sm">
+                  {lang === "fa" ? "تغییر رمز عبور" : "Change Password"}
+                </span>
+                <form onSubmit={(e) => void handleChangePassword(e)} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="password"
+                      value={currentPwd}
+                      onChange={(e) => setCurrentPwd(e.target.value)}
+                      placeholder={lang === "fa" ? "رمز عبور فعلی" : "Current Password"}
+                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      required
+                    />
+                    <input
+                      type="password"
+                      value={newPwd}
+                      onChange={(e) => setNewPwd(e.target.value)}
+                      placeholder={lang === "fa" ? "رمز عبور جدید (حداقل ۶ نویسه)" : "New Password (min 6 chars)"}
+                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      required
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    {pwdFeedback && (
+                      <span className="text-xs font-medium text-indigo-400">{pwdFeedback}</span>
+                    )}
+                    <Button
+                      type="submit"
+                      variant="glass"
+                      disabled={pwdSaving || !currentPwd || !newPwd}
+                      className="text-xs font-semibold mr-auto ltr:mr-0 ltr:ml-auto"
+                    >
+                      {pwdSaving
+                        ? lang === "fa"
+                          ? "در حال تغییر..."
+                          : "Changing..."
+                        : lang === "fa"
+                          ? "به‌روزرسانی رمز عبور"
+                          : "Update Password"}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:px-5">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-500 shrink-0">
+                  <UserCircleIcon size={24} weight="bold" aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="font-bold text-sm">{t("guestAccount")}</p>
+                  <p className="text-xs text-[var(--sf-muted)]">{t("loginRequired")}</p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="filled"
+                onClick={openAuthDialog}
+                icon={<UserCircleIcon size={18} aria-hidden="true" />}
+              >
+                {t("signIn")}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Group 5: About & App Version (Apple HIG Grouped Settings List) */}
+      <div className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
+          {lang === "fa" ? "درباره برنامه" : "About"}
+        </span>
+        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-5 min-h-[56px]">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#8E8E93] text-white shadow-sm shrink-0">
+                <InfoIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <span className="font-semibold text-sm truncate">
+                {lang === "fa" ? "نسخه برنامه" : "Version"}
+              </span>
+            </div>
+            <span
+              dir="ltr"
+              className="text-sm font-medium text-[var(--sf-muted)] tabular-nums shrink-0"
+            >
+              {APP_VERSION} ({APP_BUILD_NUMBER})
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-5 min-h-[56px]">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#34C759] text-white shadow-sm shrink-0">
+                <DeviceMobileIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <span className="font-semibold text-sm truncate">
+                {lang === "fa" ? "پلتفرم" : "Platform"}
+              </span>
+            </div>
+            <span
+              dir="ltr"
+              className="text-sm font-medium text-[var(--sf-muted)] shrink-0"
+            >
+              {isAndroidNative() ? `${APP_CHANNEL} App` : "Web"}
+            </span>
+          </div>
+        </div>
+
+        <p
+          dir="ltr"
+          className="text-center text-[11px] font-medium text-[var(--sf-muted)]/75 pt-2 pb-1 tabular-nums"
+        >
+          Soundify • v{APP_VERSION} (Build {APP_BUILD_NUMBER})
+        </p>
+      </div>
+    </div>
+  );
+}

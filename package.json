@@ -1,0 +1,39 @@
+{
+  "name": "soundify-android",
+  "version": "1.0.5",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "build:export": "node -e \"process.env.OUTPUT_EXPORT='true'; require('child_process').spawnSync('npx', ['next', 'build'], {stdio:'inherit', shell:true, env:process.env})\"",
+    "start": "next start -p 3100",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "bump:version": "node scripts/bump-version.mjs",
+    "android:sync": "npx cap sync android",
+    "android:build": "node scripts/bump-version.mjs && npm run build:export && npx cap sync android && cd android && gradlew.bat assembleDebug && cd .."
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@phosphor-icons/react": "^2.1.7",
+    "glisse": "^0.6.0",
+    "next": "^15.3.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
+    "@tailwindcss/postcss": "^4.1.4",
+    "@types/node": "^22.14.1",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.6",
+    "tailwindcss": "^4.1.4",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  }
+}

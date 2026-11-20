@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Misc
+.DS_Store
+*.pem
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.planning/
+graphify-out/
+tsconfig.tsbuildinfo
+
+# Local env files
+.env*.local
+.env
+
+# Android Studio & Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+android/*.iml
+android/app/*.iml
+android/local.properties
+android/captures/
+.externalNativeBuild
+.cxx/
+*.apk
+*.aab

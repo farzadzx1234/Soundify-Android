@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Soundify Android Network Security Configuration
+    Allows cleartext traffic for local development, LAN Wi-Fi testing, and offline fallback,
+    while trusting system CAs for secure connections.
+-->
+<network-security-config>
+    <!-- Base Configuration: Cleartext permitted for LAN IP backend pairing & local dev -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Production Soundify domains: Strict TLS with system-only trust -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">soundify.app</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

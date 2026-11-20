@@ -1,0 +1,1595 @@
+@import "tailwindcss";
+@custom-variant dark (&:where([data-resolved-theme="dark"], [data-resolved-theme="dark"] *));
+
+@font-face {
+  font-family: "IRANYekanXVF";
+  src:
+    url("/fonts/iranyekanx/IRANYekanXVF.woff2") format("woff2-variations"),
+    url("/fonts/iranyekanx/IRANYekanXVF.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IRANYekanXVFaNumVF";
+  src:
+    url("/fonts/iranyekanx/IRANYekanXVFaNumVF.woff2") format("woff2-variations"),
+    url("/fonts/iranyekanx/IRANYekanXVFaNumVF.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "SF Arabic Pro";
+  src:
+    local("SF Arabic Pro"),
+    local("SF Arabic"),
+    url("/fonts/sf-arabic/SFArabic-Bold.woff") format("woff"),
+    url("/fonts/sf-arabic/SFArabic-Bold.ttf") format("truetype");
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --sf-bg-light: #f5f6fa;
+  --sf-bg-dark: #070810;
+
+  --sf-surface-light: linear-gradient(135deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.52) 100%);
+  --sf-surface-dark: rgba(255, 255, 255, 0.03);
+
+  --sf-card-light: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.55) 100%);
+  --sf-card-dark: rgba(255, 255, 255, 0.03);
+  --sf-card-hover-light: linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.72) 100%);
+  --sf-card-hover-dark: rgba(255, 255, 255, 0.055);
+
+  --sf-card-border-light: 1px solid rgba(255, 255, 255, 0.85);
+  --sf-card-border-dark: 1px solid rgba(255, 255, 255, 0.04);
+  --sf-card-hover-border-light: 1px solid rgba(255, 255, 255, 1);
+  --sf-card-hover-border-dark: 1px solid rgba(255, 255, 255, 0.08);
+
+  --sf-card-shadow-light:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 8px 24px rgba(15, 23, 42, 0.06);
+  --sf-card-shadow-dark:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  --sf-card-shadow-hover-light:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 16px 36px rgba(15, 23, 42, 0.12);
+  --sf-card-shadow-hover-dark:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 32px rgba(0, 0, 0, 0.5);
+
+  --sf-chrome-bg-light: rgba(255, 255, 255, 0.94);
+  --sf-chrome-bg-dark: rgba(14, 16, 26, 0.85);
+  --sf-chrome-border-light: 1px solid rgba(255, 255, 255, 0.8);
+  --sf-chrome-border-dark: 1px solid rgba(255, 255, 255, 0.09);
+  --sf-chrome-shadow-light:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 12px 36px rgba(15, 23, 42, 0.08);
+  --sf-chrome-shadow-dark:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 16px 40px rgba(0, 0, 0, 0.6);
+
+  --sf-text-light: #0f172a;
+  --sf-text-dark: #f8fafc;
+  --sf-muted-light: #526075;
+  --sf-muted-dark: #94a3b8;
+  --sf-border-light: rgba(15, 23, 42, 0.08);
+  --sf-border-dark: rgba(255, 255, 255, 0.08);
+  --sf-hairline-light: rgba(15, 23, 42, 0.08);
+  --sf-hairline-dark: rgba(255, 255, 255, 0.08);
+  --sf-subtle-light: rgba(15, 23, 42, 0.05);
+  --sf-subtle-dark: rgba(255, 255, 255, 0.04);
+  --sf-subtle-hover-light: rgba(15, 23, 42, 0.09);
+  --sf-subtle-hover-dark: rgba(255, 255, 255, 0.08);
+  --sf-accent-light: #4f46e5;
+  --sf-accent-dark: #818cf8;
+  --sf-green: #22c55e;
+
+  /* Default light tokens */
+  --sf-bg: var(--sf-bg-light);
+  --sf-surface: var(--sf-surface-light);
+  --sf-card: var(--sf-card-light);
+  --sf-card-hover: var(--sf-card-hover-light);
+  --sf-card-border: var(--sf-card-border-light);
+  --sf-card-hover-border: var(--sf-card-hover-border-light);
+  --sf-card-shadow: var(--sf-card-shadow-light);
+  --sf-card-shadow-hover: var(--sf-card-shadow-hover-light);
+  --sf-text: var(--sf-text-light);
+  --sf-muted: var(--sf-muted-light);
+  --sf-border: var(--sf-border-light);
+  --sf-hairline: var(--sf-hairline-light);
+  --sf-subtle: var(--sf-subtle-light);
+  --sf-subtle-hover: var(--sf-subtle-hover-light);
+  --sf-accent: var(--sf-accent-light);
+  --sf-chrome-bg: var(--sf-chrome-bg-light);
+  --sf-chrome-border: var(--sf-chrome-border-light);
+  --sf-chrome-shadow: var(--sf-chrome-shadow-light);
+
+  /* Glisse Liquid Glass tokens */
+  --lg-fill: #0f172a;
+  --lg-rail: rgba(15, 23, 42, 0.12);
+  --lg-glass: rgba(255, 255, 255, 0.72);
+  --lg-blur: 24px;
+  --lg-rim-shine: 0.32;
+  --lg-edge: rgba(255, 255, 255, 0.35);
+  --lg-glass-bend: 0.45;
+
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sf-bg: var(--sf-bg-dark);
+    --sf-surface: var(--sf-surface-dark);
+    --sf-card: var(--sf-card-dark);
+    --sf-card-hover: var(--sf-card-hover-dark);
+    --sf-card-border: var(--sf-card-border-dark);
+    --sf-card-hover-border: var(--sf-card-hover-border-dark);
+    --sf-card-shadow: var(--sf-card-shadow-dark);
+    --sf-card-shadow-hover: var(--sf-card-shadow-hover-dark);
+    --sf-text: var(--sf-text-dark);
+    --sf-muted: var(--sf-muted-dark);
+    --sf-border: var(--sf-border-dark);
+    --sf-hairline: var(--sf-hairline-dark);
+    --sf-subtle: var(--sf-subtle-dark);
+    --sf-subtle-hover: var(--sf-subtle-hover-dark);
+    --sf-accent: var(--sf-accent-dark);
+    --sf-chrome-bg: var(--sf-chrome-bg-dark);
+    --sf-chrome-border: var(--sf-chrome-border-dark);
+    --sf-chrome-shadow: var(--sf-chrome-shadow-dark);
+    --lg-fill: #ffffff;
+    --lg-rail: rgba(255, 255, 255, 0.16);
+    --lg-glass: rgba(14, 16, 26, 0.72);
+    --lg-rim-shine: 0.15;
+    --lg-edge: rgba(255, 255, 255, 0.08);
+  }
+}
+
+:root[data-theme="dark"],
+:root[data-resolved-theme="dark"],
+:root.dark {
+  --sf-bg: var(--sf-bg-dark);
+  --sf-surface: var(--sf-surface-dark);
+  --sf-card: var(--sf-card-dark);
+  --sf-card-hover: var(--sf-card-hover-dark);
+  --sf-card-border: var(--sf-card-border-dark);
+  --sf-card-hover-border: var(--sf-card-hover-border-dark);
+  --sf-card-shadow: var(--sf-card-shadow-dark);
+  --sf-card-shadow-hover: var(--sf-card-shadow-hover-dark);
+  --sf-text: var(--sf-text-dark);
+  --sf-muted: var(--sf-muted-dark);
+  --sf-border: var(--sf-border-dark);
+  --sf-hairline: var(--sf-hairline-dark);
+  --sf-subtle: var(--sf-subtle-dark);
+  --sf-subtle-hover: var(--sf-subtle-hover-dark);
+  --sf-accent: var(--sf-accent-dark);
+  --sf-chrome-bg: var(--sf-chrome-bg-dark);
+  --sf-chrome-border: var(--sf-chrome-border-dark);
+  --sf-chrome-shadow: var(--sf-chrome-shadow-dark);
+  --lg-fill: #ffffff;
+  --lg-rail: rgba(255, 255, 255, 0.16);
+  --lg-glass: rgba(14, 16, 26, 0.72);
+  --lg-rim-shine: 0.15;
+  --lg-edge: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="light"],
+:root[data-resolved-theme="light"] {
+  --sf-bg: var(--sf-bg-light);
+  --sf-surface: var(--sf-surface-light);
+  --sf-card: var(--sf-card-light);
+  --sf-card-hover: var(--sf-card-hover-light);
+  --sf-card-border: var(--sf-card-border-light);
+  --sf-card-hover-border: var(--sf-card-hover-border-light);
+  --sf-card-shadow: var(--sf-card-shadow-light);
+  --sf-card-shadow-hover: var(--sf-card-shadow-hover-light);
+  --sf-text: var(--sf-text-light);
+  --sf-muted: var(--sf-muted-light);
+  --sf-border: var(--sf-border-light);
+  --sf-hairline: var(--sf-hairline-light);
+  --sf-subtle: var(--sf-subtle-light);
+  --sf-subtle-hover: var(--sf-subtle-hover-light);
+  --sf-accent: var(--sf-accent-light);
+  --sf-chrome-bg: var(--sf-chrome-bg-light);
+  --sf-chrome-border: var(--sf-chrome-border-light);
+  --sf-chrome-shadow: var(--sf-chrome-shadow-light);
+  --lg-fill: #0f172a;
+  --lg-rail: rgba(15, 23, 42, 0.12);
+  --lg-glass: rgba(255, 255, 255, 0.72);
+  --lg-rim-shine: 0.32;
+  --lg-edge: rgba(255, 255, 255, 0.35);
+}
+
+@supports (color: light-dark(white, black)) {
+  :root {
+    --sf-bg: light-dark(var(--sf-bg-light), var(--sf-bg-dark));
+    --sf-text: light-dark(var(--sf-text-light), var(--sf-text-dark));
+    --sf-muted: light-dark(var(--sf-muted-light), var(--sf-muted-dark));
+    --sf-border: light-dark(var(--sf-border-light), var(--sf-border-dark));
+    --sf-hairline: light-dark(var(--sf-hairline-light), var(--sf-hairline-dark));
+    --sf-subtle: light-dark(var(--sf-subtle-light), var(--sf-subtle-dark));
+    --sf-subtle-hover: light-dark(var(--sf-subtle-hover-light), var(--sf-subtle-hover-dark));
+    --sf-accent: light-dark(var(--sf-accent-light), var(--sf-accent-dark));
+    --sf-chrome-bg: light-dark(var(--sf-chrome-bg-light), var(--sf-chrome-bg-dark));
+    --sf-chrome-border: light-dark(var(--sf-chrome-border-light), var(--sf-chrome-border-dark));
+    --sf-chrome-shadow: light-dark(var(--sf-chrome-shadow-light), var(--sf-chrome-shadow-dark));
+    --sf-card: light-dark(var(--sf-card-light), var(--sf-card-dark));
+    --sf-card-hover: light-dark(var(--sf-card-hover-light), var(--sf-card-hover-dark));
+    --sf-card-border: light-dark(var(--sf-card-border-light), var(--sf-card-border-dark));
+    --sf-card-hover-border: light-dark(var(--sf-card-hover-border-light), var(--sf-card-hover-border-dark));
+    --sf-card-shadow: light-dark(var(--sf-card-shadow-light), var(--sf-card-shadow-dark));
+    --sf-card-shadow-hover: light-dark(var(--sf-card-shadow-hover-light), var(--sf-card-shadow-hover-dark));
+    --lg-fill: light-dark(#0f172a, #ffffff);
+    --lg-rail: light-dark(rgba(15, 23, 42, 0.12), rgba(255, 255, 255, 0.16));
+    --lg-glass: light-dark(rgba(255, 255, 255, 0.72), rgba(14, 16, 26, 0.72));
+    --lg-rim-shine: light-dark(0.32, 0.15);
+    --lg-edge: light-dark(rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.08));
+  }
+}
+
+html {
+  background-color: var(--sf-bg);
+  color: var(--sf-text);
+  accent-color: var(--sf-accent);
+  scrollbar-color: rgba(129, 140, 248, 0.45) transparent;
+  scrollbar-width: thin;
+  font-family: "IRANYekanXVFaNumVF", "SF Arabic Pro", "SF Arabic", "IRANYekanXVF", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size-adjust: from-font;
+}
+
+html[lang="en"] {
+  font-family: "IRANYekanXVF", "SF Arabic Pro", "SF Arabic", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+@supports not (font-size-adjust: from-font) {
+  html {
+    line-height: 1.5;
+  }
+}
+
+@layer base {
+  :is(h1, h2, h3) {
+    font-family: "SF Arabic Pro", "IRANYekanXVFaNumVF", "IRANYekanXVF", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    text-wrap: balance;
+  }
+
+  html[lang="en"] :is(h1, h2, h3) {
+    font-family: "IRANYekanXVF", "SF Arabic Pro", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  }
+}
+
+body {
+  min-height: 100dvh;
+  background-color: transparent;
+  color: var(--sf-text);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Eliminate 300ms mobile touch-action tap delay on all interactive elements */
+a,
+button,
+input,
+select,
+textarea,
+[role="button"],
+[role="slider"],
+[role="tab"] {
+  touch-action: manipulation;
+}
+
+/* Focus accessibility for interactive clickable elements (links, buttons, custom focusable widgets) */
+:where(a:any-link, button:not([role="tab"]), [tabindex]:not(input, textarea, select, [contenteditable], [contenteditable="true"], [role="tab"])):focus-visible {
+  outline: 2.5px solid var(--sf-accent);
+  outline-offset: 2px;
+}
+
+/* Segmented controls and tablist buttons should never have an external focus outline poking out */
+[role="tab"],
+[role="tablist"] button,
+.sf-segmented button {
+  outline: none !important;
+  outline-style: none !important;
+  outline-width: 0 !important;
+  outline-color: transparent !important;
+  outline-offset: 0 !important;
+}
+
+[role="tab"]:focus,
+[role="tab"]:focus-visible,
+[role="tablist"] button:focus,
+[role="tablist"] button:focus-visible,
+.sf-segmented button:focus,
+.sf-segmented button:focus-visible {
+  outline: none !important;
+  outline-style: none !important;
+  outline-width: 0 !important;
+  outline-color: transparent !important;
+  outline-offset: 0 !important;
+}
+
+/* Eliminate native browser user-agent and CSS focus rectangles inside rounded inputs, textareas, selects */
+input:not([type="range"]),
+textarea,
+select,
+[contenteditable],
+[contenteditable="true"],
+input:not([type="range"]):focus,
+input:not([type="range"]):focus-visible,
+input:not([type="range"]):focus-within,
+input:not([type="range"]):active,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible,
+[contenteditable]:focus,
+[contenteditable]:focus-visible {
+  outline: none !important;
+  outline-style: none !important;
+  outline-width: 0 !important;
+  outline-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+/* Remove WebKit/Blink search decoration & inner cancel buttons */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none !important;
+  display: none !important;
+}
+
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  inset-inline-start: 0.75rem;
+  z-index: 9999;
+  padding: 0.6rem 1rem;
+  border-radius: 9999px;
+  background: var(--sf-accent);
+  color: #ffffff;
+  font-weight: 600;
+  transform: translateY(-200%);
+  transition: transform 0.2s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* Native dialog top-layer animation (Functional Liquid Glass layer) */
+dialog.sf-dialog {
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 1.75rem;
+  background-color: var(--sf-chrome-bg);
+  color: var(--sf-text);
+  -webkit-backdrop-filter: blur(32px) saturate(1.5);
+  backdrop-filter: blur(32px) saturate(1.5);
+  max-width: min(92vw, 460px);
+  width: 100%;
+  box-shadow: var(--sf-chrome-shadow), 0 28px 70px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: scale(0.95) translateY(8px);
+  transition: opacity 0.22s ease, transform 0.22s ease, overlay 0.22s allow-discrete, display 0.22s allow-discrete;
+}
+
+dialog.sf-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.sf-dialog[open] {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+@starting-style {
+  dialog.sf-dialog[open] {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+}
+
+dialog.sf-dialog::backdrop {
+  background: rgba(6, 7, 18, 0.58);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+dialog.sf-device-picker-dialog {
+  inset: 0;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: none;
+}
+
+dialog.sf-device-picker-dialog[open] {
+  display: flex;
+}
+
+dialog.sf-device-picker-dialog::backdrop {
+  background: rgba(4, 6, 12, 0.75);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  dialog.sf-dialog {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: var(--sf-bg);
+  }
+}
+
+/* Glisse Liquid Glass RTL & layout integration */
+.lg-input {
+  max-width: 100%;
+  width: 100%;
+  font-family: inherit;
+}
+
+.lg-button,
+.lg-menu-item,
+.lg-segmented-item,
+.lg-tab-item {
+  font-family: inherit;
+}
+
+.lg-button:not([data-icon="only"]) {
+  min-height: 40px;
+  height: auto;
+  padding-block: 7px;
+  line-height: 1.3;
+  white-space: normal;
+  text-align: center;
+}
+
+.lg-button[data-icon] {
+  padding-inline-start: 12px;
+  padding-inline-end: 16px;
+}
+
+.lg-input-clear {
+  margin-inline-end: -8px;
+}
+
+[dir="rtl"] .lg-button[data-icon] {
+  padding-left: 16px;
+  padding-right: 12px;
+}
+
+[dir="rtl"] .lg-input-clear {
+  margin-right: 0;
+  margin-left: -8px;
+}
+
+[dir="rtl"] .lg-menu-item {
+  text-align: right;
+}
+
+[dir="rtl"] .lg-menu-card {
+  right: auto;
+  left: 0;
+}
+
+/* Layer 1 (Functional Layer): Liquid Glass on floating chrome (sidebar, header, dock, nav, popovers) */
+.sf-glass-chrome {
+  background-color: var(--sf-chrome-bg);
+  border: var(--sf-chrome-border);
+  box-shadow: var(--sf-chrome-shadow);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .sf-glass-chrome {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: var(--sf-bg);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .sf-glass-chrome {
+    border: 1px solid var(--sf-muted);
+    background-color: var(--sf-bg);
+  }
+}
+
+/* Layer 1b: Signature Apple Liquid Glass Player Dock */
+.sf-dock-glass {
+  background-color: rgba(255, 255, 255, 0.84) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 12px 36px rgba(15, 23, 42, 0.12) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.8) !important;
+  backdrop-filter: blur(28px) saturate(1.8) !important;
+  transform: translateZ(0);
+}
+
+:root[data-resolved-theme="dark"] .sf-dock-glass,
+:root[data-theme="dark"] .sf-dock-glass {
+  background-color: rgba(14, 16, 26, 0.86) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 18px 48px rgba(0, 0, 0, 0.75) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.8) !important;
+  backdrop-filter: blur(28px) saturate(1.8) !important;
+  transform: translateZ(0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sf-dock-glass {
+    background-color: rgba(14, 16, 26, 0.86) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      0 18px 48px rgba(0, 0, 0, 0.75) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(1.8) !important;
+    backdrop-filter: blur(28px) saturate(1.8) !important;
+    transform: translateZ(0);
+  }
+}
+
+/* Mobile Apple Music Liquid Glass: lightweight 16px blur with high fill opacity for 60-120fps Android scroll */
+@media (max-width: 768px), (pointer: coarse) {
+  .sf-dock-glass {
+    background-color: rgba(255, 255, 255, 0.92) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 8px 28px rgba(15, 23, 42, 0.14) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(150%) !important;
+    backdrop-filter: blur(16px) saturate(150%) !important;
+    contain: layout style;
+  }
+  :root[data-resolved-theme="dark"] .sf-dock-glass,
+  :root[data-theme="dark"] .sf-dock-glass {
+    background-color: rgba(16, 18, 28, 0.92) !important;
+    border: 1px solid rgba(255, 255, 255, 0.13) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 10px 36px rgba(0, 0, 0, 0.65) !important;
+  }
+}
+
+@media (max-width: 768px) and (prefers-color-scheme: dark), (pointer: coarse) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sf-dock-glass {
+    background-color: rgba(16, 18, 28, 0.92) !important;
+    border: 1px solid rgba(255, 255, 255, 0.13) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 10px 36px rgba(0, 0, 0, 0.65) !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .sf-dock-glass {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background-color: #ffffff !important;
+  }
+  :root[data-resolved-theme="dark"] .sf-dock-glass,
+  :root[data-theme="dark"] .sf-dock-glass {
+    background-color: #0c0e18 !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .sf-dock-glass {
+    border: 1.5px solid rgba(0, 0, 0, 0.45) !important;
+    background-color: #ffffff !important;
+  }
+  :root[data-resolved-theme="dark"] .sf-dock-glass,
+  :root[data-theme="dark"] .sf-dock-glass {
+    border: 1.5px solid rgba(255, 255, 255, 0.45) !important;
+    background-color: #070810 !important;
+  }
+}
+
+/* Layer 2: Content Surfaces & Hardware-Accelerated Cards (Zero scroll-time GPU blur or idle layer thrashing) */
+.sf-content-surface,
+.sf-glass-surface {
+  position: relative;
+  background: var(--sf-surface);
+  border: var(--sf-card-border);
+  box-shadow: var(--sf-card-shadow);
+  contain: layout style paint;
+}
+
+.sf-content-card,
+.sf-glass-card {
+  position: relative;
+  background: var(--sf-card);
+  border: var(--sf-card-border);
+  box-shadow: var(--sf-card-shadow);
+  contain: layout style paint;
+  transition:
+    transform 0.22s cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 0.18s ease-out;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sf-content-card:hover,
+  .sf-glass-card:hover {
+    transform: translate3d(0, -2.5px, 0) scale3d(1.01, 1.01, 1);
+    background: var(--sf-card-hover);
+    border: var(--sf-card-hover-border);
+    box-shadow: var(--sf-card-shadow-hover);
+  }
+}
+
+.sf-content-card:active,
+.sf-glass-card:active {
+  transform: translate3d(0, 0, 0) scale3d(0.975, 0.975, 1);
+}
+
+/* Native GPU Compositor Press Micro-interaction (Apple HIG Tactile Feel) */
+.sf-press {
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  transition:
+    transform 0.14s cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 0.14s ease-out;
+}
+
+.sf-press:active:not(:disabled) {
+  transform: scale3d(0.96, 0.96, 1);
+  opacity: 0.9;
+}
+
+/* Tactile Apple VisionOS / iOS Liquid Glass Action Button */
+.sf-btn {
+  position: relative;
+  transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  backface-visibility: hidden;
+  transition:
+    transform 0.18s cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 0.16s ease-out;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sf-btn:hover:not(:disabled) {
+    transform: translate3d(0, -1px, 0) scale3d(1.02, 1.02, 1);
+  }
+}
+
+.sf-btn:active:not(:disabled) {
+  transform: translate3d(0, 0, 0) scale3d(0.95, 0.95, 1);
+  opacity: 0.9;
+}
+
+/* Sleek Apple Music Range Slider with Optical Glass Lens Interaction */
+.sf-apple-slider {
+  --slider-track-size: 3px;
+  --slider-thumb-size: 12px;
+  --slider-track-color: rgba(15, 23, 42, 0.14);
+  --slider-fill-color: var(--sf-accent);
+  --slider-thumb-color: #ffffff;
+  --slider-thumb-border: 1px solid rgba(0, 0, 0, 0.08);
+  --slider-thumb-shadow: 0 1px 4px rgba(15, 23, 42, 0.28);
+  --slider-direction: to right;
+  --slider-progress: 0%;
+
+  -webkit-appearance: none;
+  appearance: none;
+  inline-size: 100%;
+  block-size: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+
+:root[data-resolved-theme="dark"] .sf-apple-slider,
+:root[data-theme="dark"] .sf-apple-slider,
+.dark .sf-apple-slider,
+.sf-dark-overlay .sf-apple-slider,
+[data-theme="dark"] .sf-apple-slider,
+[data-resolved-theme="dark"] .sf-apple-slider {
+  --slider-track-color: rgba(255, 255, 255, 0.22) !important;
+  --slider-fill-color: #ffffff !important;
+  --slider-thumb-color: #ffffff !important;
+  --slider-thumb-border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  --slider-thumb-shadow: 0 1px 4px rgba(0, 0, 0, 0.55) !important;
+}
+
+.sf-dark-overlay,
+.sf-dark-overlay * {
+  --lg-foreground: #ffffff !important;
+  --lg-muted: rgba(255, 255, 255, 0.72) !important;
+  --lg-glass: rgba(255, 255, 255, 0.1) !important;
+  --lg-glass-active: rgba(255, 255, 255, 0.18) !important;
+  --lg-edge: rgba(255, 255, 255, 0.15) !important;
+  --lg-fill: #ffffff !important;
+  --lg-rail: rgba(255, 255, 255, 0.22) !important;
+  --lg-segment-track: rgba(255, 255, 255, 0.12) !important;
+  --lg-segment-thumb: rgba(255, 255, 255, 0.25) !important;
+  --lg-segment-label: #ffffff !important;
+  --slider-fill-color: #ffffff !important;
+  --slider-track-color: rgba(255, 255, 255, 0.22) !important;
+  --slider-thumb-color: #ffffff !important;
+}
+
+.sf-dark-overlay {
+  color-scheme: dark !important;
+  --sf-text: #ffffff !important;
+  --sf-muted: rgba(255, 255, 255, 0.72) !important;
+  --sf-border: rgba(255, 255, 255, 0.12) !important;
+  --sf-hairline: rgba(255, 255, 255, 0.08) !important;
+  --sf-subtle: rgba(255, 255, 255, 0.08) !important;
+  --sf-subtle-hover: rgba(255, 255, 255, 0.14) !important;
+  --lg-fill: #ffffff !important;
+  --lg-rail: rgba(255, 255, 255, 0.22) !important;
+  --lg-glass: rgba(14, 16, 26, 0.72) !important;
+}
+
+/* Slim iPhone Liquid Glass Slider proportions (preserves glisse spring + refraction while aligning track insets + LTR axis + light/dark contrast) */
+.sf-glisse-slim .lg-slider {
+  height: 28px;
+  overflow: visible;
+  direction: ltr;
+  --lg-slider-line: 5px;
+  --lg-rail: rgba(15, 23, 42, 0.14);
+  --lg-fill: #0f172a;
+}
+
+.sf-glisse-slim .lg-slider-bed {
+  inset: 0;
+}
+
+.sf-glisse-slim .lg-slider-track,
+.sf-glisse-slim .lg-slider-magnified .lg-slider-track {
+  inset: 0 8px;
+  height: calc(4.5px + 2.5px * var(--lg-lift, 0));
+  margin: auto 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--lg-rail);
+}
+
+.sf-glisse-slim .lg-slider-fill,
+.sf-glisse-slim .lg-slider-magnified .lg-slider-fill {
+  width: calc(100% * var(--lg-progress));
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lg-fill);
+}
+
+.sf-glisse-slim .lg-slider-thumb {
+  top: 50%;
+  margin-top: calc((11px + 7px * var(--lg-lift, 0)) / -2);
+  width: calc(11px + 13px * var(--lg-lift, 0));
+  height: calc(11px + 7px * var(--lg-lift, 0));
+  border-radius: 9999px;
+  left: calc((100% - 11px - 13px * var(--lg-lift, 0)) * var(--lg-progress));
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.28),
+    0 0 0 1px rgba(15, 23, 42, 0.14);
+}
+
+.sf-glisse-slim .lg-thumb-face {
+  background: rgba(255, 255, 255, calc(0.96 - 0.56 * var(--lg-lift, 0)));
+  transition: background-color 0.16s ease;
+}
+
+:root.dark .sf-glisse-slim .lg-slider,
+:root[data-resolved-theme="dark"] .sf-glisse-slim .lg-slider,
+.sf-dark-overlay .sf-glisse-slim .lg-slider {
+  --lg-rail: rgba(255, 255, 255, 0.24);
+  --lg-fill: #ffffff;
+}
+
+:root.dark .sf-glisse-slim .lg-slider-thumb,
+:root[data-resolved-theme="dark"] .sf-glisse-slim .lg-slider-thumb {
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.85);
+}
+
+/* Native <dialog> fullscreen NowPlaying top-layer container (prevents page scroll chaining without mutating html overflow) */
+dialog.sf-now-playing-dialog {
+  inset: 0;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+dialog.sf-now-playing-dialog:modal {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+dialog.sf-now-playing-dialog::backdrop {
+  background: #050708;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/* 1C Translucent Liquid Glass Capsules & Pills */
+.sf-1c-capsule {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 100%),
+    var(--sf-glass-tint, rgba(12, 16, 18, 0.42));
+  -webkit-backdrop-filter: blur(44px) saturate(195%);
+  backdrop-filter: blur(44px) saturate(195%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 22px 56px rgba(0, 0, 0, 0.62);
+}
+
+@media (max-width: 899px) and (max-height: 700px) {
+  .sf-mobile-hero-cover {
+    width: min(50vw, 174px, 26dvh) !important;
+  }
+}
+
+@media (max-width: 899px) and (max-height: 600px) {
+  .sf-mobile-hero-cover {
+    width: min(46vw, 136px, 24dvh) !important;
+  }
+}
+
+.sf-1c-pill {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.05) 100%),
+    var(--sf-glass-tint, rgba(14, 18, 20, 0.34));
+  -webkit-backdrop-filter: blur(26px) saturate(165%);
+  backdrop-filter: blur(26px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .sf-1c-capsule {
+    background: rgba(14, 18, 24, 0.86) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+  }
+  .sf-1c-pill {
+    background: rgba(255, 255, 255, 0.13) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .sf-1c-capsule,
+  .sf-1c-pill {
+    background: rgba(12, 16, 16, 0.92) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .sf-1c-capsule,
+  .sf-1c-pill {
+    background: rgba(8, 10, 12, 0.94) !important;
+    border-color: rgba(255, 255, 255, 0.55) !important;
+  }
+}
+
+.sf-dark-overlay .lg-slider {
+  overflow: visible;
+}
+
+.sf-dark-overlay .lg-slider-track {
+  background: rgba(255, 255, 255, 0.24) !important;
+}
+
+.sf-dark-overlay .lg-slider-fill {
+  background: #ffffff !important;
+}
+
+.sf-dark-overlay .lg-slider-thumb {
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.88),
+    inset 0 1px 1px rgba(255, 255, 255, 0.45) !important;
+}
+
+.sf-dark-overlay .lg-slider:hover:not(:active) .lg-thumb-face {
+  opacity: 0.78;
+  transition: opacity 0.18s ease;
+}
+
+.sf-dark-overlay button:not([class*="bg-indigo"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-white"]):not([class*="text-"]) {
+  color: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sf-apple-slider {
+    --slider-track-color: rgba(255, 255, 255, 0.14);
+    --slider-fill-color: rgba(255, 255, 255, 0.92);
+    --slider-thumb-color: #ffffff;
+    --slider-thumb-border: 1px solid rgba(255, 255, 255, 0.15);
+    --slider-thumb-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+  }
+}
+
+.sf-apple-slider:hover {
+  --slider-track-size: 4px;
+}
+
+.sf-apple-slider:active,
+.sf-apple-slider[data-active="true"] {
+  --slider-track-size: 5px;
+}
+
+.sf-apple-slider:focus-visible {
+  outline: 2px solid var(--sf-accent);
+  outline-offset: 2px;
+  border-radius: 9999px;
+}
+
+.sf-apple-slider:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.45), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.sf-apple-slider:focus-visible::-moz-range-thumb {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.45), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* WebKit/Blink Track */
+.sf-apple-slider::-webkit-slider-runnable-track {
+  block-size: var(--slider-track-size);
+  border: 0;
+  border-radius: 9999px;
+  background: linear-gradient(
+    var(--slider-direction),
+    var(--slider-fill-color) var(--slider-progress),
+    var(--slider-track-color) var(--slider-progress)
+  );
+  transition: block-size 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* WebKit/Blink Thumb - Resting State */
+.sf-apple-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  inline-size: var(--slider-thumb-size);
+  block-size: var(--slider-thumb-size);
+  margin-block-start: calc((var(--slider-track-size) - var(--slider-thumb-size)) / 2);
+  border: var(--slider-thumb-border);
+  border-radius: 9999px;
+  background: var(--slider-thumb-color);
+  box-shadow: var(--slider-thumb-shadow);
+  transform: scale(1);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    margin-block-start 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Hover slightly primes thumb */
+.sf-apple-slider:hover:not(:active):not([data-active="true"])::-webkit-slider-thumb {
+  transform: scale(1.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* Apple iOS signature interactive optical glass lens effect on active/drag (hardware-friendly, zero filter stalls) */
+.sf-apple-slider:active::-webkit-slider-thumb,
+.sf-apple-slider[data-active="true"]::-webkit-slider-thumb {
+  transform: scale(1.75);
+  background-color: rgba(255, 255, 255, 0.42);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.8),
+    0 0 14px rgba(255, 255, 255, 0.45),
+    0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* Firefox Track */
+.sf-apple-slider::-moz-range-track {
+  block-size: var(--slider-track-size);
+  border: 0;
+  border-radius: 9999px;
+  background: var(--slider-track-color);
+  transition: block-size 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sf-apple-slider::-moz-range-progress {
+  block-size: var(--slider-track-size);
+  border-radius: 9999px;
+  background: var(--slider-fill-color);
+  transition: block-size 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Firefox Thumb - Resting State */
+.sf-apple-slider::-moz-range-thumb {
+  inline-size: var(--slider-thumb-size);
+  block-size: var(--slider-thumb-size);
+  border: var(--slider-thumb-border);
+  border-radius: 9999px;
+  background: var(--slider-thumb-color);
+  box-shadow: var(--slider-thumb-shadow);
+  transform: scale(1);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sf-apple-slider:hover:not(:active):not([data-active="true"])::-moz-range-thumb {
+  transform: scale(1.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* Firefox Active Glass Lens */
+.sf-apple-slider:active::-moz-range-thumb,
+.sf-apple-slider[data-active="true"]::-moz-range-thumb {
+  transform: scale(1.75);
+  background-color: rgba(255, 255, 255, 0.42);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.8),
+    0 0 14px rgba(255, 255, 255, 0.45),
+    0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.sf-ambient-stage[data-paused="true"] .sf-float-orb,
+.sf-ambient-stage[data-paused="true"] .sf-float-orb-delay {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sf-float-orb {
+    animation: sf-orb-drift 18s ease-in-out infinite alternate;
+    transform: translate3d(0, 0, 0);
+  }
+
+  .sf-float-orb-delay {
+    animation: sf-orb-drift 22s ease-in-out -8s infinite alternate-reverse;
+    transform: translate3d(0, 0, 0);
+  }
+
+  /* Battery saver & 60-120fps Android compositor: halt idle drifts, sheen sweeps, ping ripples & grid stagger animations on touch devices */
+  @media (pointer: coarse) {
+    .sf-float-orb,
+    .sf-float-orb-delay {
+      animation: none !important;
+    }
+    .sf-sheen::before {
+      display: none !important;
+      animation: none !important;
+    }
+    .animate-ping {
+      animation: none !important;
+      opacity: 0 !important;
+    }
+    .sf-stagger > * {
+      animation: none !important;
+    }
+  }
+
+  .sf-eq-bar {
+    animation: sf-eq-bounce 0.65s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
+    transform-origin: bottom;
+    will-change: transform;
+  }
+
+  .sf-fade-up {
+    animation: sf-fade-up 0.28s cubic-bezier(0.23, 1, 0.32, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-page-enter {
+    animation: sf-page-enter 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-tab-slide-next {
+    animation: sf-tab-slide-next 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-tab-slide-prev {
+    animation: sf-tab-slide-prev 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-view-fade {
+    animation: sf-view-fade 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-lyric-peek-in {
+    animation: sf-lyric-peek-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-sheet-up {
+    animation: sf-sheet-up 0.34s cubic-bezier(0.32, 0.72, 0, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-sheet-down {
+    animation: sf-sheet-down 0.24s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+    backface-visibility: hidden;
+  }
+
+  .sf-track-swap {
+    animation: sf-track-swap 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+    backface-visibility: hidden;
+  }
+
+  dialog.sf-dialog[open] {
+    animation: sf-dialog-in 0.26s cubic-bezier(0.23, 1, 0.32, 1) both;
+    backface-visibility: hidden;
+  }
+
+  /* Staggered card entrance (strictly compositor transform + opacity, fast tight cadence) */
+  .sf-stagger > * {
+    animation: sf-card-in 0.3s cubic-bezier(0.23, 1, 0.32, 1) both;
+    backface-visibility: hidden;
+  }
+  .sf-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .sf-stagger > *:nth-child(2) { animation-delay: 24ms; }
+  .sf-stagger > *:nth-child(3) { animation-delay: 48ms; }
+  .sf-stagger > *:nth-child(4) { animation-delay: 72ms; }
+  .sf-stagger > *:nth-child(5) { animation-delay: 96ms; }
+  .sf-stagger > *:nth-child(6) { animation-delay: 120ms; }
+  .sf-stagger > *:nth-child(n+7) { animation-delay: 140ms; }
+
+  /* Specular light sheen sweep across Hero Glass card (desktop only) */
+  .sf-sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .sf-sheen::before {
+    content: "";
+    position: absolute;
+    inset: -20% auto -20% -60%;
+    width: 45%;
+    background: linear-gradient(105deg, transparent 10%, rgba(255, 255, 255, 0.26) 50%, transparent 90%);
+    pointer-events: none;
+    transform: translate3d(-120%, 0, 0) skewX(-18deg);
+    animation: sf-sheen-sweep 7.5s ease-in-out 1.2s infinite;
+  }
+
+  /* Active playing track subtle glow halo */
+  .sf-cover-pulse {
+    animation: sf-cover-pulse 2.6s ease-in-out infinite alternate;
+  }
+
+  .sf-spring-pop {
+    animation: sf-spring-pop 0.28s cubic-bezier(0.23, 1, 0.32, 1) both;
+  }
+
+  .sf-overlay-in {
+    animation: sf-overlay-in 0.34s cubic-bezier(0.32, 0.72, 0, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-overlay-out {
+    animation: sf-overlay-out 0.29s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+    backface-visibility: hidden;
+  }
+
+  .sf-overlay-in *,
+  .sf-overlay-out *,
+  .sf-sheet-up *,
+  .sf-sheet-down * {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .sf-popover-in {
+    animation: sf-popover-in 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+    backface-visibility: hidden;
+  }
+
+  .sf-spin-slow {
+    animation: sf-spin 18s linear infinite;
+  }
+}
+
+@keyframes sf-page-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale3d(0.985, 0.985, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-tab-slide-next {
+  from {
+    opacity: 0;
+    transform: translate3d(-18px, 0, 0) scale3d(0.988, 0.988, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-tab-slide-prev {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0) scale3d(0.988, 0.988, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-view-fade {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale3d(0.972, 0.972, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-lyric-peek-in {
+  from {
+    opacity: 0.35;
+    transform: translate3d(0, 10px, 0) scale3d(0.965, 0.965, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale3d(0.94, 0.94, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-sheet-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes sf-card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale3d(0.965, 0.965, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-sheen-sweep {
+  0%, 72% {
+    transform: translate3d(-120%, 0, 0) skewX(-18deg);
+    opacity: 0;
+  }
+  82% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate3d(420%, 0, 0) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+@keyframes sf-cover-pulse {
+  from {
+    opacity: 0.55;
+    transform: scale3d(0.97, 0.97, 1);
+  }
+  to {
+    opacity: 0.95;
+    transform: scale3d(1.03, 1.03, 1);
+  }
+}
+
+@keyframes sf-spring-pop {
+  0% { transform: scale3d(0.92, 0.92, 1); }
+  55% { transform: scale3d(1.07, 1.07, 1); }
+  100% { transform: scale3d(1, 1, 1); }
+}
+
+@keyframes sf-overlay-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes sf-overlay-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, var(--sf-drag-y, 0px), 0);
+  }
+  to {
+    opacity: 0.9;
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
+@keyframes sf-sheet-down {
+  from {
+    opacity: 1;
+    transform: translate3d(0, var(--sf-drag-y, 0px), 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
+@keyframes sf-track-swap {
+  from {
+    opacity: 0;
+    transform: scale3d(0.95, 0.95, 1);
+  }
+  to {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-orb-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+  100% {
+    transform: translate3d(3.5%, -4.5%, 0) scale3d(1.06, 1.06, 1);
+  }
+}
+
+@keyframes sf-eq-bounce {
+  0% {
+    transform: scaleY(0.28);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes sf-fade-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes sf-popover-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale3d(0.96, 0.96, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.track-list-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
+.sf-below-fold {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 420px;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .track-list-row,
+  .sf-below-fold {
+    content-visibility: visible;
+  }
+}
+
+/* Spotify & Apple Music Sing Lyrics Mask & Typography */
+.sf-lyrics-mask {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 4%, black 88%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 4%, black 88%, transparent 100%);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sf-lyrics-mask-apple {
+  mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.88) 10%, #000 24%, #000 72%, rgba(0, 0, 0, 0.8) 87%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.88) 10%, #000 24%, #000 72%, rgba(0, 0, 0, 0.8) 87%, transparent 100%);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sf-lyrics-mask::-webkit-scrollbar,
+.sf-lyrics-mask-apple::-webkit-scrollbar {
+  display: none;
+  width: 0px;
+  height: 0px;
+}
+
+.sf-lyrics-active-glow {
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45), 0 0 18px rgba(255, 255, 255, 0.16);
+}
+
+.sf-lyrics-stage-glow {
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.5), 0 0 24px rgba(255, 255, 255, 0.18);
+}
+
+.sf-queue-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.sf-queue-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sf-queue-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sf-queue-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 9999px;
+}
+
+/* ==========================================================================
+   Android & Mobile Native UI Polish
+   ========================================================================== */
+
+*, *::before, *::after {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, a, input, select, textarea, [role="button"], [role="tab"] {
+  touch-action: manipulation;
+}
+
+/* Safe Area Utilities for Android Display Cutouts & Gesture Navigation (Logical RTL/LTR) */
+.pt-safe {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+}
+
+.pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+.p-safe {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-inline-start: max(1rem, env(safe-area-inset-left, 0px));
+  padding-inline-end: max(1rem, env(safe-area-inset-right, 0px));
+}
+
+.px-safe {
+  padding-inline-start: max(1rem, env(safe-area-inset-left, 0px));
+  padding-inline-end: max(1rem, env(safe-area-inset-right, 0px));
+}
+
+/* Native Android fluid typography & reflow support */
+html {
+  font-size: clamp(14px, 0.9rem + 0.35vw, 16px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media (max-width: 360px) {
+  html {
+    font-size: 13.5px;
+  }
+}
+
+/* Mobile Touch Actions & Gesture Navigation Utilities */
+.touch-pan-y {
+  touch-action: pan-y;
+}
+
+.touch-pan-x {
+  touch-action: pan-x;
+}
+
+/* Prevent overscroll bounce interference on modal views and dialogs */
+.sf-no-bounce {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Mobile Performance: Skeleton shimmer animation for cover image placeholders */
+@keyframes sf-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.sf-skeleton-shimmer {
+  animation: sf-shimmer 1.8s infinite ease-in-out;
+}
+

@@ -8,11 +8,11 @@ import {
   DownloadSimpleIcon,
   PauseIcon,
   PlayIcon,
-  TrashIcon,
 } from "@phosphor-icons/react";
 import { useTrackDownload } from "@/lib/downloadManager";
 import { useI18n } from "@/context/I18nContext";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
+import { DownloadActionSheet } from "./DownloadActionSheet";
 import type { Track } from "@/lib/types";
 
 export interface DownloadButtonProps {
@@ -23,6 +23,7 @@ export interface DownloadButtonProps {
   className?: string;
   onDownloaded?: () => void;
   onRemoved?: () => void;
+  onPlayOffline?: () => void;
 }
 
 export const DownloadButton = memo(function DownloadButton({
@@ -33,6 +34,7 @@ export const DownloadButton = memo(function DownloadButton({
   className = "",
   onDownloaded,
   onRemoved,
+  onPlayOffline,
 }: DownloadButtonProps) {
   const { t, formatNum, pickText } = useI18n();
   const trackTitle = track ? pickText(track.title || "", track.titleFa) || "Track" : "Track";
@@ -54,6 +56,7 @@ export const DownloadButton = memo(function DownloadButton({
   } = useTrackDownload(track);
   const [hovered, setHovered] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showActionSheet, setShowActionSheet] = useState(false);
 
   if (!track || !track.id) {
     return null;
@@ -99,13 +102,8 @@ export const DownloadButton = memo(function DownloadButton({
     }
 
     if (isDownloaded) {
-      setBusy(true);
-      try {
-        const ok = await remove();
-        if (ok) onRemoved?.();
-      } finally {
-        setBusy(false);
-      }
+      // Apple HIG: Do NOT delete or re-download immediately; open action sheet with options
+      setShowActionSheet(true);
       return;
     }
 
@@ -114,6 +112,16 @@ export const DownloadButton = memo(function DownloadButton({
     try {
       const ok = await download();
       if (ok) onDownloaded?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemoveFromSheet = async () => {
+    setBusy(true);
+    try {
+      const ok = await remove();
+      if (ok) onRemoved?.();
     } finally {
       setBusy(false);
     }
@@ -143,31 +151,35 @@ export const DownloadButton = memo(function DownloadButton({
   // Downloaded state
   if (isDownloaded) {
     return (
-      <button
-        type="button"
-        onClick={handleClick}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        disabled={busy}
-        aria-label={`${trackTitle} - ${hovered ? t("removeFromDownloads") : t("downloaded")}`}
-        title={hovered ? t("removeFromDownloads") : t("downloaded")}
-        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all cursor-pointer ${sizeClasses} ${variantClasses} ${
-          hovered
-            ? "text-rose-500 dark:text-rose-400 bg-rose-500/15"
-            : "text-emerald-500 dark:text-emerald-400 bg-emerald-500/10"
-        } ${className}`}
-      >
-        {hovered ? (
-          <TrashIcon size={iconSize} weight="bold" aria-hidden="true" className="sf-spring-pop text-rose-500" />
-        ) : (
+      <>
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          disabled={busy}
+          aria-label={`${trackTitle} - ${t("downloaded")}`}
+          title={t("downloaded")}
+          className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer ${sizeClasses} ${variantClasses} text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 ${className}`}
+        >
           <CheckCircleIcon size={iconSize} weight="fill" aria-hidden="true" className="sf-spring-pop text-emerald-500 dark:text-emerald-400" />
+          {showLabel && (
+            <span className="ms-1.5 font-bold text-xs">
+              {t("downloaded")}
+            </span>
+          )}
+        </button>
+
+        {showActionSheet && (
+          <DownloadActionSheet
+            track={track}
+            isOpen={showActionSheet}
+            onClose={() => setShowActionSheet(false)}
+            onRemove={handleRemoveFromSheet}
+            onPlayOffline={onPlayOffline}
+          />
         )}
-        {showLabel && (
-          <span className="ms-1.5 font-bold text-xs">
-            {hovered ? t("removeFromDownloads") : t("downloaded")}
-          </span>
-        )}
-      </button>
+      </>
     );
   }
 
@@ -190,7 +202,7 @@ export const DownloadButton = memo(function DownloadButton({
         disabled={busy}
         aria-label={`${trackTitle} - ${t("downloading")} ${formatNum(progress)}% - ${t("pauseDownload")}`}
         title={`${t("downloading")} (${formatNum(progress)}%) - ${t("pauseDownload")}`}
-        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all cursor-pointer text-indigo-600 dark:text-indigo-400 bg-indigo-500/15 ${sizeClasses} ${className}`}
+        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer text-indigo-600 dark:text-indigo-400 bg-indigo-500/15 backdrop-blur-sm ${sizeClasses} ${className}`}
       >
         <svg
           width={ringParams.dim}
@@ -261,13 +273,9 @@ export const DownloadButton = memo(function DownloadButton({
         disabled={busy}
         aria-label={`${trackTitle} - ${t("downloadQueued")}`}
         title={`${t("downloadQueued")} - ${t("cancelSelect")}`}
-        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all cursor-pointer text-amber-500 dark:text-amber-400 bg-amber-500/15 ${sizeClasses} ${className}`}
+        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer text-amber-500 dark:text-amber-400 bg-amber-500/15 ${sizeClasses} ${className}`}
       >
-        {hovered ? (
-          <TrashIcon size={iconSize} weight="bold" aria-hidden="true" className="text-rose-500" />
-        ) : (
-          <ClockIcon size={iconSize} weight="bold" aria-hidden="true" className="animate-pulse" />
-        )}
+        <ClockIcon size={iconSize} weight="bold" aria-hidden="true" className="animate-pulse" />
         {showLabel && (
           <span className="ms-1.5 text-xs font-semibold">
             {hovered ? t("cancelSelect") : t("downloadQueued")}
@@ -286,7 +294,7 @@ export const DownloadButton = memo(function DownloadButton({
         disabled={busy}
         aria-label={`${trackTitle} - ${t("downloadPaused")} - ${t("resumeDownload")}`}
         title={`${t("downloadPaused")} - ${t("resumeDownload")}`}
-        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all cursor-pointer text-amber-600 dark:text-amber-300 bg-amber-500/15 ${sizeClasses} ${className}`}
+        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer text-amber-600 dark:text-amber-300 bg-amber-500/15 ${sizeClasses} ${className}`}
       >
         <PlayIcon size={iconSize} weight="fill" aria-hidden="true" />
         {showLabel && (
@@ -307,7 +315,7 @@ export const DownloadButton = memo(function DownloadButton({
         disabled={busy}
         aria-label={`${trackTitle} - ${error || t("downloadFailed")} - ${t("retryDownload")}`}
         title={`${error || t("downloadFailed")} - ${t("retryDownload")}`}
-        className={`sf-btn inline-flex items-center justify-center rounded-full text-rose-500 hover:bg-rose-500/15 cursor-pointer transition-colors ${sizeClasses} ${className}`}
+        className={`sf-btn inline-flex items-center justify-center rounded-full text-rose-500 hover:bg-rose-500/15 cursor-pointer active:scale-95 transition-colors ${sizeClasses} ${className}`}
       >
         <ArrowClockwiseIcon size={iconSize} weight="bold" aria-hidden="true" />
         {showLabel && <span className="ms-1.5 text-xs font-semibold">{t("retryDownload")}</span>}

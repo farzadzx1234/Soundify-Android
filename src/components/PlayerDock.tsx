@@ -301,8 +301,8 @@ export function PlayerDock() {
                     </span>
                   )}
                   {isCurrentTrackDownloading && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full border border-emerald-500/25 shrink-0" dir="ltr">
-                      <span className="h-1 w-1 rounded-full bg-emerald-400 animate-ping" />
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-full border border-emerald-500/20 shrink-0" dir="ltr">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
                       <span>{currentTrackDownloadProgress}%</span>
                     </span>
                   )}
@@ -382,8 +382,8 @@ export function PlayerDock() {
                     </span>
                   )}
                   {isCurrentTrackDownloading && (
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25 shrink-0" dir="ltr">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0" dir="ltr">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
                       <span>{pickText("Downloading", "در حال دانلود")} {currentTrackDownloadProgress}%</span>
                     </span>
                   )}
@@ -553,7 +553,7 @@ export function PlayerDock() {
               <DownloadButton track={currentTrack} size="md" />
             </div>
 
-            {/* Spotify Connect Multi-Device Button */}
+            {/* Soundify Connect Multi-Device Button */}
             <div className="relative inline-flex">
               <button
                 type="button"

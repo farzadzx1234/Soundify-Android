@@ -56,6 +56,12 @@ import {
 } from "./fallbackSeedData";
 import { secureStorage } from "./secureStorage";
 import { parseLrc } from "./lrc";
+import { filterSensitiveTracks, isSearchQuerySensitive } from "./contentFilter";
+import {
+  calculateTitleSimilarity,
+  extractCleanTitleAndArtist,
+  fetchLrclibDirectly,
+} from "./lyricsCleaner";
 import {
   encryptPayload,
   decryptPayload,
@@ -337,10 +343,13 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
           ? "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&auto=format&fit=crop&q=80"
           : "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80");
 
+  const rawTitle = partial?.title || defaultTitle;
+  const rawArtist = partial?.artistName || defaultArtist;
+
   const audioUrl =
     partial?.audioUrl && !partial.audioUrl.includes("fallback-preview.mp3")
       ? partial.audioUrl
-      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&fastStart=true`;
+      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&title=${encodeURIComponent(rawTitle)}&artist=${encodeURIComponent(rawArtist)}&fastStart=true`;
 
   const track: Track = {
     id: cleanId,
@@ -869,11 +878,17 @@ export const api = {
     if (params?.mood && params.mood !== "all") {
       filtered = filtered.filter((t) => t.mood.toLowerCase() === params.mood!.toLowerCase());
     }
-    return { tracks: filtered.map(normalizeTrack) };
+    const filteredTracks = filterSensitiveTracks(filtered);
+    return { tracks: filteredTracks.map(normalizeTrack) };
   },
   async searchExternal(q: string, source: "all" | "youtube" | "soundcloud" | "spotify" = "all", limit = 16) {
     const cleanQ = q.trim();
     if (!cleanQ || cleanQ.length < 2) {
+      return { query: q, source, results: [], total: 0 };
+    }
+
+    // Gracefully filter out politically sensitive keywords to protect user & app owner
+    if (isSearchQuerySensitive(cleanQ)) {
       return { query: q, source, results: [], total: 0 };
     }
 
@@ -933,7 +948,8 @@ export const api = {
           externalTracksCache.set(norm.id, norm);
           return norm;
         });
-        return { ...res, results: normalized };
+        const sanitizedResults = filterSensitiveTracks(normalized);
+        return { ...res, results: sanitizedResults, total: sanitizedResults.length };
       }
       if (res?.error) {
         return { query: q, source, results: [], total: 0, error: res.error };
@@ -952,7 +968,7 @@ export const api = {
 
       // Graceful offline fallback over bundled catalog for broad "all" searches
       const qLower = cleanQ.toLowerCase();
-      const matches = FALLBACK_TRACKS.filter(
+      const matches = filterSensitiveTracks(FALLBACK_TRACKS).filter(
         (t) =>
           t.title.toLowerCase().includes(qLower) ||
           t.titleFa?.toLowerCase().includes(qLower) ||
@@ -1225,18 +1241,74 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ lrcContent, source }) },
     );
   },
-  autoFetchLyrics(id: string, params?: { queryTitle?: string; queryArtist?: string; forceRefresh?: boolean; durationSec?: number }) {
-    return apiFetch<{
-      found: boolean;
-      source: string;
-      lrcContent: string;
-      lines: LyricLine[];
-      providerTrackName?: string;
-      providerArtistName?: string;
-    }>(`/api/tracks/${encodeURIComponent(id)}/lyrics/auto-fetch`, {
-      method: "POST",
-      body: JSON.stringify(params ?? {}),
-    });
+  async autoFetchLyrics(id: string, params?: { queryTitle?: string; queryArtist?: string; forceRefresh?: boolean; durationSec?: number }) {
+    const rawTitle = (params?.queryTitle || "").trim();
+    const rawArtist = (params?.queryArtist || "").trim();
+    const { title: cleanTitle, artist: cleanArtist } = extractCleanTitleAndArtist(rawTitle, rawArtist);
+
+    // If query has no meaningful title, return empty result to avoid showing random mismatched tracks
+    if (!cleanTitle && !id.startsWith("track-")) {
+      return {
+        found: false,
+        source: "none",
+        lrcContent: "",
+        lines: [] as LyricLine[],
+      };
+    }
+
+    try {
+      const res = await apiFetch<{
+        found: boolean;
+        source: string;
+        lrcContent: string;
+        lines: LyricLine[];
+        providerTrackName?: string;
+        providerArtistName?: string;
+      }>(`/api/tracks/${encodeURIComponent(id)}/lyrics/auto-fetch`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...params,
+          queryTitle: cleanTitle || params?.queryTitle,
+          queryArtist: cleanArtist || params?.queryArtist,
+        }),
+      });
+
+      if (res && res.found && res.lines && res.lines.length > 0) {
+        // If provider returned a track name and we have a clean title, verify similarity
+        if (cleanTitle && res.providerTrackName) {
+          const sim = calculateTitleSimilarity(cleanTitle, res.providerTrackName);
+          if (sim < 0.4) {
+            // Mismatched track lyrics from different song by same artist! Discard!
+            return {
+              found: false,
+              source: "none",
+              lrcContent: "",
+              lines: [] as LyricLine[],
+            };
+          }
+        }
+        return res;
+      }
+    } catch {
+      // Backend unavailable or error
+    }
+
+    // Direct client-side LRCLIB cascade fallback
+    if (cleanTitle) {
+      try {
+        const direct = await fetchLrclibDirectly(cleanTitle, cleanArtist, params?.durationSec);
+        if (direct && direct.found && direct.lines.length > 0) {
+          return direct;
+        }
+      } catch {}
+    }
+
+    return {
+      found: false,
+      source: "none",
+      lrcContent: "",
+      lines: [] as LyricLine[],
+    };
   },
   autoSyncPlainLyrics(plainLyrics: string, durationSec: number, title?: string, artist?: string) {
     return apiFetch<{ lrcContent: string; lines: LyricLine[] }>("/api/lyrics/auto-sync", {
@@ -1588,7 +1660,7 @@ export const api = {
     });
   },
 
-  // Spotify Connect Multi-Device Playback Sync
+  // Soundify Connect Multi-Device Playback Sync
   async registerDevice(payload: {
     deviceId?: string;
     id?: string;

@@ -23,6 +23,7 @@ import { Button, Glass, GlassSegmented, SearchField } from "@/components/GlassCo
 import { ExternalTrackCard } from "@/components/ExternalTrackCard";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
+import { filterSensitiveTracks } from "@/lib/contentFilter";
 import type { Playlist, Track } from "@/lib/types";
 
 const MOODS = ["all", "Chill", "Energetic", "Deep", "Emotional", "Midnight", "Focus", "Soulful"];
@@ -239,7 +240,7 @@ function SearchPageInner() {
       api
         .getTracks({ q: debouncedQuery.trim() || undefined, mood })
         .then((res) => {
-          if (active) setLocalTracks(res.tracks);
+          if (active) setLocalTracks(filterSensitiveTracks(res.tracks));
         })
         .catch(() => {
           if (active) setLocalTracks([]);
@@ -275,7 +276,7 @@ function SearchPageInner() {
         .searchExternal(cleanQ, extSubSource, 20)
         .then((res) => {
           if (!active) return;
-          setExternalTracks(res.results || []);
+          setExternalTracks(filterSensitiveTracks(res.results || []));
           if (res.error && (!res.results || res.results.length === 0)) {
             setExternalError(res.error);
           }

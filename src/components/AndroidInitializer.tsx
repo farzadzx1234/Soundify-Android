@@ -31,7 +31,7 @@ export function AndroidInitializer() {
   // Register Back Button priority handlers:
   // 1. Full-screen Player Overlay
   // 2. Auth Dialog
-  // 3. Spotify Connect Device Picker
+  // 3. Soundify Connect Device Picker
   // 4. In-App Navigation (go back if not on home `/`)
   useEffect(() => {
     const unregister = registerBackButtonHandler(() => {

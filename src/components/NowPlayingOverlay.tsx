@@ -41,7 +41,6 @@ import { LyricsPanel } from "./LyricsPanel";
 import { SpectrumVisualizer } from "./SpectrumVisualizer";
 import { WaveformScrubber } from "./WaveformScrubber";
 import { DownloadButton } from "./DownloadButton";
-import { useTrackDownload } from "@/lib/downloadManager";
 import { OptimizedTrackImage } from "./OptimizedTrackImage";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import {
@@ -774,9 +773,6 @@ export function NowPlayingOverlay() {
     setDevicePickerOpen,
     transferToThisDevice,
   } = useDeviceSync();
-
-  const { isDownloading: isCurrentTrackDownloading, progress: currentTrackDownloadProgress } =
-    useTrackDownload(currentTrack);
 
   const [prevExpandedState, setPrevExpandedState] = useState(expanded);
   const [prevQueueOpen, setPrevQueueOpen] = useState(queueOpen);
@@ -1793,26 +1789,6 @@ export function NowPlayingOverlay() {
                     </button>
                   </div>
                 </div>
-
-                {isCurrentTrackDownloading && (
-                  <div className="w-full max-w-[356px] sm:max-w-md px-3.5 py-2.5 rounded-2xl bg-white/[0.08] backdrop-blur-md border border-white/10 shrink-0 space-y-1.5 animate-fade-in shadow-md">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/90">
-                      <span className="flex items-center gap-1.5">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        {pickText("Downloading track...", "در حال دانلود آهنگ...")}
-                      </span>
-                      <span className="font-mono tabular-nums text-emerald-400 font-bold" dir="ltr">
-                        {currentTrackDownloadProgress}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-white/15 h-1.5 rounded-full overflow-hidden p-0.5">
-                      <div
-                        className="h-full bg-gradient-to-r from-indigo-400 via-teal-400 to-emerald-400 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.max(3, currentTrackDownloadProgress)}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
 
                 <SpectrumVisualizer align="center" className="!h-6 min-[375px]:!h-9 max-w-[348px] sm:max-w-md shrink-0" />
 

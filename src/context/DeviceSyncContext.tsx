@@ -615,7 +615,7 @@ export function DeviceSyncProvider({ children }: { children: React.ReactNode }) 
     };
   }, [user, deviceId, applyServerSnapshot, isSyncEnabled, refreshDevices]);
 
-  // Transfer playback to specified device (Spotify Connect handover)
+  // Transfer playback to specified device (Soundify Connect handover)
   const transferToDevice = useCallback(
     async (targetDeviceId: string, payload?: { currentTime?: number; trackId?: string; isPlaying?: boolean }) => {
       if (!deviceId || !isSyncEnabled) return;

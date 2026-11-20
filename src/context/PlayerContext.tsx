@@ -25,6 +25,7 @@ import {
   triggerImmediateNetworkProbe,
 } from "@/lib/networkResilience";
 import { findActiveLyricIndex } from "@/lib/lrc";
+import { extractCleanTitleAndArtist } from "@/lib/lyricsCleaner";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
@@ -257,6 +258,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const [isOffline, setIsOffline] = useState(() => checkIsOffline());
   const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
+  const noticeTypeRef = useRef<"network" | "stream" | null>(null);
   const [downloadVersion, setDownloadVersion] = useState(0);
 
   useEffect(() => {
@@ -268,6 +270,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const { t, lang } = useI18n();
 
   const dismissOfflineNotice = useCallback(() => {
+    noticeTypeRef.current = null;
     setOfflineNotice(null);
   }, []);
 
@@ -658,10 +661,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (forceFetch || customQuery?.queryTitle || customQuery?.queryArtist || trackId.startsWith("ext-")) {
+          const rawQTitle = customQuery?.queryTitle || currentTrackRef.current?.title || "";
+          const rawQArtist = customQuery?.queryArtist || currentTrackRef.current?.artistName || "";
+          const { title: cleanQTitle, artist: cleanQArtist } = extractCleanTitleAndArtist(rawQTitle, rawQArtist);
+
           const res = await api.autoFetchLyrics(trackId, {
             forceRefresh: true,
-            queryTitle: customQuery?.queryTitle || currentTrackRef.current?.title,
-            queryArtist: customQuery?.queryArtist || currentTrackRef.current?.artistName,
+            queryTitle: cleanQTitle || rawQTitle,
+            queryArtist: cleanQArtist || rawQArtist,
             durationSec: currentTrackRef.current?.durationSec,
           });
           if (res.found && Array.isArray(res.lines) && res.lines.length > 0) {
@@ -734,6 +741,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     reportNetworkFailure();
     const browserOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
     setServerConnectivityStatus(browserOnline ? "vpn_or_server_down" : "offline");
+    noticeTypeRef.current = "network";
     setOfflineNotice(
       browserOnline
         ? lang === "fa"
@@ -983,13 +991,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           } catch {}
         }
         const canonical = extractCanonicalExternalUrl(trackToPlay.pageUrl || trackToPlay.audioUrl, trackToPlay.id);
+        const { title: cleanTitle, artist: cleanArtist } = extractCleanTitleAndArtist(trackToPlay.title, trackToPlay.artistName);
+        const trackTitleParam = cleanTitle || trackToPlay.title || "";
+        const trackArtistParam = cleanArtist || trackToPlay.artistName || "";
+
         const rawResolved = trackToPlay.audioUrl && !trackToPlay.audioUrl.includes("fallback-preview.mp3")
           ? trackToPlay.audioUrl
-          : `/api/stream/external?url=${encodeURIComponent(canonical || trackToPlay.id)}&id=${encodeURIComponent(trackToPlay.id)}&fastStart=true`;
-        const resolvedAudio =
-          rawResolved.includes("/api/stream/external") && !rawResolved.includes("fastStart=")
-            ? `${rawResolved}${rawResolved.includes("?") ? "&" : "?"}fastStart=true`
-            : rawResolved;
+          : `/api/stream/external?url=${encodeURIComponent(canonical || trackToPlay.id)}&id=${encodeURIComponent(trackToPlay.id)}&title=${encodeURIComponent(trackTitleParam)}&artist=${encodeURIComponent(trackArtistParam)}&fastStart=true`;
+        let resolvedAudio = rawResolved;
+        if (resolvedAudio.includes("/api/stream/external")) {
+          if (!resolvedAudio.includes("fastStart=")) {
+            resolvedAudio = `${resolvedAudio}${resolvedAudio.includes("?") ? "&" : "?"}fastStart=true`;
+          }
+          if (!resolvedAudio.includes("title=") && trackTitleParam) {
+            resolvedAudio = `${resolvedAudio}&title=${encodeURIComponent(trackTitleParam)}`;
+          }
+          if (!resolvedAudio.includes("artist=") && trackArtistParam) {
+            resolvedAudio = `${resolvedAudio}&artist=${encodeURIComponent(trackArtistParam)}`;
+          }
+        }
 
         trackToPlay = {
           ...trackToPlay,
@@ -1778,7 +1798,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Spotify Connect Multi-Device Command Listener
+  // Soundify Connect Multi-Device Command Listener
   useEffect(() => {
     const unregister = registerCommandHandler((command, rawPayload) => {
       // 1. In a multi-tab browser session, follower tabs must yield command actuation to the Leader tab
@@ -2359,7 +2379,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         savePlayerState(playbackPos);
       }
 
-      // Periodic Spotify Connect state broadcast (every 4 seconds while active to reduce battery wakeups)
+      // Periodic Soundify Connect state broadcast (every 4 seconds while active to reduce battery wakeups)
       if (isThisDeviceActiveRef.current && isPlayingRef.current && currentTrackRef.current) {
         if (now - lastBroadcastTimeRef.current >= 4000) {
           lastBroadcastTimeRef.current = now;
@@ -2575,6 +2595,43 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         isPlayingRef.current = true;
                         broadcastLeaderState();
                         broadcastCurrentState();
+                        noticeTypeRef.current = null;
+                        setOfflineNotice(null);
+                        return;
+                      }
+                    }
+                  } catch {}
+                } else {
+                  // YouTube stream failed (e.g. age-restricted Persian rap, explicit cipher gate)
+                  // Try SoundCloud fallback first, then clean YouTube query
+                  try {
+                    const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
+                    const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
+                    if (fallbackQuery) {
+                      const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 1);
+                      if (scSearch.results && scSearch.results.length > 0) {
+                        const scMatch = scSearch.results[0];
+                        const fallbackTrack: Track = {
+                          ...curr,
+                          source: "soundcloud",
+                          audioUrl: scMatch.audioUrl,
+                          pageUrl: scMatch.pageUrl || curr.pageUrl,
+                          coverUrl: scMatch.coverUrl || curr.coverUrl,
+                        };
+                        currentTrackRef.current = fallbackTrack;
+                        setCurrentTrack(fallbackTrack);
+                        updateTrackInQueue(fallbackTrack);
+                        externalTracksCache.set(curr.id, fallbackTrack);
+                        const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
+                        isSettingSourceRef.current = true;
+                        audio.src = fbSource;
+                        await audio.play();
+                        isSettingSourceRef.current = false;
+                        setIsPlaying(true);
+                        isPlayingRef.current = true;
+                        broadcastLeaderState();
+                        broadcastCurrentState();
+                        noticeTypeRef.current = null;
                         setOfflineNotice(null);
                         return;
                       }
@@ -2612,6 +2669,41 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                       isPlayingRef.current = true;
                       broadcastLeaderState();
                       broadcastCurrentState();
+                      noticeTypeRef.current = null;
+                      setOfflineNotice(null);
+                      return;
+                    }
+                  }
+                } catch {}
+              } else {
+                try {
+                  const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
+                  const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
+                  if (fallbackQuery) {
+                    const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 1);
+                    if (scSearch.results && scSearch.results.length > 0) {
+                      const scMatch = scSearch.results[0];
+                      const fallbackTrack: Track = {
+                        ...curr,
+                        source: "soundcloud",
+                        audioUrl: scMatch.audioUrl,
+                        pageUrl: scMatch.pageUrl || curr.pageUrl,
+                        coverUrl: scMatch.coverUrl || curr.coverUrl,
+                      };
+                      currentTrackRef.current = fallbackTrack;
+                      setCurrentTrack(fallbackTrack);
+                      updateTrackInQueue(fallbackTrack);
+                      externalTracksCache.set(curr.id, fallbackTrack);
+                      const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
+                      isSettingSourceRef.current = true;
+                      audio.src = fbSource;
+                      await audio.play();
+                      isSettingSourceRef.current = false;
+                      setIsPlaying(true);
+                      isPlayingRef.current = true;
+                      broadcastLeaderState();
+                      broadcastCurrentState();
+                      noticeTypeRef.current = null;
                       setOfflineNotice(null);
                       return;
                     }
@@ -2632,6 +2724,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       notifyServerConnectivityIssue();
       const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
       const isExternalFailed = isExternalTrack(curr);
+      noticeTypeRef.current = "stream";
       setOfflineNotice(
         isServerDown
           ? (lang === "fa"
@@ -2682,7 +2775,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setIsOffline(!event.isOnline);
       if (!event.isOnline) return;
 
-      setOfflineNotice(null);
+      if (noticeTypeRef.current === "network") {
+        setOfflineNotice(null);
+        noticeTypeRef.current = null;
+      }
       if (!event.recovered) return;
 
       const intent = getPreservedPlaybackIntent();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractCleanTitleAndArtist } from "@/lib/lyricsCleaner";
+import { extractCanonicalExternalUrl } from "@/lib/api";
 import type { Track } from "@/lib/types";
 
 describe("Playback Fallback & Stream Error Resilience", () => {
@@ -66,5 +67,17 @@ describe("Playback Fallback & Stream Error Resilience", () => {
     // Notice must NOT be cleared because it was a stream error, not a network failure!
     expect(offlineNotice).toBe("خطا در بارگذاری استریم صوتی آنلاین");
     expect(noticeType).toBe("stream");
+  });
+
+  it("extracts canonical URL cleanly from proxy stream URLs containing Persian characters", () => {
+    const proxyUrl = "/api/stream/external?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Ddqt8Z1k08a4&id=ext-youtube-dqt8Z1k08a4&title=%D9%87%D9%84%DB%8C%D8%A7&artist=%D9%BE%D9%88%D8%AA%DA%A9";
+    const canonical = extractCanonicalExternalUrl(proxyUrl);
+    expect(canonical).toBe("https://www.youtube.com/watch?v=dqt8Z1k08a4");
+  });
+
+  it("canonicalizes SoundCloud URLs without double-decoding mangling", () => {
+    const proxyUrl = "/api/stream/external?url=https%3A%2F%2Fsoundcloud.com%2Fputak%2Fhelia&title=Helia";
+    const canonical = extractCanonicalExternalUrl(proxyUrl);
+    expect(canonical).toBe("https://soundcloud.com/putak/helia");
   });
 });

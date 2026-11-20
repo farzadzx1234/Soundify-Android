@@ -222,15 +222,7 @@ export function extractCanonicalExternalUrl(inputUrl?: string | null, trackId?: 
     candidate = trackId.trim();
   }
 
-  try {
-    if (candidate.includes("%")) {
-      candidate = decodeURIComponent(candidate);
-      if (candidate.includes("%")) {
-        candidate = decodeURIComponent(candidate);
-      }
-    }
-  } catch {}
-
+  // Check if candidate contains an embedded url= parameter (e.g. /api/stream/external?url=...)
   const urlParamMatch = candidate.match(/[?&]url=([^&]+)/i);
   if (urlParamMatch) {
     let extracted = urlParamMatch[1];
@@ -832,6 +824,9 @@ export function normalizePlaylist(playlist: Playlist): Playlist {
 
 export const api = {
   async getTracks(params?: { q?: string; genre?: string; mood?: string; sort?: string; liked?: boolean; reposted?: boolean; limit?: number }) {
+    if (params?.q && isSearchQuerySensitive(params.q)) {
+      return { tracks: [] };
+    }
     try {
       const qs = new URLSearchParams();
       if (params?.q) qs.set("q", params.q);
@@ -845,10 +840,11 @@ export const api = {
       const res = await apiFetch<{ tracks: Track[] }>(`/api/mobile/v1/tracks${suffix}`);
       if (res?.tracks && Array.isArray(res.tracks)) {
         const normalized = res.tracks.map(normalizeTrack);
-        if (!suffix && normalized.length > 0) {
-          writeCatalogCache("tracks", normalized);
+        const filtered = filterSensitiveTracks(normalized);
+        if (!suffix && filtered.length > 0) {
+          writeCatalogCache("tracks", filtered);
         }
-        return { tracks: normalized };
+        return { tracks: filtered };
       }
     } catch {
       // Backend unreachable or offline: try cached live server catalog before bundled fallback
@@ -858,7 +854,7 @@ export const api = {
       ? getCachedCatalogTracks()
       : null;
     if (cachedLiveTracks) {
-      return { tracks: cachedLiveTracks };
+      return { tracks: filterSensitiveTracks(cachedLiveTracks) };
     }
 
     let filtered = [...FALLBACK_TRACKS];
@@ -911,6 +907,11 @@ export const api = {
           }
         }
       } catch {}
+    }
+
+    // Re-check after Spotify metadata resolution
+    if (isSearchQuerySensitive(effectiveQuery)) {
+      return { query: q, source, results: [], total: 0 };
     }
 
     try {

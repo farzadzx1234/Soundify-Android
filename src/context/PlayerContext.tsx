@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   api,
   extractCanonicalExternalUrl,
+  extractYouTubeIdClient,
   externalTracksCache,
   isExternalTrack,
   normalizeTrack,
@@ -293,6 +294,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const lastSavedStateTimeRef = useRef<number>(0);
   const refreshAttemptsRef = useRef<Record<string, number>>({});
+  const streamFallbackAttemptsRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -688,8 +690,29 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           return { found: false, source: "none" };
         }
         const res = await api.getLyrics(trackId);
-        const lns = res.lines ?? [];
-        const src = res.source ?? "none";
+        let lns = res.lines ?? [];
+        let src = res.source ?? "none";
+
+        // Cascading discovery: If catalog track has no lyrics in DB, automatically cascade to autoFetchLyrics with title & artist
+        if (lns.length === 0 && !checkIsOffline()) {
+          const rawQTitle = currentTrackRef.current?.title || "";
+          const rawQArtist = currentTrackRef.current?.artistName || "";
+          const { title: cleanQTitle, artist: cleanQArtist } = extractCleanTitleAndArtist(rawQTitle, rawQArtist);
+          if (cleanQTitle) {
+            try {
+              const autoRes = await api.autoFetchLyrics(trackId, {
+                queryTitle: cleanQTitle,
+                queryArtist: cleanQArtist,
+                durationSec: currentTrackRef.current?.durationSec,
+              });
+              if (autoRes.found && Array.isArray(autoRes.lines) && autoRes.lines.length > 0) {
+                lns = autoRes.lines;
+                src = autoRes.source ?? "lrclib";
+              }
+            } catch {}
+          }
+        }
+
         setLyrics(lns);
         lyricsRef.current = lns;
         setLyricsSource(src);
@@ -877,19 +900,135 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // If initial stream playback failed on an online external track, trigger immediate cascade fallback to SoundCloud or clean YouTube mirror
+      if (
+        isExternalTrackItem &&
+        !isDownloaded &&
+        !streamFallbackAttemptsRef.current[track.id] &&
+        playRequestIdRef.current === reqId &&
+        !userPausedIntentRef.current
+      ) {
+        streamFallbackAttemptsRef.current[track.id] = true;
+        const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(track.title, track.artistName);
+        const fallbackQ = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
+        if (fallbackQ) {
+          // 1. Try SoundCloud mirror first (especially resilient for Persian rap tracks like Putak - Helia or Hoosein - Be Mola)
+          if (track.source !== "soundcloud") {
+            try {
+              const scSearch = await api.searchExternal(fallbackQ, "soundcloud", 3);
+              if (scSearch.results && scSearch.results.length > 0) {
+                const scMatch = scSearch.results[0];
+                const fallbackTrack: Track = {
+                  ...track,
+                  source: "soundcloud",
+                  audioUrl: scMatch.audioUrl,
+                  pageUrl: scMatch.pageUrl || track.pageUrl,
+                  coverUrl: scMatch.coverUrl || track.coverUrl,
+                };
+                currentTrackRef.current = fallbackTrack;
+                setCurrentTrack(fallbackTrack);
+                setQueue((prevQueue) => {
+                  const nextQ = prevQueue.map((t) => (t.id === track.id ? fallbackTrack : t));
+                  queueRef.current = nextQ;
+                  return nextQ;
+                });
+                externalTracksCache.set(track.id, fallbackTrack);
+                const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
+                isSettingSourceRef.current = true;
+                audio.src = fbSource;
+                if (desiredPos > 0) {
+                  const onMeta = () => {
+                    try {
+                      audio.currentTime = desiredPos;
+                    } catch {}
+                    audio.removeEventListener("loadedmetadata", onMeta);
+                  };
+                  audio.addEventListener("loadedmetadata", onMeta);
+                }
+                await audio.play();
+                isSettingSourceRef.current = false;
+                isRetryingPlayRef.current = false;
+                setIsPlaying(true);
+                isPlayingRef.current = true;
+                broadcastLeaderState();
+                noticeTypeRef.current = null;
+                setOfflineNotice(null);
+                return true;
+              }
+            } catch {}
+          }
+
+          // 2. Try alternative YouTube search query (clean audio / lyric version)
+          try {
+            const ytSearch = await api.searchExternal(`${fallbackQ} audio`, "youtube", 3);
+            const currentYtId = extractYouTubeIdClient(track.pageUrl || track.audioUrl || track.id);
+            const ytMatch = ytSearch.results?.find((r) => {
+              const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
+              return rId && rId !== currentYtId;
+            }) || ytSearch.results?.[0];
+
+            if (ytMatch && ytMatch.id !== track.id) {
+              const fallbackTrack: Track = {
+                ...track,
+                source: "youtube",
+                audioUrl: ytMatch.audioUrl,
+                pageUrl: ytMatch.pageUrl || track.pageUrl,
+                coverUrl: ytMatch.coverUrl || track.coverUrl,
+              };
+              currentTrackRef.current = fallbackTrack;
+              setCurrentTrack(fallbackTrack);
+              setQueue((prevQueue) => {
+                const nextQ = prevQueue.map((t) => (t.id === track.id ? fallbackTrack : t));
+                queueRef.current = nextQ;
+                return nextQ;
+              });
+              externalTracksCache.set(track.id, fallbackTrack);
+              const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
+              isSettingSourceRef.current = true;
+              audio.src = fbSource;
+              if (desiredPos > 0) {
+                const onMeta = () => {
+                  try {
+                    audio.currentTime = desiredPos;
+                  } catch {}
+                  audio.removeEventListener("loadedmetadata", onMeta);
+                };
+                audio.addEventListener("loadedmetadata", onMeta);
+              }
+              await audio.play();
+              isSettingSourceRef.current = false;
+              isRetryingPlayRef.current = false;
+              setIsPlaying(true);
+              isPlayingRef.current = true;
+              broadcastLeaderState();
+              noticeTypeRef.current = null;
+              setOfflineNotice(null);
+              return true;
+            }
+          } catch {}
+        }
+      }
+
       if (playRequestIdRef.current === reqId) {
         isSettingSourceRef.current = false;
         isRetryingPlayRef.current = false;
         setIsPlaying(false);
         isPlayingRef.current = false;
         broadcastLeaderState();
-        if (!isDownloaded) {
+        if (isExternalTrackItem) {
+          noticeTypeRef.current = "stream";
+          setOfflineNotice(
+            lang === "fa"
+              ? "امکان پخش این قطعه وجود ندارد (محدودیت سنی یا کپی‌رایت منبع آنلاین). منبع جایگزین یا آهنگ دیگری را امتحان کنید."
+              : "Unable to stream this track (source restricted or blocked). Try an alternative track or source.",
+          );
+        } else if (!isDownloaded) {
           notifyServerConnectivityIssue();
         }
       }
       return false;
     },
-    [broadcastLeaderState, broadcastLocalState, notifyServerConnectivityIssue],
+    [broadcastLeaderState, broadcastLocalState, lang, notifyServerConnectivityIssue],
   );
 
   const playTrack = useCallback(
@@ -2721,21 +2860,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setIsPlaying(false);
       isPlayingRef.current = false;
       broadcastLeaderState();
-      notifyServerConnectivityIssue();
-      const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
       const isExternalFailed = isExternalTrack(curr);
+      if (!isExternalFailed) {
+        notifyServerConnectivityIssue();
+      }
+      const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
       noticeTypeRef.current = "stream";
       setOfflineNotice(
-        isServerDown
+        isExternalFailed
           ? (lang === "fa"
-              ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
-              : "Cannot connect to server - check internet connection or VPN status")
-          : (lang === "fa"
-              ? (isExternalFailed
-                  ? "خطا در بارگذاری استریم صوتی آنلاین (یوتیوب / ساندکلود / اسپاتیفای) - لطفاً اتصال اینترنت یا فیلترشکن را بررسی کرده و مجدداً تلاش نمایید"
-                  : "خطا در پخش قطعه صوتی آنلاین - لطفاً اتصال اینترنت یا وضعیت سرور را بررسی کنید")
-              : (isExternalFailed
-                  ? "Error loading online audio stream (YouTube / SoundCloud / Spotify) - please check connection or VPN and retry"
+              ? "امکان پخش این قطعه وجود ندارد (محدودیت سنی یا کپی‌رایت منبع آنلاین). منبع جایگزین یا آهنگ دیگری را امتحان کنید."
+              : "Unable to stream this track (source restricted or blocked). Try an alternative track or source.")
+          : (isServerDown
+              ? (lang === "fa"
+                  ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
+                  : "Cannot connect to server - check internet connection or VPN status")
+              : (lang === "fa"
+                  ? "خطا در پخش قطعه صوتی آنلاین - لطفاً اتصال اینترنت یا وضعیت سرور را بررسی کنید"
                   : "Error playing online audio track - please check connection or server status")),
       );
     };

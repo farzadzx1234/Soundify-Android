@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect, useCallback, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import {
   CheckCircleIcon,
   HardDrivesIcon,
@@ -14,6 +15,8 @@ import { exportTrackToDeviceStorage } from "@/lib/mediaExport";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { OptimizedTrackImage } from "./OptimizedTrackImage";
 import type { Track } from "@/lib/types";
+
+const emptySubscribe = () => () => {};
 
 export interface DownloadActionSheetProps {
   track: Track | null;
@@ -32,6 +35,11 @@ export function DownloadActionSheet({
 }: DownloadActionSheetProps) {
   const { pickText, lang } = useI18n();
   const { playTrack } = usePlayer();
+  const isMounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
+  );
 
   // Escape key handler
   const handleKeyDown = useCallback(
@@ -49,7 +57,7 @@ export function DownloadActionSheet({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, handleKeyDown]);
 
-  if (!isOpen || !track) return null;
+  if (!isOpen || !track || !isMounted) return null;
 
   const title = pickText(track.title, track.titleFa) || "Track";
   const artist = pickText(track.artistName, track.artistNameFa) || "Artist";
@@ -79,7 +87,7 @@ export function DownloadActionSheet({
     onClose();
   };
 
-  return (
+  const sheetContent = (
     <div
       role="dialog"
       aria-modal="true"
@@ -197,4 +205,6 @@ export function DownloadActionSheet({
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(sheetContent, document.body) : null;
 }

@@ -66,6 +66,16 @@ const SENSITIVE_KEYWORDS: readonly string[] = [
   "خیزش انقلابی",
   "شعار شبانه",
   "سوگند به خون یاران",
+  "برای آزادی",
+  "برای...",
+  "شروین حاجی پور برای",
+  "سر اومد زمستون",
+  "مرگ بر جمهوری اسلامی",
+  "نه به جمهوری اسلامی",
+  "کشتار آبان",
+  "آبان ۹۸",
+  "آبان 98",
+  "هواپیمای اوکراینی",
 
   // English equivalents & transliterations
   "woman life freedom",
@@ -77,6 +87,8 @@ const SENSITIVE_KEYWORDS: readonly string[] = [
   "khamenei",
   "down with khamenei",
   "down with dictator",
+  "down with islamic republic",
+  "no to islamic republic",
   "iran revolution",
   "iran protests",
   "toomaj salehi",
@@ -88,6 +100,10 @@ const SENSITIVE_KEYWORDS: readonly string[] = [
   "mojahidin khalq",
   "maryam rajavi",
   "masoud rajavi",
+  "baraye",
+  "shervin baraye",
+  "sar oumad zemestoon",
+  "ps752",
 ];
 
 // Pre-normalized set for fast lookup

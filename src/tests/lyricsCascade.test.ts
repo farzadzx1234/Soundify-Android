@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculateTitleSimilarity,
   cleanTitleString,
+  convertPlainLyricsToLines,
   extractCleanTitleAndArtist,
   normalizePersianChars,
 } from "@/lib/lyricsCleaner";
@@ -42,5 +43,15 @@ describe("Lyrics Cleaning & Cascade Logic", () => {
     expect(normalizePersianChars("يگانه")).toBe("یگانه");
     expect(normalizePersianChars("كافه")).toBe("کافه");
     expect(normalizePersianChars("آهنگِ شاد")).toBe("اهنگ شاد");
+  });
+
+  it("converts plain lyrics into timed line entries for unsynced LRCLIB tracks", () => {
+    const plain = "خط اول ترانه\nخط دوم ترانه\nخط سوم ترانه";
+    const res = convertPlainLyricsToLines(plain, 120);
+    expect(res.lines).toHaveLength(3);
+    expect(res.lines[0].text).toBe("خط اول ترانه");
+    expect(res.lines[0].timeMs).toBe(0);
+    expect(res.lines[1].timeMs).toBe(30000);
+    expect(res.lrcContent).toContain("[00:00.00] خط اول ترانه");
   });
 });

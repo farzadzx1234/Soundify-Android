@@ -6,7 +6,7 @@
  * and stripping promotional/video noise tags from queries.
  */
 
-import { parseLrc } from "./lrc";
+import { formatLrcTimestamp, parseLrc } from "./lrc";
 import type { LyricLine } from "./types";
 
 // Noise patterns commonly present in YouTube / external track titles
@@ -134,6 +134,23 @@ export interface DirectLyricsResult {
   providerArtistName?: string;
 }
 
+export function convertPlainLyricsToLines(
+  plain: string,
+  durationSec?: number,
+): { lrcContent: string; lines: LyricLine[] } {
+  const rawLines = plain.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  if (rawLines.length === 0) return { lrcContent: "", lines: [] };
+  const stepMs = typeof durationSec === "number" && durationSec > 10
+    ? Math.round((durationSec * 1000) / (rawLines.length + 1))
+    : 4000;
+  const lines: LyricLine[] = rawLines.map((text, i) => ({
+    timeMs: i * stepMs,
+    text,
+  }));
+  const lrcContent = lines.map((l) => `${formatLrcTimestamp(l.timeMs)} ${l.text}`).join("\n");
+  return { lrcContent, lines };
+}
+
 /**
  * Direct client-side LRCLIB fetcher with strict title verification.
  * Serves as resilient fallback when backend endpoint is unreachable or misses.
@@ -186,6 +203,20 @@ export async function fetchLrclibDirectly(
             };
           }
         }
+        // Fallback to plain lyrics if synced is absent
+        if (data.plainLyrics && data.plainLyrics.trim().length > 0) {
+          const { lrcContent: plainLrc, lines: plainLines } = convertPlainLyricsToLines(data.plainLyrics, durationSec);
+          if (plainLines.length > 0) {
+            return {
+              found: true,
+              source: "lrclib-plain",
+              lrcContent: plainLrc,
+              lines: plainLines,
+              providerTrackName: data.trackName,
+              providerArtistName: data.artistName,
+            };
+          }
+        }
       }
     } catch {
       // fall through to search
@@ -211,7 +242,7 @@ export async function fetchLrclibDirectly(
       }>;
 
       if (Array.isArray(list) && list.length > 0) {
-        // Filter candidates that have synced lyrics and STRICT title similarity >= 0.5
+        // Pass 1: candidate with synced lyrics and STRICT title similarity >= 0.5
         for (const item of list) {
           if (!item.syncedLyrics || !item.trackName) continue;
           const similarity = calculateTitleSimilarity(cleanTitle, item.trackName);
@@ -223,6 +254,25 @@ export async function fetchLrclibDirectly(
                 source: "lrclib-direct",
                 lrcContent: item.syncedLyrics,
                 lines,
+                providerTrackName: item.trackName,
+                providerArtistName: item.artistName,
+              };
+            }
+          }
+        }
+
+        // Pass 2: candidate with plain lyrics and STRICT title similarity >= 0.6
+        for (const item of list) {
+          if (!item.plainLyrics || !item.trackName) continue;
+          const similarity = calculateTitleSimilarity(cleanTitle, item.trackName);
+          if (similarity >= 0.6) {
+            const { lrcContent: plainLrc, lines: plainLines } = convertPlainLyricsToLines(item.plainLyrics, durationSec);
+            if (plainLines.length > 0) {
+              return {
+                found: true,
+                source: "lrclib-plain",
+                lrcContent: plainLrc,
+                lines: plainLines,
                 providerTrackName: item.trackName,
                 providerArtistName: item.artistName,
               };

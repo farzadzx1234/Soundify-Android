@@ -23,7 +23,7 @@ import { Button, Glass, GlassSegmented, SearchField } from "@/components/GlassCo
 import { ExternalTrackCard } from "@/components/ExternalTrackCard";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
-import { filterSensitiveTracks } from "@/lib/contentFilter";
+import { filterSensitiveTracks, isSearchQuerySensitive } from "@/lib/contentFilter";
 import type { Playlist, Track } from "@/lib/types";
 
 const MOODS = ["all", "Chill", "Energetic", "Deep", "Emotional", "Midnight", "Focus", "Soulful"];
@@ -233,12 +233,20 @@ function SearchPageInner() {
   // Local catalog search effect
   useEffect(() => {
     if (searchSource !== "local") return;
+    const cleanQ = debouncedQuery.trim();
     let active = true;
 
     const timer = setTimeout(() => {
+      if (isSearchQuerySensitive(cleanQ)) {
+        if (active) {
+          setLocalTracks([]);
+          setLocalLoading(false);
+        }
+        return;
+      }
       setLocalLoading(true);
       api
-        .getTracks({ q: debouncedQuery.trim() || undefined, mood })
+        .getTracks({ q: cleanQ || undefined, mood })
         .then((res) => {
           if (active) setLocalTracks(filterSensitiveTracks(res.tracks));
         })
@@ -260,9 +268,18 @@ function SearchPageInner() {
   useEffect(() => {
     if (searchSource !== "external") return;
     const cleanQ = debouncedQuery.trim();
-
     let active = true;
+
     const timer = setTimeout(() => {
+      if (isSearchQuerySensitive(cleanQ)) {
+        if (active) {
+          setExternalTracks([]);
+          setExternalLoading(false);
+          setExternalError(null);
+        }
+        return;
+      }
+
       if (!cleanQ || cleanQ.length < 2) {
         setExternalTracks([]);
         setExternalLoading(false);

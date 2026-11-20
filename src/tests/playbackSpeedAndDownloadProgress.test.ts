@@ -11,6 +11,7 @@ import {
 } from "@/lib/downloadManager";
 import { clearAllDownloadedTracks } from "@/lib/offlineAudioStorage";
 import { getServerConnectivityStatus, setServerConnectivityStatus } from "@/lib/mobileBackend";
+import { isNetworkEffectivelyOffline } from "@/lib/networkResilience";
 import type { Track } from "@/lib/types";
 
 describe("Playback Speed, Fast Stream Start & Visual Download Progress", () => {
@@ -172,6 +173,11 @@ describe("Playback Speed, Fast Stream Start & Visual Download Progress", () => {
       // When online, even if device has network switches, getServerConnectivityStatus confirms online
       setServerConnectivityStatus("online");
       expect(getServerConnectivityStatus()).toBe("online");
+    });
+
+    it("ensures isNetworkEffectivelyOffline returns false when server connectivity is online", () => {
+      setServerConnectivityStatus("online");
+      expect(isNetworkEffectivelyOffline()).toBe(false);
     });
   });
 });

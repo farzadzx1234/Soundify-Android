@@ -456,18 +456,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     } else {
       const isDownloadedSync = getTrackDownloadSnapshot(track.id).status === "downloaded";
       if (!isDownloadedSync) {
-        // Set resolved URL synchronously when online so immediate togglePlay() never calls play() on empty src
-        const isDeviceOffline = checkIsOffline();
-        if (!isDeviceOffline) {
-          const targetUrl = resolveMediaUrl(track.audioUrl);
-          if (
-            targetUrl &&
-            (!liveSrc || (!liveSrc.includes(targetUrl) && liveSrc !== targetUrl && !liveSrc.startsWith("blob:")))
-          ) {
-            isSettingSourceRef.current = true;
-            audio.src = targetUrl;
-            isSettingSourceRef.current = false;
-          }
+        // Set resolved URL synchronously so immediate togglePlay() never calls play() on empty src
+        const targetUrl = resolveMediaUrl(track.audioUrl);
+        if (
+          targetUrl &&
+          (!liveSrc || (!liveSrc.includes(targetUrl) && liveSrc !== targetUrl && !liveSrc.startsWith("blob:")))
+        ) {
+          isSettingSourceRef.current = true;
+          audio.src = targetUrl;
+          isSettingSourceRef.current = false;
         }
       }
 
@@ -2419,32 +2416,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             return;
           }
         } catch {
-          // If fallback fails, proceed to standard offline handling
+          // If offline blob fallback fails, notify user about saved file error
         }
-      }
-
-      if (checkIsOffline()) {
-        const isVpnOrServerIssue = typeof navigator !== "undefined" && navigator.onLine && getServerConnectivityStatus() !== "online";
-        if (isVpnOrServerIssue) {
-          setServerConnectivityStatus("vpn_or_server_down");
-          setOfflineNotice(
-            lang === "fa"
-              ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
-              : "Cannot connect to server - check internet connection or VPN status",
-          );
-        } else if (!isDownloaded) {
-          setOfflineNotice(
-            t
-              ? t("offlinePlaybackNotice")
-              : "برای پخش این قطعه در حالت آفلاین باید قبلاً آن را دانلود کرده باشید",
-          );
-        }
+        setOfflineNotice(
+          lang === "fa"
+            ? "خطا در بارگذاری فایل صوتی ذخیره‌شده برای پخش آفلاین"
+            : "Error loading saved audio file for offline playback",
+        );
         setIsPlaying(false);
         isPlayingRef.current = false;
         broadcastLeaderState();
         return;
       }
 
+      // Track is an ONLINE streaming track (!isDownloaded)
+      // NEVER show offlinePlaybackNotice ("این قطعه دانلود نشده است...") for online tracks!
       const isExternal = isExternalTrack(curr);
 
       if (isExternal) {
@@ -2601,10 +2587,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isPlayingRef.current = false;
       broadcastLeaderState();
       notifyServerConnectivityIssue();
+      const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
       setOfflineNotice(
-        lang === "fa"
-          ? "خطا در بارگذاری استریم صوتی آنلاین (یوتیوب / ساندکلود / اسپاتیفای) - لطفاً مجدداً تلاش نمایید"
-          : "Error loading online audio stream (YouTube / SoundCloud / Spotify) - please retry",
+        isServerDown
+          ? (lang === "fa"
+              ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
+              : "Cannot connect to server - check internet connection or VPN status")
+          : (lang === "fa"
+              ? "خطا در بارگذاری استریم صوتی آنلاین (یوتیوب / ساندکلود / اسپاتیفای) - لطفاً اتصال اینترنت یا فیلترشکن را بررسی کرده و مجدداً تلاش نمایید"
+              : "Error loading online audio stream (YouTube / SoundCloud / Spotify) - please check connection or VPN and retry"),
       );
     };
 

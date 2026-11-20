@@ -134,11 +134,12 @@ class NetworkResilienceManager {
    * Never falsely blocks playback on a fresh VPN toggle.
    */
   public isEffectivelyOffline(): boolean {
+    if (getServerConnectivityStatus() === "online") return false;
     if (this.status === "offline") return true;
     if (
       typeof navigator !== "undefined" &&
       navigator.onLine === false &&
-      this.consecutiveFailures >= 1
+      this.consecutiveFailures >= 2
     ) {
       return true;
     }

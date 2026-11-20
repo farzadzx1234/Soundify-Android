@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, extractYouTubeIdClient } from "../lib/api";
+import {
+  api,
+  extractCanonicalExternalUrl,
+  extractYouTubeIdClient,
+  externalTracksCache,
+  synthesizeExternalTrack,
+} from "../lib/api";
 import type { Track } from "../lib/types";
 
 describe("Frontend YouTube Playback, Cover Cascade, and Stream Refresh", () => {
@@ -177,6 +183,77 @@ describe("Frontend YouTube Playback, Cover Cascade, and Stream Refresh", () => {
       const r3 = await handleSimulatedError();
       expect(r3).toBe(false);
       expect(refreshCallCount).toBe(2);
+    });
+  });
+
+  describe("External Track URL Canonicalization & Provider Identification", () => {
+    it("extracts canonical URL from various external track formats", () => {
+      // YouTube
+      expect(extractCanonicalExternalUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      expect(extractCanonicalExternalUrl("https://youtu.be/dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      expect(extractCanonicalExternalUrl("", "ext-youtube-dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      expect(extractCanonicalExternalUrl("", "ext-yt-dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      expect(extractCanonicalExternalUrl("", "ext-spotify-dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+
+      // Unpack nested proxy URL
+      const proxyYt = "/api/stream/external?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&id=ext-youtube-dQw4w9WgXcQ";
+      expect(extractCanonicalExternalUrl(proxyYt)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+
+      // SoundCloud
+      expect(extractCanonicalExternalUrl("https://soundcloud.com/artist/great-track")).toBe("https://soundcloud.com/artist/great-track");
+      expect(extractCanonicalExternalUrl("", "ext-soundcloud-artist-great-track")).toBe("https://soundcloud.com/artist-great-track");
+      const proxySc = "/api/stream/external?url=https%3A%2F%2Fsoundcloud.com%2Fartist%2Ftrack&id=ext-soundcloud-123";
+      expect(extractCanonicalExternalUrl(proxySc)).toBe("https://soundcloud.com/artist/track");
+    });
+
+    it("synthesizes valid external track structure without returning fallback tracks", () => {
+      const ytTrack = synthesizeExternalTrack("ext-youtube-dQw4w9WgXcQ", { title: "Never Gonna Give You Up" });
+      expect(ytTrack.id).toBe("ext-youtube-dQw4w9WgXcQ");
+      expect(ytTrack.source).toBe("youtube");
+      expect(ytTrack.audioUrl).toContain("/api/stream/external?url=");
+      expect(ytTrack.audioUrl).toContain("youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ");
+      expect(ytTrack.coverUrl).toContain("hqdefault.jpg");
+      expect(externalTracksCache.get("ext-youtube-dQw4w9WgXcQ")).toBeDefined();
+
+      const scTrack = synthesizeExternalTrack("ext-soundcloud-test-artist-track", { title: "SC Beat" });
+      expect(scTrack.id).toBe("ext-soundcloud-test-artist-track");
+      expect(scTrack.source).toBe("soundcloud");
+      expect(scTrack.audioUrl).toContain("/api/stream/external");
+
+      const spTrack = synthesizeExternalTrack("ext-spotify-dQw4w9WgXcQ", { title: "Spotify Stream" });
+      expect(spTrack.id).toBe("ext-spotify-dQw4w9WgXcQ");
+      expect(spTrack.source).toBe("spotify");
+      expect(spTrack.audioUrl).toContain("/api/stream/external?url=");
+    });
+
+    it("api.getTrack synthesizes external tracks instead of returning FALLBACK_TRACKS[0]", async () => {
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        return new Response("Not found", { status: 404 });
+      });
+
+      const res = await api.getTrack("ext-youtube-dQw4w9WgXcQ");
+      expect(res.track).toBeDefined();
+      expect(res.track.id).toBe("ext-youtube-dQw4w9WgXcQ");
+      expect(res.track.source).toBe("youtube");
+      expect(res.track.audioUrl).toContain("/api/stream/external");
+      expect(res.track.id).not.toBe("track-01");
+    });
+
+    it("api.refreshStreamUrl unpackages proxy URLs and passes canonical URL", async () => {
+      let interceptedBody: Record<string, unknown> | null = null;
+      globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+        interceptedBody = init?.body ? JSON.parse(init.body as string) : null;
+        return new Response(JSON.stringify({ ok: true, streamUrl: "https://audio.stream/123", audioUrl: "/api/stream/external?..." }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const proxyUrl = "https://soundify.mashhad-ix.ir/api/stream/external?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&id=ext-youtube-dQw4w9WgXcQ";
+      await api.refreshStreamUrl("ext-youtube-dQw4w9WgXcQ", proxyUrl);
+
+      expect(interceptedBody).not.toBeNull();
+      expect(interceptedBody!.url).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     });
   });
 });

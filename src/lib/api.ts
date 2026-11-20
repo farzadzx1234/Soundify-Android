@@ -95,20 +95,181 @@ export function extractYouTubeIdClient(input: string): string | null {
   const vParamMatch = str.match(/[?&]v=([a-zA-Z0-9_-]{11})(?:[&?]|$)/);
   if (vParamMatch) return vParamMatch[1];
 
-  const watchMatch = str.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  const watchMatch = str.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[&?.\/]|$)/i);
   if (watchMatch) return watchMatch[1];
 
   const viMatch = str.match(/\/(?:vi|vi_webp)\/([a-zA-Z0-9_-]{11})(?:[\/?.]|$)/i);
   if (viMatch) return viMatch[1];
 
-  const extMatch = str.match(/(?:^|[?&=/])(?:ext[-_])?(?:youtube[-_])+([a-zA-Z0-9_-]{11})(?:[&?.\/]|$)/i);
+  const extMatch = str.match(/(?:^|[?&=/])(?:ext[-_])?(?:youtube[-_]|yt[-_]|spotify[-_])+([a-zA-Z0-9_-]{11})(?:[&?.\/]|$)/i);
   if (extMatch) return extMatch[1];
+
+  // Check embedded url parameter e.g. /api/stream/external?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D...
+  const urlParamMatch = str.match(/[?&]url=([^&]+)/i);
+  if (urlParamMatch) {
+    let extracted = urlParamMatch[1];
+    try {
+      extracted = decodeURIComponent(extracted);
+    } catch {}
+    if (extracted && extracted !== str) {
+      const nestedId = extractYouTubeIdClient(extracted);
+      if (nestedId) return nestedId;
+    }
+  }
+
+  // Check embedded id parameter e.g. /api/stream/external?id=ext-youtube-...
+  const idParamMatch = str.match(/[?&]id=([^&]+)/i);
+  if (idParamMatch) {
+    let extracted = idParamMatch[1];
+    try {
+      extracted = decodeURIComponent(extracted);
+    } catch {}
+    if (extracted && extracted !== str) {
+      const nestedId = extractYouTubeIdClient(extracted);
+      if (nestedId) return nestedId;
+    }
+  }
 
   if (/^[a-zA-Z0-9_-]{11}$/.test(str)) {
     return str;
   }
 
   return null;
+}
+
+/**
+ * Extracts the canonical original external media / page URL from any raw URL or track ID.
+ * Unpacks proxy URLs (/api/stream/external?url=...) and canonicalizes YouTube / SoundCloud / Spotify.
+ */
+export function extractCanonicalExternalUrl(inputUrl?: string | null, trackId?: string | null): string {
+  const ytId = extractYouTubeIdClient(inputUrl || "") || extractYouTubeIdClient(trackId || "");
+  if (ytId) {
+    return `https://www.youtube.com/watch?v=${ytId}`;
+  }
+  if (!inputUrl && !trackId) return "";
+
+  let candidate = (inputUrl || "").trim();
+  if (!candidate && trackId) {
+    if (trackId.startsWith("ext-soundcloud-") || trackId.startsWith("ext-sc-")) {
+      const slug = trackId.replace(/^ext-(?:soundcloud|sc)-/, "");
+      if (slug && !slug.startsWith("http")) {
+        return `https://soundcloud.com/${slug}`;
+      }
+    }
+    candidate = trackId;
+  }
+
+  try {
+    if (candidate.includes("%")) {
+      candidate = decodeURIComponent(candidate);
+    }
+  } catch {}
+
+  const urlParamMatch = candidate.match(/[?&]url=([^&]+)/i);
+  if (urlParamMatch) {
+    let extracted = urlParamMatch[1];
+    try {
+      extracted = decodeURIComponent(extracted);
+    } catch {}
+    const nestedYt = extractYouTubeIdClient(extracted);
+    if (nestedYt) return `https://www.youtube.com/watch?v=${nestedYt}`;
+    if (extracted.startsWith("http://") || extracted.startsWith("https://")) {
+      return extracted;
+    }
+  }
+
+  if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
+    return candidate;
+  }
+
+  return candidate;
+}
+
+/**
+ * In-memory cache for recent external tracks discovered via search or playback.
+ */
+export const externalTracksCache = new Map<string, Track>();
+
+/**
+ * Generates synthetic smooth waveform bars for external tracks when missing.
+ */
+export function generateExternalWaveform(seed: string): number[] {
+  const bars: number[] = [];
+  let h = 0.5;
+  for (let i = 0; i < 64; i++) {
+    const charCode = seed.charCodeAt(i % seed.length) || 42;
+    const delta = ((charCode * 17 + i * 31) % 100) / 100 - 0.5;
+    h = Math.max(0.15, Math.min(0.95, h + delta * 0.4));
+    bars.push(Math.round(h * 100) / 100);
+  }
+  return bars;
+}
+
+/**
+ * Synthesizes a valid, fully formed external Track object from an external ID.
+ */
+export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): Track {
+  const cleanId = id.trim();
+  let source: "youtube" | "soundcloud" | "spotify" = "youtube";
+  if (cleanId.includes("soundcloud") || cleanId.startsWith("ext-sc-")) {
+    source = "soundcloud";
+  } else if (cleanId.includes("spotify")) {
+    source = "spotify";
+  }
+
+  const ytId = extractYouTubeIdClient(cleanId);
+  const canonical = ytId ? `https://www.youtube.com/watch?v=${ytId}` : extractCanonicalExternalUrl(partial?.pageUrl || partial?.audioUrl, id);
+
+  const accentColor = source === "youtube" ? "#EF4444" : source === "soundcloud" ? "#F97316" : "#1DB954";
+  const defaultTitle = source === "youtube" ? "YouTube Music" : source === "soundcloud" ? "SoundCloud Track" : "Spotify Stream";
+  const defaultArtist = source === "youtube" ? "YouTube" : source === "soundcloud" ? "SoundCloud" : "Spotify";
+
+  const directCover = ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : "";
+  const coverUrl = directCover
+    ? `/api/stream/external-cover?url=${encodeURIComponent(directCover)}&id=${encodeURIComponent(cleanId)}`
+    : partial?.coverUrl || (source === "youtube"
+        ? "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop&q=80"
+        : source === "soundcloud"
+          ? "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&auto=format&fit=crop&q=80"
+          : "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80");
+
+  const audioUrl = `/api/stream/external?url=${encodeURIComponent(canonical)}&id=${encodeURIComponent(cleanId)}`;
+
+  const track: Track = {
+    id: cleanId,
+    title: partial?.title || defaultTitle,
+    titleFa: partial?.titleFa || partial?.title || defaultTitle,
+    artistId: partial?.artistId || `ext-artist-${source}`,
+    artistName: partial?.artistName || defaultArtist,
+    artistNameFa: partial?.artistNameFa || partial?.artistName || defaultArtist,
+    artistAvatarColor: accentColor,
+    album: partial?.album || (source === "youtube" ? "YouTube Audio" : source === "soundcloud" ? "SoundCloud" : "Spotify"),
+    albumFa: partial?.albumFa || (source === "youtube" ? "صوتی یوتیوب" : source === "soundcloud" ? "ساندکلود" : "اسپاتیفای"),
+    genre: partial?.genre || (source === "youtube" ? "YouTube Stream" : source === "soundcloud" ? "SoundCloud Stream" : "Spotify Stream"),
+    mood: partial?.mood || "Energetic",
+    durationSec: partial?.durationSec || 210,
+    audioUrl: resolveMediaUrl(audioUrl),
+    coverUrl: resolveMediaUrl(coverUrl),
+    accentColor,
+    waveform: generateExternalWaveform(cleanId + (partial?.title || defaultTitle)),
+    hasLyrics: false,
+    lyricsSource: "none",
+    lyricsOffsetMs: 0,
+    playsCount: 0,
+    likesCount: 0,
+    repostsCount: 0,
+    likedByMe: false,
+    repostedByMe: false,
+    uploadedBy: null,
+    createdAt: new Date().toISOString(),
+    source,
+    pageUrl: canonical || undefined,
+    qualityLabel: source === "youtube" ? "YouTube High" : source === "soundcloud" ? "SoundCloud HQ" : "Spotify Stream",
+    ...partial,
+  };
+
+  externalTracksCache.set(cleanId, track);
+  return track;
 }
 
 let authToken: string | null = null;
@@ -288,7 +449,13 @@ async function executeFetch(path: string, init: RequestInit, token: string | nul
     const controller = new AbortController();
     signal = controller.signal;
     const isTestEnv = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
-    timeoutId = setTimeout(() => controller.abort(), isTestEnv ? 2000 : 8500);
+    const isExternalLongOp =
+      path.includes("/api/external/") ||
+      path.includes("/api/stream/") ||
+      path.includes("/api/admin/external") ||
+      path.includes("/api/admin/ytdlp");
+    const defaultTimeout = isTestEnv ? 2000 : isExternalLongOp ? 35000 : 8500;
+    timeoutId = setTimeout(() => controller.abort(), defaultTimeout);
   }
 
   try {
@@ -476,7 +643,12 @@ export const api = {
         error?: string;
       }>(`/api/external/search?${sp.toString()}`);
       if (res?.results && Array.isArray(res.results)) {
-        return { ...res, results: res.results.map(normalizeTrack) };
+        const normalized = res.results.map((tr) => {
+          const norm = normalizeTrack(tr);
+          externalTracksCache.set(norm.id, norm);
+          return norm;
+        });
+        return { ...res, results: normalized };
       }
     } catch {
       // Graceful offline search over bundled catalog
@@ -507,8 +679,33 @@ export const api = {
     } catch {
       // Fallback
     }
-    const found = FALLBACK_TRACKS.find((t) => t.id === id) || FALLBACK_TRACKS[0];
-    return { track: normalizeTrack(found) };
+
+    // 1. Check in-memory external tracks cache
+    const cachedExt = externalTracksCache.get(id);
+    if (cachedExt) {
+      return { track: normalizeTrack(cachedExt) };
+    }
+
+    // 2. Check catalog cache
+    const catalogTracks = getCachedCatalogTracks();
+    const inCatalog = catalogTracks?.find((t) => t.id === id);
+    if (inCatalog) {
+      return { track: inCatalog };
+    }
+
+    // 3. Exact match in fallback seeds
+    const found = FALLBACK_TRACKS.find((t) => t.id === id);
+    if (found) {
+      return { track: normalizeTrack(found) };
+    }
+
+    // 4. If ID is an external track (ext-...), reconstruct a valid external track object
+    if (id.startsWith("ext-")) {
+      const synth = synthesizeExternalTrack(id);
+      return { track: synth };
+    }
+
+    return { track: normalizeTrack(FALLBACK_TRACKS[0]) };
   },
   deleteTrack(id: string) {
     return apiFetch<{ deleted: boolean }>(`/api/tracks/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -606,11 +803,12 @@ export const api = {
     );
   },
   refreshStreamUrl(id: string, url?: string) {
+    const canonical = extractCanonicalExternalUrl(url, id);
     return apiFetch<{ ok: boolean; streamUrl: string; audioUrl: string; canonicalUrl: string }>(
       "/api/external/refresh-stream",
       {
         method: "POST",
-        body: JSON.stringify({ id, url }),
+        body: JSON.stringify({ id, url: canonical || url }),
       },
     );
   },

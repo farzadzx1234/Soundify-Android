@@ -1,7 +1,13 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { api, normalizeTrack, resolveMediaUrl } from "@/lib/api";
+import {
+  api,
+  extractCanonicalExternalUrl,
+  externalTracksCache,
+  normalizeTrack,
+  resolveMediaUrl,
+} from "@/lib/api";
 import { isAndroidNative } from "@/lib/androidBridge";
 import { getServerConnectivityStatus, setServerConnectivityStatus } from "@/lib/mobileBackend";
 import {
@@ -734,7 +740,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             : currentTimeRef.current;
       preservePlaybackIntent(track.id, desiredPos, true);
 
-      const retryDelays = [0, 450, 1200];
+      const isExternalTrack =
+        track.id.startsWith("ext-") ||
+        track.source === "youtube" ||
+        track.source === "soundcloud" ||
+        track.source === "spotify" ||
+        Boolean(track.audioUrl?.includes("/api/stream/external"));
+
+      const retryDelays = isExternalTrack ? [0, 1800, 3500] : [0, 450, 1200];
       for (let attempt = 0; attempt < retryDelays.length; attempt++) {
         if (playRequestIdRef.current !== reqId || userPausedIntentRef.current) {
           isRetryingPlayRef.current = false;
@@ -937,6 +950,27 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       let audioSource = resolveMediaUrl(normalizedTrack.audioUrl);
       let trackToPlay = normalizedTrack;
 
+      const isExternal =
+        trackToPlay.id.startsWith("ext-") ||
+        trackToPlay.source === "youtube" ||
+        trackToPlay.source === "soundcloud" ||
+        trackToPlay.source === "spotify";
+
+      if (isExternal && !isDownloaded) {
+        const canonical = extractCanonicalExternalUrl(trackToPlay.pageUrl || trackToPlay.audioUrl, trackToPlay.id);
+        const resolvedAudio = trackToPlay.audioUrl && !trackToPlay.audioUrl.includes("fallback-preview.mp3")
+          ? trackToPlay.audioUrl
+          : `/api/stream/external?url=${encodeURIComponent(canonical)}&id=${encodeURIComponent(trackToPlay.id)}`;
+
+        trackToPlay = {
+          ...trackToPlay,
+          pageUrl: canonical || trackToPlay.pageUrl,
+          audioUrl: resolvedAudio,
+        };
+        audioSource = resolveMediaUrl(resolvedAudio);
+        externalTracksCache.set(trackToPlay.id, trackToPlay);
+      }
+
       if (isDownloaded) {
         try {
           const [blobUrl, coverBlobUrl] = await Promise.all([
@@ -1028,6 +1062,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (audio.src !== audioSource) {
         isSettingSourceRef.current = true;
         audio.src = audioSource;
+        try {
+          audio.load();
+        } catch {}
       }
       setCurrentlyPlayingTrackId(trackToPlay.id);
       recordPlaybackSessionStep(audio);
@@ -2380,20 +2417,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               : "Cannot connect to server - check internet connection or VPN status",
           );
         } else if (!isDownloaded) {
-          // Seamless fallback: Try bundled local preview audio so playback never fails
-          try {
-            if (!audio.src.includes("fallback-preview.mp3")) {
-              audio.src = "/audio/fallback-preview.mp3";
-              await audio.play();
-              setIsPlaying(true);
-              isPlayingRef.current = true;
-              broadcastLeaderState();
-              broadcastCurrentState();
-              return;
-            }
-          } catch {
-            // Continue to notice
-          }
           setOfflineNotice(
             t
               ? t("offlinePlaybackNotice")
@@ -2404,21 +2427,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isPlayingRef.current = false;
         broadcastLeaderState();
         return;
-      }
-
-      // Try local fallback preview audio before failing if stream is unreachable
-      if (!audio.src.includes("fallback-preview.mp3")) {
-        try {
-          audio.src = "/audio/fallback-preview.mp3";
-          await audio.play();
-          setIsPlaying(true);
-          isPlayingRef.current = true;
-          broadcastLeaderState();
-          broadcastCurrentState();
-          return;
-        } catch {
-          // Fall through to external retry
-        }
       }
 
       const isExternal =
@@ -2437,19 +2445,31 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (attempts < 2) {
           refreshAttemptsRef.current[curr.id] = attempts + 1;
           const resumeTime = currentTimeRef.current;
+          const canonical = extractCanonicalExternalUrl(curr.pageUrl || curr.audioUrl, curr.id);
+
           api
-            .refreshStreamUrl(curr.id, curr.pageUrl || curr.audioUrl)
-            .then((res) => {
-              if (res.ok && res.audioUrl) {
+            .refreshStreamUrl(curr.id, canonical)
+            .then(async (res) => {
+              if (res.ok && (res.audioUrl || res.streamUrl)) {
                 const refreshedTrack: Track = {
                   ...curr,
-                  audioUrl: `${res.audioUrl}${res.audioUrl.includes("?") ? "&" : "?"}_t=${Date.now()}`,
-                  pageUrl: res.canonicalUrl || curr.pageUrl,
+                  audioUrl: res.audioUrl
+                    ? `${res.audioUrl}${res.audioUrl.includes("?") ? "&" : "?"}_t=${Date.now()}`
+                    : res.streamUrl,
+                  pageUrl: res.canonicalUrl || curr.pageUrl || canonical,
                 };
                 currentTrackRef.current = refreshedTrack;
                 setCurrentTrack(refreshedTrack);
                 updateTrackInQueue(refreshedTrack);
-                audio.src = resolveMediaUrl(refreshedTrack.audioUrl);
+                externalTracksCache.set(refreshedTrack.id, refreshedTrack);
+
+                const finalSource = resolveMediaUrl(refreshedTrack.audioUrl);
+                isSettingSourceRef.current = true;
+                audio.src = finalSource;
+                try {
+                  audio.load();
+                } catch {}
+
                 if (resumeTime > 0) {
                   const onMeta = () => {
                     try {
@@ -2459,19 +2479,38 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                   };
                   audio.addEventListener("loadedmetadata", onMeta);
                 }
-                void audio
-                  .play()
-                  .then(() => {
-                    setIsPlaying(true);
-                    isPlayingRef.current = true;
-                    broadcastLeaderState();
-                    broadcastCurrentState();
-                  })
-                  .catch(() => {
-                    setIsPlaying(false);
-                    isPlayingRef.current = false;
-                    broadcastLeaderState();
-                  });
+
+                try {
+                  await audio.play();
+                  isSettingSourceRef.current = false;
+                  setIsPlaying(true);
+                  isPlayingRef.current = true;
+                  broadcastLeaderState();
+                  broadcastCurrentState();
+                  setOfflineNotice(null);
+                  return;
+                } catch {
+                  // Fallback: direct streamUrl if proxy fails and direct is different
+                  if (res.streamUrl && res.audioUrl && finalSource !== res.streamUrl) {
+                    try {
+                      isSettingSourceRef.current = true;
+                      audio.src = res.streamUrl;
+                      try { audio.load(); } catch {}
+                      await audio.play();
+                      isSettingSourceRef.current = false;
+                      setIsPlaying(true);
+                      isPlayingRef.current = true;
+                      broadcastLeaderState();
+                      broadcastCurrentState();
+                      setOfflineNotice(null);
+                      return;
+                    } catch {}
+                  }
+                  isSettingSourceRef.current = false;
+                  setIsPlaying(false);
+                  isPlayingRef.current = false;
+                  broadcastLeaderState();
+                }
               } else {
                 setIsPlaying(false);
                 isPlayingRef.current = false;
@@ -2491,6 +2530,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isPlayingRef.current = false;
       broadcastLeaderState();
       notifyServerConnectivityIssue();
+      setOfflineNotice(
+        lang === "fa"
+          ? "خطا در بارگذاری استریم صوتی آنلاین (یوتیوب / ساندکلود / اسپاتیفای) - لطفاً مجدداً تلاش نمایید"
+          : "Error loading online audio stream (YouTube / SoundCloud / Spotify) - please retry",
+      );
     };
 
     audio.addEventListener("play", onPlay);

@@ -271,5 +271,16 @@ describe("offlineAudioStorage", () => {
     expect(afterUpdate?.source).toBe("custom-sync");
     expect(afterUpdate?.lines[0].text).toBe("Updated line 1");
     expect(afterUpdate?.lyricsOffsetMs).toBe(-200);
+
+    const fullRecord = await getDownloadedTrack(mockTrack.id);
+    expect(fullRecord?.track.hasLyrics).toBe(true);
+  });
+
+  it("ensures track.hasLyrics is set to true when saving with lyrics on a track originally marked false", async () => {
+    const trackWithoutLyrics: Track = { ...mockTrack, id: "no-lyrics-track", hasLyrics: false, lyricsSource: "none" };
+    const audioBlob = new Blob(["audio-bytes"], { type: "audio/mpeg" });
+    const saved = await saveDownloadedTrack(trackWithoutLyrics, audioBlob, "[00:05.00]Offline Synced");
+    expect(saved.track.hasLyrics).toBe(true);
+    expect(saved.track.lyricsSource).toBe("lrc");
   });
 });

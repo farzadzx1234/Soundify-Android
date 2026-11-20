@@ -101,10 +101,14 @@ public class MediaStorePlugin extends Plugin {
                 values.put(MediaStore.Audio.Media.IS_PENDING, 0);
                 resolver.update(itemUri, values, null, null);
 
-                // Force MediaScanner indexing
+                // Force MediaScanner indexing with absolute filesystem path
+                File publicFile = new File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                    "Soundify" + File.separator + fileName
+                );
                 MediaScannerConnection.scanFile(
                     context,
-                    new String[]{Environment.DIRECTORY_MUSIC + "/Soundify/" + fileName},
+                    new String[]{publicFile.getAbsolutePath()},
                     new String[]{mimeType},
                     null
                 );
@@ -112,7 +116,7 @@ public class MediaStorePlugin extends Plugin {
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 ret.put("uri", itemUri.toString());
-                ret.put("path", Environment.DIRECTORY_MUSIC + "/Soundify/" + fileName);
+                ret.put("path", publicFile.getAbsolutePath());
                 call.resolve(ret);
             } else {
                 // Legacy Android (< API 29) external music storage fallback

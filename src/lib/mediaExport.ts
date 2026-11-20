@@ -20,6 +20,65 @@ export interface ExportResult {
   error?: string;
 }
 
+const EXPORTED_TRACKS_STORAGE_KEY = "soundify_exported_track_ids";
+const memoryExportedSet = new Set<string>();
+
+/**
+ * Returns the set of track IDs that have been exported/saved to device storage.
+ */
+export function getExportedTrackIds(): Set<string> {
+  const combined = new Set<string>(memoryExportedSet);
+  try {
+    if (typeof localStorage !== "undefined") {
+      const raw = localStorage.getItem(EXPORTED_TRACKS_STORAGE_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          for (const id of arr) {
+            combined.add(String(id));
+          }
+        }
+      }
+    }
+  } catch {}
+  return combined;
+}
+
+/**
+ * Checks whether a track was previously exported to device storage.
+ */
+export function isTrackExported(trackId: string): boolean {
+  if (!trackId) return false;
+  return getExportedTrackIds().has(trackId);
+}
+
+/**
+ * Marks a track as exported in local storage.
+ */
+export function markTrackAsExported(trackId: string): void {
+  if (!trackId) return;
+  memoryExportedSet.add(trackId);
+  try {
+    if (typeof localStorage !== "undefined") {
+      const set = getExportedTrackIds();
+      set.add(trackId);
+      localStorage.setItem(EXPORTED_TRACKS_STORAGE_KEY, JSON.stringify(Array.from(set)));
+    }
+  } catch {}
+}
+
+/**
+ * Clears exported tracking memory (useful for testing or cache resets).
+ */
+export function clearExportedTrackMemory(): void {
+  memoryExportedSet.clear();
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem(EXPORTED_TRACKS_STORAGE_KEY);
+    }
+  } catch {}
+}
+
 /**
  * Converts a Blob to a standard Base64 string.
  * Supports modern Blob.arrayBuffer() across both Browser and Node runtimes,
@@ -177,6 +236,7 @@ export async function exportTrackToDeviceStorage(
         });
 
         if (result && result.success) {
+          markTrackAsExported(track.id);
           void triggerHapticFeedback("downloadComplete");
           return {
             success: true,
@@ -194,6 +254,7 @@ export async function exportTrackToDeviceStorage(
   // 3. Web / PWA / Fallback Download Trigger
   const webSuccess = triggerWebBlobDownload(audioBlob, fileName);
   if (webSuccess) {
+    markTrackAsExported(track.id);
     void triggerHapticFeedback("downloadComplete");
     return {
       success: true,

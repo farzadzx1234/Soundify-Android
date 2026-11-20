@@ -32,7 +32,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useI18n, type TranslationKey } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { useDownloadedTracks } from "@/lib/downloadManager";
-import { exportTrackToDeviceStorage } from "@/lib/mediaExport";
+import { exportTrackToDeviceStorage, getExportedTrackIds } from "@/lib/mediaExport";
 import { formatDuration } from "@/lib/lrc";
 import { Button, Glass, GlassSegmented, Input } from "@/components/GlassControls";
 import { PlaylistMosaic } from "@/components/PlaylistMosaic";
@@ -90,7 +90,7 @@ export default function LibraryPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
   const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
-  const [exportedTrackIds, setExportedTrackIds] = useState<Set<string>>(new Set());
+  const [exportedTrackIds, setExportedTrackIds] = useState<Set<string>>(() => getExportedTrackIds());
   const [exportAllRunning, setExportAllRunning] = useState(false);
   const [exportToast, setExportToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 

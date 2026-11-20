@@ -416,11 +416,19 @@ export async function saveDownloadedTrack(
     }
   }
 
+  const hasLyricsResolved = Boolean(
+    (formattedLyrics?.lines && formattedLyrics.lines.length > 0) || track.hasLyrics
+  );
+  const lyricsSourceResolved =
+    formattedLyrics?.source || track.lyricsSource || (hasLyricsResolved ? "offline" : "none");
+
   const now = Date.now();
   const record: DownloadedTrackRecord = {
     trackId: track.id,
     track: {
       ...track,
+      hasLyrics: hasLyricsResolved,
+      lyricsSource: lyricsSourceResolved,
       audioUrl: cleanAudioUrl,
       coverUrl: cleanCoverUrl,
     },
@@ -547,6 +555,10 @@ export async function updateDownloadedLyrics(
   const memRec = memoryFallbackStore.get(trackId);
   if (memRec) {
     memRec.lyrics = formattedLyrics;
+    if (formattedLyrics.lines.length > 0) {
+      memRec.track.hasLyrics = true;
+      memRec.track.lyricsSource = formattedLyrics.source || "offline";
+    }
   }
 
   try {
@@ -563,6 +575,10 @@ export async function updateDownloadedLyrics(
           return;
         }
         record.lyrics = formattedLyrics;
+        if (formattedLyrics.lines.length > 0) {
+          record.track.hasLyrics = true;
+          record.track.lyricsSource = formattedLyrics.source || "offline";
+        }
         const putReq = store.put(record);
         putReq.onsuccess = () => resolve(true);
         putReq.onerror = () => resolve(false);

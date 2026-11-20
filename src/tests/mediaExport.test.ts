@@ -3,6 +3,10 @@ import {
   blobToBase64,
   getExportFileName,
   exportTrackToDeviceStorage,
+  getExportedTrackIds,
+  isTrackExported,
+  markTrackAsExported,
+  clearExportedTrackMemory,
 } from "@/lib/mediaExport";
 import {
   clearAllDownloadedTracks,
@@ -44,12 +48,14 @@ describe("mediaExport", () => {
 
   beforeEach(async () => {
     await clearAllDownloadedTracks();
+    clearExportedTrackMemory();
     originalWindow = (globalThis as unknown as { window?: unknown }).window;
     originalDocument = (globalThis as unknown as { document?: unknown }).document;
   });
 
   afterEach(async () => {
     await clearAllDownloadedTracks();
+    clearExportedTrackMemory();
     (globalThis as unknown as { window?: unknown }).window = originalWindow;
     (globalThis as unknown as { document?: unknown }).document = originalDocument;
     vi.restoreAllMocks();
@@ -71,9 +77,9 @@ describe("mediaExport", () => {
         ...mockTrack,
         id: "track-fallback-99",
         title: "",
-        titleFa: undefined,
+        titleFa: "",
         artistName: "",
-        artistNameFa: undefined,
+        artistNameFa: "",
       };
       const fileName = getExportFileName(minimalTrack);
       expect(fileName).toBe("Soundify - Track_track-fallback-99.mp3");
@@ -209,6 +215,16 @@ describe("mediaExport", () => {
       });
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
+    });
+  });
+
+  describe("exported tracking persistence", () => {
+    it("correctly tracks and persists exported track ids in storage", () => {
+      expect(isTrackExported("test-track-1")).toBe(false);
+      markTrackAsExported("test-track-1");
+      expect(isTrackExported("test-track-1")).toBe(true);
+      const exportedSet = getExportedTrackIds();
+      expect(exportedSet.has("test-track-1")).toBe(true);
     });
   });
 });

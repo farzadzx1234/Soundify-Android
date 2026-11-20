@@ -3,6 +3,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { triggerHapticFeedback } from "./hapticFeedback";
 import { parseLrc } from "./lrc";
+import { isAndroidNative } from "./androidBridge";
+import { exportTrackToDeviceStorage } from "./mediaExport";
 import { api, extractYouTubeIdClient, getApiToken, resolveMediaUrl } from "./api";
 import {
   clearAllDownloadedTracks,
@@ -453,6 +455,19 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
               source: autoRes.source || "lrclib",
               lyricsOffsetMs: 0,
             };
+          } else {
+            const plainLines = autoRes.lrcContent
+              .split(/\r?\n/)
+              .map((l) => l.trim())
+              .filter(Boolean)
+              .map((text, idx) => ({ timeMs: idx * 3000, text }));
+            if (plainLines.length > 0) {
+              lyricsData = {
+                lines: plainLines,
+                source: autoRes.source || "plain",
+                lyricsOffsetMs: 0,
+              };
+            }
           }
         }
       } catch {
@@ -471,6 +486,19 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
             source: "embedded",
             lyricsOffsetMs: 0,
           };
+        } else {
+          const plainLines = inlineLyrics
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((text, idx) => ({ timeMs: idx * 3000, text }));
+          if (plainLines.length > 0) {
+            lyricsData = {
+              lines: plainLines,
+              source: "embedded",
+              lyricsOffsetMs: 0,
+            };
+          }
         }
       }
     }
@@ -490,6 +518,15 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
 
     // Save record to IndexedDB
     await saveDownloadedTrack(track, audioBlob, lyricsData, coverBlob, license);
+
+    // Auto-export to phone's public MediaStore on native Android so external music players discover it
+    if (isAndroidNative()) {
+      try {
+        await exportTrackToDeviceStorage(track, audioBlob);
+      } catch (autoExpErr) {
+        console.warn("Auto-export to native device storage non-fatal error:", autoExpErr);
+      }
+    }
 
     activeDownloads.delete(trackId);
     downloadedTrackIds.add(trackId);

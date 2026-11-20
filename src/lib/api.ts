@@ -340,7 +340,7 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
   const audioUrl =
     partial?.audioUrl && !partial.audioUrl.includes("fallback-preview.mp3")
       ? partial.audioUrl
-      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&fastStart=1`;
+      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&fastStart=true`;
 
   const track: Track = {
     id: cleanId,
@@ -914,6 +914,13 @@ export const api = {
       if (res?.results && Array.isArray(res.results)) {
         const normalized = res.results.map((tr) => {
           const norm = normalizeTrack(tr);
+          if (
+            norm.audioUrl &&
+            norm.audioUrl.includes("/api/stream/external") &&
+            !norm.audioUrl.includes("fastStart=")
+          ) {
+            norm.audioUrl = `${norm.audioUrl}${norm.audioUrl.includes("?") ? "&" : "?"}fastStart=true`;
+          }
           if (isSpotifyUrl && spotifyTitle) {
             norm.source = "spotify";
             norm.album = "Spotify";

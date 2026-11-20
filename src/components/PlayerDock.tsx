@@ -22,6 +22,7 @@ import { usePlayer, usePlayerProgress } from "@/context/PlayerContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
 import { formatDuration } from "@/lib/lrc";
 import { DownloadButton } from "@/components/DownloadButton";
+import { useTrackDownload } from "@/lib/downloadManager";
 import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { calculateElasticDrag, createSwipeTouchHandlers } from "@/lib/touchGestures";
@@ -135,6 +136,9 @@ export function PlayerDock() {
     toggleDevicePicker,
     transferToThisDevice,
   } = useDeviceSync();
+
+  const { isDownloading: isCurrentTrackDownloading, progress: currentTrackDownloadProgress } =
+    useTrackDownload(currentTrack);
 
   const [dockTranslateX, setDockTranslateX] = useState(0);
   const [isSwipingDock, setIsSwipingDock] = useState(false);
@@ -252,6 +256,20 @@ export function PlayerDock() {
       >
         <PlayerDockMobileProgress defaultDuration={safeDuration} accentColor={currentTrack.accentColor} />
 
+        {/* Real-time determinate download progress bar across the dock top edge */}
+        {isCurrentTrackDownloading && (
+          <div
+            aria-hidden="true"
+            dir="ltr"
+            className="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden rounded-t-2xl bg-white/10 z-20"
+          >
+            <div
+              className="h-full bg-gradient-to-r from-indigo-500 via-teal-400 to-emerald-400 transition-all duration-200"
+              style={{ width: `${Math.max(3, currentTrackDownloadProgress)}%` }}
+            />
+          </div>
+        )}
+
         {/* =========================================================================
             1. MOBILE MINI PLAYER (Pure Apple Music HIG & Liquid Glass)
            ========================================================================= */}
@@ -280,6 +298,12 @@ export function PlayerDock() {
                       <span className="sf-eq-bar w-0.5 h-2 bg-emerald-500 dark:bg-emerald-400 rounded-full" />
                       <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-500 dark:bg-emerald-400 rounded-full" style={{ animationDelay: "0.2s" }} />
                       <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-500 dark:bg-emerald-400 rounded-full" style={{ animationDelay: "0.4s" }} />
+                    </span>
+                  )}
+                  {isCurrentTrackDownloading && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full border border-emerald-500/25 shrink-0" dir="ltr">
+                      <span className="h-1 w-1 rounded-full bg-emerald-400 animate-ping" />
+                      <span>{currentTrackDownloadProgress}%</span>
                     </span>
                   )}
                 </div>
@@ -355,6 +379,12 @@ export function PlayerDock() {
                       <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-400 rounded-full" />
                       <span className="sf-eq-bar w-0.5 h-3 bg-emerald-400 rounded-full" style={{ animationDelay: "0.2s" }} />
                       <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" style={{ animationDelay: "0.4s" }} />
+                    </span>
+                  )}
+                  {isCurrentTrackDownloading && (
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/25 shrink-0" dir="ltr">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>{pickText("Downloading", "در حال دانلود")} {currentTrackDownloadProgress}%</span>
                     </span>
                   )}
                 </div>

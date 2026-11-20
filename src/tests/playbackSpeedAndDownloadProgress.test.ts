@@ -33,7 +33,7 @@ describe("Playback Speed, Fast Stream Start & Visual Download Progress", () => {
   describe("Stream Loading Speed & Caching Optimization", () => {
     it("synthesizes external tracks with fastStart parameter for immediate partial buffering", () => {
       const track = synthesizeExternalTrack("ext-youtube-dQw4w9WgXcQ");
-      expect(track.audioUrl).toContain("fastStart=1");
+      expect(track.audioUrl).toContain("fastStart=true");
     });
 
     it("caches resolved Spotify track streams to eliminate redundant network roundtrips on replay", async () => {

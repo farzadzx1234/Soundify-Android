@@ -13,7 +13,6 @@ import {
   GearSixIcon,
   HouseIcon,
   MagnifyingGlassIcon,
-  ShieldCheckIcon,
   SignOutIcon,
   UserCircleIcon,
   XIcon,
@@ -225,7 +224,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/playlist/") ||
     pathname.startsWith("/track/") ||
     pathname === "/profile" ||
-    pathname === "/admin" ||
     pathname === "/history" ||
     pathname === "/studio";
 
@@ -233,7 +231,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (pathname.startsWith("/playlist/")) return lang === "fa" ? "پلی‌لیست" : "Playlist";
     if (pathname.startsWith("/track/")) return lang === "fa" ? "جزئیات قطعه" : "Track Detail";
     if (pathname === "/profile") return t("navProfile");
-    if (pathname === "/admin") return t("navAdmin");
     if (pathname === "/history") return lang === "fa" ? "تاریخچه پخش" : "History";
     if (pathname === "/studio") return lang === "fa" ? "استودیو ضبط" : "Studio";
     return "";
@@ -297,24 +294,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </li>
                   );
                 })}
-                {user?.role === "admin" && (
-                  <li className="pt-1">
-                    <Link
-                      href="/admin"
-                      aria-current={pathname === "/admin" ? "page" : undefined}
-                      className={`group flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-[13.5px] transition-all duration-200 ${
-                        pathname === "/admin"
-                          ? "bg-black/[0.06] dark:bg-white/[0.14] text-slate-950 dark:text-white font-semibold rounded-2xl border border-black/[0.04] dark:border-white/[0.1] shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_2px_8px_rgba(0,0,0,0.25)]"
-                          : "font-medium text-[var(--sf-muted)] dark:text-slate-300 hover:text-[var(--sf-text)] dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.08] border border-transparent"
-                      }`}
-                    >
-                      <span className={pathname === "/admin" ? "text-violet-600 dark:text-violet-400" : "opacity-75 group-hover:opacity-100 transition-opacity"}>
-                        <ShieldCheckIcon size={20} weight={pathname === "/admin" ? "fill" : "regular"} aria-hidden="true" />
-                      </span>
-                      <span>{t("navAdmin")}</span>
-                    </Link>
-                  </li>
-                )}
               </ul>
             </nav>
           </div>

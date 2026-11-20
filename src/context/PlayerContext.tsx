@@ -466,6 +466,29 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           audio.src = targetUrl;
           isSettingSourceRef.current = false;
         }
+
+        // Proactively resolve Spotify tracks to YouTube streams in background for instant playback start
+        if (track.source === "spotify" && (!track.pageUrl || !track.pageUrl.includes("youtube"))) {
+          void resolveSpotifyTrackStream(track).then((resolved) => {
+            if (resolved && currentTrackRef.current?.id === track.id) {
+              currentTrackRef.current = resolved;
+              setCurrentTrack(resolved);
+              setQueue((prevQ) => {
+                const nextQ = prevQ.map((t) => (t.id === resolved.id ? resolved : t));
+                queueRef.current = nextQ;
+                return nextQ;
+              });
+              if (audio && (audio.paused || !audio.src || audio.src.includes("spotify"))) {
+                const resolvedTarget = resolveMediaUrl(resolved.audioUrl);
+                if (resolvedTarget && audio.src !== resolvedTarget) {
+                  isSettingSourceRef.current = true;
+                  audio.src = resolvedTarget;
+                  isSettingSourceRef.current = false;
+                }
+              }
+            }
+          });
+        }
       }
 
       const upgradeToOfflineBlob = (blobUrl: string | null) => {
@@ -960,9 +983,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           } catch {}
         }
         const canonical = extractCanonicalExternalUrl(trackToPlay.pageUrl || trackToPlay.audioUrl, trackToPlay.id);
-        const resolvedAudio = trackToPlay.audioUrl && !trackToPlay.audioUrl.includes("fallback-preview.mp3")
+        const rawResolved = trackToPlay.audioUrl && !trackToPlay.audioUrl.includes("fallback-preview.mp3")
           ? trackToPlay.audioUrl
-          : `/api/stream/external?url=${encodeURIComponent(canonical || trackToPlay.id)}&id=${encodeURIComponent(trackToPlay.id)}`;
+          : `/api/stream/external?url=${encodeURIComponent(canonical || trackToPlay.id)}&id=${encodeURIComponent(trackToPlay.id)}&fastStart=true`;
+        const resolvedAudio =
+          rawResolved.includes("/api/stream/external") && !rawResolved.includes("fastStart=")
+            ? `${rawResolved}${rawResolved.includes("?") ? "&" : "?"}fastStart=true`
+            : rawResolved;
 
         trackToPlay = {
           ...trackToPlay,
@@ -1275,7 +1302,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const audio = getSingletonAudio();
     if (!audio) return;
-    const curr = currentTrackRef.current;
+    let curr = currentTrackRef.current;
     if (!curr && queueRef.current.length > 0) {
       playTrack(queueRef.current[0]);
       return;
@@ -1290,6 +1317,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const shouldStartPlaying = audio.paused && !isPlayingRef.current && !isRetryingPlayRef.current;
     if (shouldStartPlaying) {
+      if (curr.source === "spotify" && (!curr.pageUrl || !curr.pageUrl.includes("youtube"))) {
+        try {
+          const resolved = await resolveSpotifyTrackStream(curr);
+          if (resolved) {
+            curr = resolved;
+            currentTrackRef.current = resolved;
+            setCurrentTrack(resolved);
+            setQueue((prevQ) => {
+              const nextQ = prevQ.map((t) => (t.id === resolved.id ? resolved : t));
+              queueRef.current = nextQ;
+              return nextQ;
+            });
+          }
+        } catch {}
+      }
+
       if (isDownloadedSync) {
         setOfflineNotice(null);
         setCurrentlyPlayingTrackId(curr.id);
@@ -2588,14 +2631,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       broadcastLeaderState();
       notifyServerConnectivityIssue();
       const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
+      const isExternalFailed = isExternalTrack(curr);
       setOfflineNotice(
         isServerDown
           ? (lang === "fa"
               ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
               : "Cannot connect to server - check internet connection or VPN status")
           : (lang === "fa"
-              ? "خطا در بارگذاری استریم صوتی آنلاین (یوتیوب / ساندکلود / اسپاتیفای) - لطفاً اتصال اینترنت یا فیلترشکن را بررسی کرده و مجدداً تلاش نمایید"
-              : "Error loading online audio stream (YouTube / SoundCloud / Spotify) - please check connection or VPN and retry"),
+              ? (isExternalFailed
+                  ? "خطا در بارگذاری استریم صوتی آنلاین (یوتیوب / ساندکلود / اسپاتیفای) - لطفاً اتصال اینترنت یا فیلترشکن را بررسی کرده و مجدداً تلاش نمایید"
+                  : "خطا در پخش قطعه صوتی آنلاین - لطفاً اتصال اینترنت یا وضعیت سرور را بررسی کنید")
+              : (isExternalFailed
+                  ? "Error loading online audio stream (YouTube / SoundCloud / Spotify) - please check connection or VPN and retry"
+                  : "Error playing online audio track - please check connection or server status")),
       );
     };
 

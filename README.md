@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Android Version](https://img.shields.io/badge/Android-10.0%2B%20(API%2029%2B)-green.svg)](android)
-[![Version](https://img.shields.io/badge/version-1.0.10-indigo.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.0.14-indigo.svg)](https://github.com/farzadzx1234/Soundify-Android/releases/latest)
 
 ---
 
@@ -48,7 +48,7 @@
 ## Installation Guide
 
 1. Go to the [Releases](https://github.com/farzadzx1234/Soundify-Android/releases) page.
-2. Download the latest `app-debug.apk` file.
+2. Download the latest `Soundify-v1.0.14.apk` file from the assets.
 3. Open the downloaded file on your Android device (Android 10 or newer) and tap **Install**.
 4. Launch Soundify and start enjoying your favorite music!
 
@@ -84,7 +84,7 @@ cd ..
 ```
 
 The compiled APK will be generated at:  
-`android/app/build/outputs/apk/debug/app-debug.apk`
+`android/app/build/outputs/apk/debug/Soundify-v1.0.14.apk`
 
 ---
 
@@ -111,7 +111,7 @@ The compiled APK will be generated at:
 ## راهنمای نصب
 
 ۱. به صفحه [انتشارها (Releases)](https://github.com/farzadzx1234/Soundify-Android/releases) در گیت‌هاب بروید.  
-۲. جدیدترین نسخه فایل نصبی با پسوند `app-debug.apk` را دانلود کنید.  
+۲. جدیدترین نسخه فایل نصبی (مثلاً `Soundify-v1.0.14.apk`) را دانلود کنید.  
 ۳. فایل دانلود شده را در گوشی اندروید خود (اندروید ۱۰ به بالا) باز کرده و گزینه نصب (Install) را انتخاب کنید.  
 ۴. برنامه ساندیفای را اجرا کنید و از شنیدن موسیقی لذت ببرید!
 
@@ -140,7 +140,7 @@ cd ..
 ```
 
 فایل نصبی تولید شده در مسیر زیر قرار می‌گیرد:  
-`android/app/build/outputs/apk/debug/app-debug.apk`
+`android/app/build/outputs/apk/debug/Soundify-v1.0.14.apk`
 
 ---
 

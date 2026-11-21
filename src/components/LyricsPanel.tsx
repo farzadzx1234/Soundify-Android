@@ -573,7 +573,7 @@ export function LyricsPanel({
                   : "bg-black/[0.06] hover:bg-black/[0.1] dark:bg-white/[0.1] dark:hover:bg-white/[0.16] active:scale-95 disabled:opacity-40"
               }`}
             >
-              <MagicWandIcon size={borderless ? 14 : 15} aria-hidden="true" className={lyricsLoading ? "animate-spin" : ""} />
+              <MagicWandIcon size={borderless ? 14 : 15} aria-hidden="true" />
             </button>
 
             {/* Full-Screen toggle */}
@@ -705,7 +705,7 @@ export function LyricsPanel({
                   onClick={() => void handleAutoFetch(showCustomSearch)}
                   className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-medium flex items-center gap-1 cursor-pointer disabled:opacity-40"
                 >
-                  <MagicWandIcon size={13} className={lyricsLoading ? "animate-spin" : ""} aria-hidden="true" />
+                  <MagicWandIcon size={13} aria-hidden="true" />
                   <span>{t("autoFetchLyrics")}</span>
                 </button>
                 <button
@@ -766,13 +766,16 @@ export function LyricsPanel({
             <button
               type="submit"
               disabled={lyricsLoading}
-              className={`rounded-xl px-3.5 py-2 text-xs font-semibold cursor-pointer shrink-0 transition-colors active:scale-95 ${
+              className={`rounded-xl px-3.5 py-2 text-xs font-semibold cursor-pointer shrink-0 transition-colors active:scale-95 inline-flex items-center justify-center gap-1.5 ${
                 darkSurface || isEffectiveFullScreen
                   ? "bg-white text-slate-950 hover:bg-white/90"
                   : "bg-indigo-500 text-white hover:bg-indigo-400"
               }`}
             >
-              {t("navSearch")}
+              {lyricsLoading && (
+                <span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin shrink-0" aria-hidden="true" />
+              )}
+              <span>{lyricsLoading ? t("fetchingLyrics") : t("navSearch")}</span>
             </button>
           </div>
         </form>

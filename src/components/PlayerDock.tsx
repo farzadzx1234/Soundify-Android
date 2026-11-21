@@ -5,6 +5,7 @@ import { Button, Slider } from "@/components/GlassControls";
 import {
   ArrowsOutSimpleIcon,
   BroadcastIcon,
+  CircleNotchIcon,
   MusicNotesSimpleIcon,
   PauseIcon,
   PlayIcon,
@@ -113,6 +114,7 @@ export function PlayerDock() {
   const {
     currentTrack,
     isPlaying,
+    isBuffering,
     duration,
     volume,
     muted,
@@ -317,10 +319,12 @@ export function PlayerDock() {
             <button
               type="button"
               onClick={handleTogglePlay}
-              aria-label={isPlaying ? t("pause") : t("play")}
+              aria-label={isBuffering ? pickText("Buffering...", "در حال بارگذاری...") : isPlaying ? t("pause") : t("play")}
               className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-full text-slate-900 dark:text-white hover:text-slate-700 dark:hover:text-slate-200 flex items-center justify-center active:scale-90 active:opacity-75 transition-all cursor-pointer"
             >
-              {isPlaying ? (
+              {isBuffering ? (
+                <CircleNotchIcon size={22} className="animate-spin text-indigo-500 dark:text-indigo-400" aria-hidden="true" />
+              ) : isPlaying ? (
                 <PauseIcon size={24} weight="fill" aria-hidden="true" />
               ) : (
                 <PlayIcon size={24} weight="fill" className="ms-0.5" aria-hidden="true" />
@@ -439,11 +443,13 @@ export function PlayerDock() {
                 type="button"
                 variant="filled"
                 tint={currentTrack.accentColor}
-                aria-label={isPlaying ? t("pause") : t("play")}
-                title={isPlaying ? t("pause") : t("play")}
+                aria-label={isBuffering ? pickText("Buffering...", "در حال بارگذاری...") : isPlaying ? t("pause") : t("play")}
+                title={isBuffering ? pickText("Buffering...", "در حال بارگذاری...") : isPlaying ? t("pause") : t("play")}
                 className="min-h-[44px] min-w-[44px]"
                 icon={
-                  isPlaying ? (
+                  isBuffering ? (
+                    <CircleNotchIcon size={20} className="animate-spin text-white" aria-hidden="true" />
+                  ) : isPlaying ? (
                     <PauseIcon size={20} weight="fill" aria-hidden="true" />
                   ) : (
                     <PlayIcon size={20} weight="fill" aria-hidden="true" />

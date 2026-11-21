@@ -237,20 +237,18 @@ export const DownloadButton = memo(function DownloadButton({
 
         {hovered ? (
           <PauseIcon
-            size={Math.max(12, Math.round(iconSize * 0.75))}
+            size={Math.max(12, Math.round(iconSize * 0.72))}
             weight="bold"
             className="text-indigo-600 dark:text-indigo-400 sf-spring-pop z-10"
             aria-hidden="true"
           />
         ) : (
           <span
-            className={`font-mono font-black tabular-nums tracking-tighter leading-none select-none z-10 ${
-              size === "sm" ? "text-[8px]" : size === "lg" ? "text-[11px]" : "text-[9px]"
+            aria-hidden="true"
+            className={`block rounded-[2px] bg-indigo-600 dark:bg-indigo-400 z-10 transition-transform ${
+              size === "sm" ? "h-2 w-2" : size === "lg" ? "h-3 w-3 rounded-[3px]" : "h-2.5 w-2.5"
             }`}
-            dir="ltr"
-          >
-            {progress > 0 ? `${progress}%` : "0%"}
-          </span>
+          />
         )}
 
         {showLabel && (

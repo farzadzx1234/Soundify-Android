@@ -13,6 +13,7 @@ interface VirtualizedTrackGridProps {
   estimatedRowHeight?: number;
   overscanRows?: number;
   threshold?: number; // Minimum number of items before windowing engages (default: 12)
+  autoExpand?: boolean;
 }
 
 export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
@@ -24,6 +25,7 @@ export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
   estimatedRowHeight = 350,
   overscanRows = 2,
   threshold = 100,
+  autoExpand = false,
 }: VirtualizedTrackGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -97,6 +99,7 @@ export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
             playlists={playlists}
             priorityImage={idx < 4}
             onTrackUpdated={onTrackUpdated}
+            autoExpand={autoExpand}
           />
         ))}
       </div>
@@ -137,6 +140,7 @@ export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
               playlists={playlists}
               priorityImage={globalIndex < 4}
               onTrackUpdated={onTrackUpdated}
+              autoExpand={autoExpand}
             />
           );
         })}

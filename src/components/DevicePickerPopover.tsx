@@ -27,9 +27,11 @@ import type { Track } from "@/lib/types";
 function ActiveOutputCover({
   track,
   title,
+  isPlaying,
 }: {
   track: Track | null;
   title: string;
+  isPlaying: boolean;
 }) {
   const [failedCoverKey, setFailedCoverKey] = useState<string | null>(null);
   const currentCoverKey = track ? `${track.id}-${track.coverUrl || "no-cover"}` : null;
@@ -39,15 +41,15 @@ function ActiveOutputCover({
     return (
       <span
         aria-hidden="true"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-gradient-to-br from-indigo-500/25 via-white/[0.08] to-purple-500/15 text-indigo-300 border border-white/15 backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.2)] ring-1 ring-white/10"
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 via-white/[0.08] to-purple-500/15 text-indigo-300 border border-white/15 backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.2)] ring-1 ring-white/10"
       >
-        <BroadcastIcon size={20} weight="fill" className="text-white/85" />
+        <BroadcastIcon size={22} weight="fill" className="text-white/85" />
       </span>
     );
   }
 
   return (
-    <div className="h-11 w-11 rounded-[10px] overflow-hidden ring-1 ring-white/15 shrink-0 shadow-sm bg-white/[0.05]">
+    <div className="relative h-12 w-12 rounded-xl overflow-hidden ring-1 ring-white/20 shrink-0 shadow-md bg-white/[0.05]">
       <OptimizedTrackImage
         src={track.coverUrl}
         trackId={track.id}
@@ -57,6 +59,18 @@ function ActiveOutputCover({
           if (currentCoverKey) setFailedCoverKey(currentCoverKey);
         }}
       />
+      {isPlaying && (
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 bg-black/45 flex items-center justify-center"
+        >
+          <span className="flex items-end gap-0.5 h-3.5">
+            <span className="w-0.5 h-2 bg-emerald-400 rounded-full animate-pulse" />
+            <span className="w-0.5 h-3.5 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: "0.2s" }} />
+            <span className="w-0.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: "0.4s" }} />
+          </span>
+        </span>
+      )}
     </div>
   );
 }
@@ -324,7 +338,7 @@ export function DevicePickerPopover() {
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className={`relative w-full max-w-md rounded-t-[30px] sm:rounded-[28px] bg-[#141722]/92 border-t sm:border border-white/[0.12] shadow-[0_24px_64px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-[38px] backdrop-saturate-[1.8] overflow-hidden px-4 pt-3 pb-[max(1.35rem,calc(env(safe-area-inset-bottom)+0.6rem))] sm:p-5 space-y-4 text-white select-none touch-pan-y ${
+        className={`relative w-full max-w-md rounded-t-[30px] sm:rounded-[28px] bg-black/85 dark:bg-[#12141c]/92 border-t sm:border border-white/[0.14] shadow-[0_24px_64px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.18)] backdrop-blur-3xl backdrop-saturate-[1.8] overflow-hidden px-4 pt-3 pb-[max(1.35rem,calc(env(safe-area-inset-bottom)+0.6rem))] sm:p-5 space-y-4 text-white select-none touch-pan-y ${
           isClosing
             ? "sf-sheet-down pointer-events-none"
             : !hasEntered && !isDragging && dragY === 0
@@ -383,6 +397,7 @@ export function DevicePickerPopover() {
               <ActiveOutputCover
                 track={displayedTrack}
                 title={displayedTrack ? pickText(displayedTrack.title, displayedTrack.titleFa) : ""}
+                isPlaying={displayedIsPlaying}
               />
 
               <div className="min-w-0">
@@ -559,7 +574,7 @@ export function DevicePickerPopover() {
                   disabled={!isSyncEnabled || Boolean(transferringId)}
                   aria-disabled={!isSyncEnabled}
                   onClick={() => void handleSelectDevice(dev.id)}
-                  className="w-full min-h-[60px] flex items-center justify-between gap-3 px-3.5 py-2.5 text-start hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                  className="w-full min-h-[60px] flex items-center justify-between gap-3 px-3.5 py-2.5 text-start hover:bg-white/[0.06] active:bg-white/[0.1] active:scale-[0.98] transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div

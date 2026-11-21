@@ -25,16 +25,18 @@ interface ExternalTrackCardProps {
   track: Track;
   queue?: Track[];
   onImportSuccess?: (imported: Track) => void;
+  autoExpand?: boolean;
 }
 
 export const ExternalTrackCard = memo(function ExternalTrackCard({
   track,
   queue = [],
   onImportSuccess,
+  autoExpand = false,
 }: ExternalTrackCardProps) {
   const { user, openAuthDialog } = useAuth();
   const { pickText, t } = useI18n();
-  const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayer();
+  const { currentTrack, isPlaying, playTrack, togglePlay, setExpanded } = usePlayer();
 
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(false);
@@ -91,8 +93,12 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
         };
 
   const handlePlayToggle = () => {
-    if (isCurrent) {
-      togglePlay();
+    if (isCurrent && isPlaying) {
+      if (autoExpand) {
+        setExpanded(true);
+      } else {
+        togglePlay();
+      }
     } else {
       const effectiveQueue =
         queue.length > 0
@@ -101,6 +107,9 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
             : [track, ...queue]
           : [track];
       playTrack(track, effectiveQueue);
+      if (autoExpand) {
+        setExpanded(true);
+      }
     }
   };
 
@@ -225,7 +234,7 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
           disabled={likeBusy}
           title={isLiked ? t("liked") : t("like")}
           aria-label={isLiked ? t("liked") : t("like")}
-          className={`sf-press flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full transition-colors cursor-pointer ${
+          className={`sf-press inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full transition-colors cursor-pointer text-center leading-none ${
             isLiked
               ? "text-rose-500 bg-rose-500/12"
               : "text-slate-400 dark:text-slate-400 hover:text-rose-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
@@ -243,7 +252,7 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
             onClick={() => void handleAdminImport()}
             title={imported ? t("adminImported") : t("adminImportBtn")}
             aria-label={imported ? t("adminImported") : t("adminImportBtn")}
-            className={`sf-press flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full transition-colors cursor-pointer ${
+            className={`sf-press inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full transition-colors cursor-pointer text-center leading-none ${
               imported
                 ? "text-emerald-500 bg-emerald-500/15"
                 : "text-slate-400 hover:text-indigo-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"

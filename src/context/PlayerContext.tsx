@@ -103,6 +103,7 @@ interface PlayerContextValue {
   dismissOfflineNotice: () => void;
   isOffline: boolean;
   isCurrentTrackOffline: boolean;
+  isBuffering: boolean;
 }
 
 interface PlayerProgressContextValue {
@@ -261,6 +262,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
   const noticeTypeRef = useRef<"network" | "stream" | null>(null);
   const [downloadVersion, setDownloadVersion] = useState(0);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const isBufferingRef = useRef(false);
 
   useEffect(() => {
     return subscribeToDownloads(() => {
@@ -790,6 +793,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isRetryingPlayRef.current = true;
       setIsPlaying(true);
       isPlayingRef.current = true;
+      setIsBuffering(true);
+      isBufferingRef.current = true;
 
       const desiredPos =
         typeof targetStartSec === "number" && targetStartSec > 0
@@ -863,10 +868,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             } catch {}
             isSettingSourceRef.current = false;
             isRetryingPlayRef.current = false;
+            setIsBuffering(false);
+            isBufferingRef.current = false;
             return false;
           }
           isSettingSourceRef.current = false;
           isRetryingPlayRef.current = false;
+          setIsBuffering(false);
+          isBufferingRef.current = false;
           reportNetworkSuccess();
           setOfflineNotice(null);
           setIsPlaying(true);
@@ -1083,6 +1092,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentlyPlayingTrackId(normalizedTrack.id);
       setOfflineNotice(null);
+      if (resolvedAutoPlay) {
+        setIsBuffering(true);
+        isBufferingRef.current = true;
+      }
 
       // Playing a track from mobile/local UI ALWAYS takes sovereignty immediately
       localSessionStartedRef.current = true;
@@ -1561,6 +1574,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       audio.pause();
       setIsPlaying(false);
       isPlayingRef.current = false;
+      setIsBuffering(false);
+      isBufferingRef.current = false;
       broadcastLeaderState();
       broadcastCurrentState();
     }
@@ -2407,6 +2422,56 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
   }, [ensureAudioPrepared, getTabId]);
 
+  const triggerExternalFallback = useCallback(
+    async (curr: Track) => {
+      const audio = getSingletonAudio();
+      if (!audio || !isExternalTrack(curr)) return;
+      const isDownloaded = getTrackDownloadSnapshot(curr.id).status === "downloaded";
+      if (isDownloaded || audio.src.startsWith("blob:")) return;
+
+      const attempts = refreshAttemptsRef.current[curr.id] || 0;
+      if (attempts >= 2) return;
+      refreshAttemptsRef.current[curr.id] = attempts + 1;
+
+      try {
+        const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
+        const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
+        if (fallbackQuery) {
+          const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 1);
+          if (scSearch.results && scSearch.results.length > 0) {
+            const scMatch = scSearch.results[0];
+            const fallbackTrack: Track = {
+              ...curr,
+              source: "soundcloud",
+              audioUrl: scMatch.audioUrl,
+              pageUrl: scMatch.pageUrl || curr.pageUrl,
+              coverUrl: scMatch.coverUrl || curr.coverUrl,
+            };
+            currentTrackRef.current = fallbackTrack;
+            setCurrentTrack(fallbackTrack);
+            updateTrackInQueue(fallbackTrack);
+            externalTracksCache.set(curr.id, fallbackTrack);
+            const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
+            isSettingSourceRef.current = true;
+            audio.src = fbSource;
+            try { audio.load(); } catch {}
+            await audio.play();
+            isSettingSourceRef.current = false;
+            setIsPlaying(true);
+            isPlayingRef.current = true;
+            setIsBuffering(false);
+            isBufferingRef.current = false;
+            broadcastLeaderState();
+            broadcastCurrentState();
+            noticeTypeRef.current = null;
+            setOfflineNotice(null);
+          }
+        }
+      } catch {}
+    },
+    [broadcastCurrentState, broadcastLeaderState, updateTrackInQueue],
+  );
+
   // Setup persistent singleton <audio> element events
   useEffect(() => {
     const audio = getSingletonAudio();
@@ -2447,6 +2512,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const onPlaying = () => {
       isSettingSourceRef.current = false;
       isRetryingPlayRef.current = false;
+      setIsBuffering(false);
+      isBufferingRef.current = false;
       if (stallProbeTimerRef.current) {
         clearTimeout(stallProbeTimerRef.current);
         stallProbeTimerRef.current = null;
@@ -2461,15 +2528,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const onStalledOrWaiting = () => {
       // Keep UI in playing/buffering state during VPN/mobile network stalls instead of auto-pausing
       const curr = currentTrackRef.current;
-      if (curr && !userPausedIntentRef.current && isPlayingRef.current) {
+      if (curr && !userPausedIntentRef.current && (isPlayingRef.current || isRetryingPlayRef.current)) {
+        setIsBuffering(true);
+        isBufferingRef.current = true;
         preservePlaybackIntent(curr.id, audio.currentTime || currentTimeRef.current, true);
         if (!stallProbeTimerRef.current) {
           stallProbeTimerRef.current = setTimeout(() => {
             stallProbeTimerRef.current = null;
-            if (!userPausedIntentRef.current && isPlayingRef.current && audio.readyState < 3) {
-              void triggerImmediateNetworkProbe();
+            if (!userPausedIntentRef.current && (isPlayingRef.current || isRetryingPlayRef.current) && audio.readyState < 3) {
+              if (isExternalTrack(curr) && audio.readyState < 2 && !audio.src.startsWith("blob:")) {
+                void triggerExternalFallback(curr);
+              } else {
+                void triggerImmediateNetworkProbe();
+              }
             }
-          }, 3500);
+          }, 2200);
         }
       }
     };
@@ -2478,6 +2551,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (isSettingSourceRef.current || isRetryingPlayRef.current) {
         return;
       }
+      setIsBuffering(false);
+      isBufferingRef.current = false;
       // Battery optimization: suspend WebAudio DSP thread immediately when paused
       if (audioCtxRef.current?.state === "running") {
         void audioCtxRef.current.suspend().catch(() => {});
@@ -2859,6 +2934,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       setIsPlaying(false);
       isPlayingRef.current = false;
+      setIsBuffering(false);
+      isBufferingRef.current = false;
       broadcastLeaderState();
       const isExternalFailed = isExternalTrack(curr);
       if (!isExternalFailed) {
@@ -2906,7 +2983,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       audio.removeEventListener("loadedmetadata", onLoadedMetadata);
       audio.removeEventListener("error", onError);
     };
-  }, [broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, getTabId, lang, notifyServerConnectivityIssue, savePlayerState, t, updateTrackInQueue]);
+  }, [broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, getTabId, lang, notifyServerConnectivityIssue, savePlayerState, t, triggerExternalFallback, updateTrackInQueue]);
 
   // Intelligent Network Resilience subscription:
   // Keeps offline UI synced and automatically resumes interrupted playback when VPN/network returns.
@@ -3226,6 +3303,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           (getTrackDownloadSnapshot(effectiveCurrentTrack.id).status === "downloaded" ||
             getCachedAudioBlobUrl(effectiveCurrentTrack.id) !== null),
       ),
+      isBuffering,
     }),
     [
       effectiveCurrentTrack,
@@ -3266,6 +3344,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       dismissOfflineNotice,
       isOffline,
       downloadVersion,
+      isBuffering,
     ],
   );
 

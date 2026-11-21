@@ -28,6 +28,7 @@ interface TrackCardProps {
   playlists?: Playlist[];
   onTrackUpdated?: (track: Track) => void;
   priorityImage?: boolean;
+  autoExpand?: boolean;
 }
 
 export const TrackCard = memo(function TrackCard({
@@ -36,10 +37,11 @@ export const TrackCard = memo(function TrackCard({
   playlists = [],
   onTrackUpdated,
   priorityImage = false,
+  autoExpand = false,
 }: TrackCardProps) {
   const { user, openAuthDialog } = useAuth();
   const { pickText, formatNum, t } = useI18n();
-  const { currentTrack, isPlaying, playTrack, updateTrackInQueue } = usePlayer();
+  const { currentTrack, isPlaying, playTrack, updateTrackInQueue, setExpanded } = usePlayer();
   const [prevTrack, setPrevTrack] = useState(track);
   const [localTrack, setLocalTrack] = useState(track);
   const [toast, setToast] = useState("");
@@ -175,7 +177,12 @@ export const TrackCard = memo(function TrackCard({
           aria-label={`${isCurrentPlaying ? t("pause") : t("play")} ${title}`}
           onClick={() => {
             void triggerHapticFeedback("playPause");
-            playTrack(activeTrack, queue);
+            if (isCurrentPlaying && autoExpand) {
+              setExpanded(true);
+            } else {
+              playTrack(activeTrack, queue);
+              if (autoExpand) setExpanded(true);
+            }
           }}
           className="absolute inset-0 z-10 w-full h-full cursor-pointer focus:outline-none"
         />
@@ -189,7 +196,11 @@ export const TrackCard = memo(function TrackCard({
               onClick={(e) => {
                 e.stopPropagation();
                 void triggerHapticFeedback("playPause");
-                playTrack(activeTrack, queue);
+                if (autoExpand) {
+                  setExpanded(true);
+                } else {
+                  playTrack(activeTrack, queue);
+                }
               }}
               className="sf-press flex h-10 items-center gap-2 px-3 rounded-full text-white bg-black/82 hover:bg-black/90 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-pointer group/btn"
             >
@@ -208,6 +219,7 @@ export const TrackCard = memo(function TrackCard({
                 e.stopPropagation();
                 void triggerHapticFeedback("playPause");
                 playTrack(activeTrack, queue);
+                if (autoExpand) setExpanded(true);
               }}
               className="sf-press flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)] cursor-pointer opacity-95 group-hover:opacity-100"
               style={{

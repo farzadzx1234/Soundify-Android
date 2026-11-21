@@ -4,6 +4,7 @@ import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } fr
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  ClockCounterClockwiseIcon,
   GlobeHemisphereWestIcon,
   HardDrivesIcon,
   MagnifyingGlassIcon,
@@ -13,6 +14,7 @@ import {
   SoundcloudLogoIcon,
   SparkleIcon,
   SpotifyLogoIcon,
+  XIcon,
   YoutubeLogoIcon,
 } from "@phosphor-icons/react";
 import { api } from "@/lib/api";
@@ -106,11 +108,34 @@ const BROWSE_CATEGORIES = [
 type SearchSource = "local" | "external";
 type ExternalSubSource = "all" | "youtube" | "soundcloud" | "spotify";
 
+const RECENT_SEARCHES_KEY = "soundify_recent_searches";
+
+const PLACEHOLDER_SUGGESTIONS_FA = [
+  "جستجوی آهنگ، خواننده یا سبک...",
+  "مثلاً: شادمهر عقیلی",
+  "مثلاً: همایون شجریان",
+  "مثلاً: یاس",
+  "مثلاً: Coldplay",
+  "مثلاً: Adele",
+  "مثلاً: بهنام بانی",
+  "مثلاً: سیروان خسروی",
+];
+
+const PLACEHOLDER_SUGGESTIONS_EN = [
+  "Search tracks, artists, or genres...",
+  "e.g. The Weeknd",
+  "e.g. Coldplay",
+  "e.g. Shajarian",
+  "e.g. Billie Eilish",
+  "e.g. Taylor Swift",
+  "e.g. Hans Zimmer",
+];
+
 function SearchPageInner() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
-  const { t, pickText, formatNum } = useI18n();
-  const { currentTrack, isPlaying, playTrack } = usePlayer();
+  const { t, pickText, formatNum, lang } = useI18n();
+  const { currentTrack, isPlaying, playTrack, setExpanded } = usePlayer();
 
   const urlQ = searchParams.get("q") ?? "";
   const rawSource = searchParams.get("source");
@@ -127,6 +152,69 @@ function SearchPageInner() {
   const [mood, setMood] = useState("all");
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Recent Searches State
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(RECENT_SEARCHES_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveRecentSearch = useCallback((query: string) => {
+    const clean = query.trim();
+    if (!clean || clean.length < 2) return;
+    setRecentSearches((prev) => {
+      const filtered = prev.filter((item) => item.toLowerCase() !== clean.toLowerCase());
+      const next = [clean, ...filtered].slice(0, 8);
+      try {
+        localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const removeRecentSearch = useCallback((queryToRemove: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setRecentSearches((prev) => {
+      const next = prev.filter((item) => item !== queryToRemove);
+      try {
+        localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const clearAllRecentSearches = useCallback(() => {
+    setRecentSearches([]);
+    try {
+      localStorage.removeItem(RECENT_SEARCHES_KEY);
+    } catch {}
+  }, []);
+
+  // Animated Placeholder cycling
+  const [placeholderIndex, setPlaceholderIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPlaceholderIndex((prev) => (prev + 1) % PLACEHOLDER_SUGGESTIONS_FA.length);
+    }, 3600);
+    return () => clearInterval(timer);
+  }, []);
+
+  const activePlaceholder = useMemo(() => {
+    if (searchSource === "external") {
+      return pickText(
+        "Search YouTube, SoundCloud & Spotify...",
+        "جستجو در یوتیوب، ساندکلود و اسپاتیفای...",
+      );
+    }
+    const list = lang === "fa" ? PLACEHOLDER_SUGGESTIONS_FA : PLACEHOLDER_SUGGESTIONS_EN;
+    return list[placeholderIndex % list.length];
+  }, [searchSource, lang, placeholderIndex, pickText]);
 
   // Local Catalog State
   const [localTracks, setLocalTracks] = useState<Track[]>([]);
@@ -228,6 +316,9 @@ function SearchPageInner() {
     e.preventDefault();
     setDebouncedQuery(inputValue);
     syncUrl(inputValue, searchSource, extSubSource);
+    if (inputValue.trim()) {
+      saveRecentSearch(inputValue.trim());
+    }
   };
 
   // Local catalog search effect
@@ -330,6 +421,7 @@ function SearchPageInner() {
     setInputValue(catQuery);
     setDebouncedQuery(catQuery);
     syncUrl(catQuery, searchSource, extSubSource);
+    saveRecentSearch(catQuery);
   };
 
   // Top result candidate for local search
@@ -411,14 +503,7 @@ function SearchPageInner() {
             ref={inputRef}
             aria-label={t("navSearch")}
             loading={localLoading || externalLoading}
-            placeholder={
-              searchSource === "external"
-                ? pickText(
-                    "Search song or artist on YouTube, SoundCloud & Spotify...",
-                    "جستجو در یوتیوب، ساندکلود و اسپاتیفای...",
-                  )
-                : t("searchPlaceholder")
-            }
+            placeholder={activePlaceholder}
             value={inputValue}
             onValueChange={handleInputChange}
           />
@@ -502,6 +587,50 @@ function SearchPageInner() {
       {/* ========================================================================= */}
       {searchSource === "local" && (
         <>
+          {/* Recent Searches Pills (Apple HIG Tag Cloud) */}
+          {recentSearches.length > 0 && !inputValue.trim() && (
+            <section aria-label="Recent Searches" className="space-y-3 sf-fade-up">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-[var(--sf-muted)]">
+                  <ClockCounterClockwiseIcon size={18} weight="bold" className="text-indigo-500" aria-hidden="true" />
+                  <span>{pickText("Recent Searches", "جستجوهای اخیر")}</span>
+                </h2>
+                <button
+                  type="button"
+                  onClick={clearAllRecentSearches}
+                  className="text-xs font-semibold text-rose-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                >
+                  {pickText("Clear All", "پاک کردن همه")}
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {recentSearches.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => {
+                      setInputValue(item);
+                      setDebouncedQuery(item);
+                      syncUrl(item, searchSource, extSubSource);
+                    }}
+                    className="sf-press group inline-flex items-center gap-2 rounded-full bg-black/[0.04] dark:bg-white/[0.08] hover:bg-black/[0.08] dark:hover:bg-white/[0.14] border border-black/[0.06] dark:border-white/[0.08] px-3.5 py-1.5 text-xs sm:text-sm font-medium transition-all cursor-pointer select-none"
+                  >
+                    <span className="truncate">{item}</span>
+                    <span
+                      onClick={(e) => removeRecentSearch(item, e)}
+                      role="button"
+                      aria-label={`Remove ${item}`}
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/20 text-[var(--sf-muted)] hover:text-rose-500 transition-colors"
+                    >
+                      <XIcon size={11} weight="bold" />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* When NO query is entered: Show Browse Categories */}
           {!inputValue.trim() && mood === "all" && (
             <section aria-label="Browse Categories" className="space-y-4">
@@ -521,13 +650,13 @@ function SearchPageInner() {
                     key={cat.id}
                     type="button"
                     onClick={() => handleCategoryClick(cat.query)}
-                    className={`sf-press group relative h-24 sm:h-28 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between overflow-hidden text-start select-none cursor-pointer shadow-sm bg-gradient-to-br ${cat.gradient}`}
+                    className={`sf-press group relative h-24 sm:h-28 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between overflow-hidden text-start select-none cursor-pointer shadow-sm active:scale-[0.98] transition-all bg-gradient-to-br ${cat.gradient}`}
                   >
                     <div
                       aria-hidden="true"
                       className="pointer-events-none absolute inset-0 bg-black/10 group-hover:bg-transparent transition-opacity"
                     />
-                    <span className="text-2xl sm:text-3xl">{cat.icon}</span>
+                    <span className="text-2xl sm:text-3xl transition-transform duration-300 group-hover:scale-110">{cat.icon}</span>
                     <div className="relative z-10">
                       <span className="block text-sm sm:text-base font-extrabold text-white leading-tight">
                         {pickText(cat.title, cat.titleFa)}
@@ -544,7 +673,14 @@ function SearchPageInner() {
           {localLoading && localTracks.length === 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
               {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="sf-content-card rounded-3xl p-4 h-72 animate-pulse" />
+                <div
+                  key={i}
+                  className="rounded-2xl p-3 flex flex-col gap-2.5 bg-white/40 dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/[0.05] animate-pulse"
+                >
+                  <div className="aspect-square w-full rounded-xl bg-black/10 dark:bg-white/10" />
+                  <div className="h-4 w-3/4 rounded-full bg-black/10 dark:bg-white/10 mt-1" />
+                  <div className="h-3 w-1/2 rounded-full bg-black/5 dark:bg-white/5" />
+                </div>
               ))}
             </div>
           ) : localTracks.length === 0 ? (
@@ -571,7 +707,14 @@ function SearchPageInner() {
                   <h2 className="text-lg font-bold flex items-center gap-2 text-[var(--sf-muted)]">
                     <span>{t("heroBadge")}</span>
                   </h2>
-                  <div className="sf-content-card rounded-3xl p-4 sm:p-5 flex items-center gap-4 relative overflow-hidden">
+                  <div
+                    onClick={() => {
+                      playTrack(topResult, localTracks);
+                      setExpanded(true);
+                      if (inputValue.trim()) saveRecentSearch(inputValue.trim());
+                    }}
+                    className="sf-content-card sf-press rounded-3xl p-4 sm:p-5 flex items-center gap-4 relative overflow-hidden cursor-pointer group hover:border-indigo-500/35 transition-all"
+                  >
                     <div
                       aria-hidden="true"
                       className="pointer-events-none absolute inset-0 opacity-20"
@@ -584,7 +727,7 @@ function SearchPageInner() {
                       alt={pickText(topResult.title, topResult.titleFa)}
                       width={96}
                       height={96}
-                      className="h-20 w-20 sm:h-24 sm:w-24 rounded-2xl object-cover shadow-md shrink-0 relative z-10"
+                      className="h-20 w-20 sm:h-24 sm:w-24 rounded-2xl object-cover shadow-md shrink-0 relative z-10 transition-transform duration-300 group-hover:scale-105"
                     />
                     <div className="flex-1 min-w-0 text-start space-y-1.5 relative z-10">
                       <span className="inline-block rounded-full bg-black/10 dark:bg-white/10 px-2.5 py-0.5 text-[11px] font-semibold">
@@ -597,7 +740,16 @@ function SearchPageInner() {
                           type="button"
                           variant="filled"
                           tint={topResult.accentColor}
-                          onClick={() => playTrack(topResult, localTracks)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (topResultPlaying) {
+                              setExpanded(true);
+                            } else {
+                              playTrack(topResult, localTracks);
+                              setExpanded(true);
+                              if (inputValue.trim()) saveRecentSearch(inputValue.trim());
+                            }
+                          }}
                           icon={
                             topResultPlaying ? (
                               <PauseIcon size={16} weight="fill" aria-hidden="true" />
@@ -611,6 +763,7 @@ function SearchPageInner() {
                         </Button>
                         <Link
                           href={`/track/${topResult.id}`}
+                          onClick={(e) => e.stopPropagation()}
                           className="sf-press rounded-full bg-black/[0.06] dark:bg-white/[0.1] hover:bg-black/[0.1] dark:hover:bg-white/[0.15] px-3.5 py-2 text-xs font-semibold transition-colors"
                         >
                           {t("openTrackPage")}
@@ -638,7 +791,12 @@ function SearchPageInner() {
                     localLoading ? "opacity-60" : "opacity-100"
                   }`}
                 >
-                  <VirtualizedTrackGrid tracks={localTracks} queue={localTracks} playlists={playlists} />
+                  <VirtualizedTrackGrid
+                    tracks={localTracks}
+                    queue={localTracks}
+                    playlists={playlists}
+                    autoExpand={true}
+                  />
                 </div>
               </section>
             </div>
@@ -728,6 +886,7 @@ function SearchPageInner() {
                     key={tr.id}
                     track={tr}
                     queue={externalTracks}
+                    autoExpand={true}
                     onImportSuccess={() => {
                       // refresh catalog in background
                       api.getTracks().then((r) => setLocalTracks(r.tracks)).catch(() => {});

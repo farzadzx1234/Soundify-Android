@@ -10,6 +10,7 @@ import {
   CaretDownIcon,
   ChatCircleTextIcon,
   CheckIcon,
+  CircleNotchIcon,
   FadersIcon,
   HeartIcon,
   MagnifyingGlassIcon,
@@ -223,6 +224,7 @@ function LiveLyricsPeek({ onOpenLyrics }: { onOpenLyrics: () => void }) {
 
 function DockTransport({
   isPlaying,
+  isBuffering = false,
   shuffle,
   repeat,
   dir,
@@ -235,6 +237,7 @@ function DockTransport({
   labels,
 }: {
   isPlaying: boolean;
+  isBuffering?: boolean;
   shuffle: boolean;
   repeat: "off" | "all" | "one";
   dir: "rtl" | "ltr";
@@ -251,6 +254,7 @@ function DockTransport({
     pause: string;
     next: string;
     repeat: string;
+    loading?: string;
   };
 }) {
   const isMobile = size === "mobile";
@@ -295,11 +299,13 @@ function DockTransport({
 
       <button
         type="button"
-        aria-label={isPlaying ? labels.pause : labels.play}
+        aria-label={isBuffering ? (labels.loading || "Loading...") : isPlaying ? labels.pause : labels.play}
         onClick={onTogglePlay}
         className={`${playBtnClass} inline-flex items-center justify-center rounded-full bg-white text-[#0b0e17] shadow-[0_0_24px_rgba(255,255,255,0.34)] hover:scale-105 active:scale-95 transition-all cursor-pointer`}
       >
-        {isPlaying ? (
+        {isBuffering ? (
+          <CircleNotchIcon size={isMobile ? 22 : 19} className="animate-spin text-[#0b0e17]" aria-hidden="true" />
+        ) : isPlaying ? (
           <PauseIcon size={isMobile ? 22 : 19} weight="fill" aria-hidden="true" />
         ) : (
           <PlayIcon size={isMobile ? 22 : 19} weight="fill" className="translate-x-0.5 rtl:-translate-x-0.5" aria-hidden="true" />
@@ -423,6 +429,7 @@ interface DesktopBottomDockProps {
   onLike: () => void;
   onShare: () => void;
   isPlaying: boolean;
+  isBuffering?: boolean;
   shuffle: boolean;
   repeat: "off" | "all" | "one";
   dir: "ltr" | "rtl";
@@ -461,6 +468,7 @@ function DesktopBottomDock({
   onLike,
   onShare,
   isPlaying,
+  isBuffering = false,
   shuffle,
   repeat,
   dir,
@@ -534,6 +542,7 @@ function DesktopBottomDock({
       <div className="shrink-0">
         <DockTransport
           isPlaying={isPlaying}
+          isBuffering={isBuffering}
           shuffle={shuffle}
           repeat={repeat}
           dir={dir}
@@ -578,6 +587,7 @@ function MobileBottomDock({
   accent,
   safeDuration,
   isPlaying,
+  isBuffering = false,
   shuffle,
   repeat,
   dir,
@@ -601,6 +611,7 @@ function MobileBottomDock({
   | "accent"
   | "safeDuration"
   | "isPlaying"
+  | "isBuffering"
   | "shuffle"
   | "repeat"
   | "dir"
@@ -630,6 +641,7 @@ function MobileBottomDock({
 
       <DockTransport
         isPlaying={isPlaying}
+        isBuffering={isBuffering}
         shuffle={shuffle}
         repeat={repeat}
         dir={dir}
@@ -742,6 +754,7 @@ export function NowPlayingOverlay() {
     currentTrack,
     queue,
     isPlaying,
+    isBuffering,
     duration,
     volume,
     muted,
@@ -1905,6 +1918,7 @@ export function NowPlayingOverlay() {
               onLike={() => void handleLike()}
               onShare={() => void handleShare()}
               isPlaying={isPlaying}
+              isBuffering={isBuffering}
               shuffle={shuffle}
               repeat={repeat}
               dir={dir}
@@ -1931,6 +1945,7 @@ export function NowPlayingOverlay() {
               accent={accent}
               safeDuration={safeDuration}
               isPlaying={isPlaying}
+              isBuffering={isBuffering}
               shuffle={shuffle}
               repeat={repeat}
               dir={dir}

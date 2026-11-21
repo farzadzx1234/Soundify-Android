@@ -10,13 +10,12 @@ import {
   CheckIcon,
   CheckSquareIcon,
   CircleNotchIcon,
-  ClockIcon,
+  DotsThreeVerticalIcon,
   HeartIcon,
   HardDriveIcon,
   ListDashesIcon,
   MagnifyingGlassIcon,
   MicrophoneStageIcon,
-  PauseIcon,
   PlayIcon,
   PlaylistIcon,
   PlusIcon,
@@ -35,6 +34,7 @@ import { useDownloadedTracks, useActiveDownloads } from "@/lib/downloadManager";
 import { exportTrackToDeviceStorage, getExportedTrackIds } from "@/lib/mediaExport";
 import { formatDuration } from "@/lib/lrc";
 import { Button, Glass, GlassSegmented, Input } from "@/components/GlassControls";
+import { DownloadActionSheet } from "@/components/DownloadActionSheet";
 import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
@@ -94,6 +94,7 @@ export default function LibraryPage() {
   const [exportedTrackIds, setExportedTrackIds] = useState<Set<string>>(() => getExportedTrackIds());
   const [exportAllRunning, setExportAllRunning] = useState(false);
   const [exportToast, setExportToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [selectedActionTrack, setSelectedActionTrack] = useState<Track | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -813,7 +814,7 @@ export default function LibraryPage() {
                           disabled={isExporting}
                           aria-label={t("saveToDevice")}
                           title={t("saveToDeviceLong")}
-                          className="p-2 rounded-xl text-indigo-500 hover:bg-indigo-500/15 active:scale-95 transition-all cursor-pointer"
+                          className="h-10 w-10 min-h-[40px] min-w-[40px] inline-flex items-center justify-center rounded-xl text-indigo-500 hover:bg-indigo-500/15 active:scale-95 transition-all cursor-pointer"
                         >
                           {isExporting ? (
                             <CircleNotchIcon size={16} className="animate-spin text-indigo-500" />
@@ -832,7 +833,7 @@ export default function LibraryPage() {
                           }}
                           aria-label={t("removeFromDownloads")}
                           title={t("removeFromDownloads")}
-                          className="p-2 rounded-xl text-rose-500 hover:bg-rose-500/15 active:scale-95 transition-colors cursor-pointer"
+                          className="h-10 w-10 min-h-[40px] min-w-[40px] inline-flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-500/15 active:scale-95 transition-colors cursor-pointer"
                         >
                           <TrashIcon size={16} />
                         </button>
@@ -843,24 +844,28 @@ export default function LibraryPage() {
               </div>
             </div>
           ) : downloadViewMode === "list" ? (
-            /* Apple HIG Grouped List View for Downloaded Music */
+            /* Apple Music / iOS 18 Sleek Row List View for Downloaded Music */
             <div className="space-y-2">
               <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
                 {filteredDownloadedTracks.map((record) => {
                   const trackTitle = pickText(record.track.title, record.track.titleFa);
                   const artistTitle = pickText(record.track.artistName, record.track.artistNameFa);
                   const isCurrent = currentTrack?.id === record.trackId;
-                  const isExporting = exportingTrackId === record.trackId;
                   const isExported = exportedTrackIds.has(record.trackId);
                   const hasLyrics = Boolean(record.lyrics?.lines && record.lyrics.lines.length > 0);
 
                   return (
                     <div
                       key={record.trackId}
-                      className="flex items-center justify-between gap-3 p-3.5 sm:px-5 hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors group"
+                      onClick={() => handlePlayDownloadedTrack(record.track)}
+                      className={`group flex items-center justify-between gap-3 px-3.5 sm:px-4 py-2.5 sm:py-3 transition-colors cursor-pointer select-none active:scale-[0.99] ${
+                        isCurrent
+                          ? "bg-indigo-500/[0.08] dark:bg-indigo-500/[0.12]"
+                          : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                      }`}
                     >
-                      {/* Leading: Cover Artwork with Interactive Play/Pause Button (≥44x44pt hit target) */}
-                      <div className="relative h-13 w-13 rounded-2xl overflow-hidden bg-slate-800 shrink-0 shadow-sm">
+                      {/* Leading: Apple Music 44x44 Album Art with Playing Indicator */}
+                      <div className="relative h-11 w-11 sm:h-12 sm:w-12 rounded-[10px] overflow-hidden bg-slate-800 shrink-0 shadow-sm ring-1 ring-black/5 dark:ring-white/10 pointer-events-none">
                         {record.track.coverUrl ? (
                           <img
                             src={record.track.coverUrl}
@@ -868,103 +873,86 @@ export default function LibraryPage() {
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-pink-500 text-white font-black text-sm">
+                          <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-pink-500 text-white font-black text-xs">
                             {trackTitle.slice(0, 1)}
                           </div>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => handlePlayDownloadedTrack(record.track)}
-                          aria-label={isCurrent && isPlaying ? t("pause") : t("playNow")}
-                          className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/55 text-white transition-opacity active:scale-95 cursor-pointer"
-                        >
-                          {isCurrent && isPlaying ? (
-                            <PauseIcon size={20} weight="fill" />
-                          ) : (
-                            <PlayIcon size={20} weight="fill" className="translate-x-0.5" />
-                          )}
-                        </button>
+                        {isCurrent && (
+                          <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
+                            {isPlaying ? (
+                              <span className="flex items-end gap-0.5 h-3.5 w-3" aria-hidden="true">
+                                <span className="w-0.5 h-full bg-emerald-400 rounded-full animate-pulse" />
+                                <span className="w-0.5 h-2/3 bg-emerald-400 rounded-full animate-pulse delay-75" />
+                                <span className="w-0.5 h-4/5 bg-emerald-400 rounded-full animate-pulse delay-150" />
+                              </span>
+                            ) : (
+                              <PlayIcon size={14} weight="fill" className="text-white" />
+                            )}
+                          </div>
+                        )}
                       </div>
 
-                      {/* Center: Track Info & Metadata Pills */}
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handlePlayDownloadedTrack(record.track)}
-                            className="font-extrabold text-sm sm:text-base truncate text-left rtl:text-right hover:text-indigo-500 transition-colors cursor-pointer"
+                      {/* Center: Clean Scannable Title & Subtitle */}
+                      <div className="min-w-0 flex-1 space-y-0.5 text-start">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p
+                            className={`truncate text-[15px] leading-snug font-semibold ${
+                              isCurrent
+                                ? "text-indigo-600 dark:text-indigo-400 font-bold"
+                                : "text-[var(--sf-text)]"
+                            }`}
                           >
                             {trackTitle}
-                          </button>
-                          {isCurrent && (
-                            <span className="flex h-2 w-2 rounded-full bg-indigo-500 animate-pulse shrink-0" />
-                          )}
+                          </p>
                         </div>
 
-                        <p className="text-xs text-[var(--sf-muted)] truncate">{artistTitle}</p>
-
-                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px]">
-                          <span className="inline-flex items-center gap-1 text-[var(--sf-muted)] font-mono tabular-nums">
-                            <ClockIcon size={12} />
-                            <span>{formatDuration(record.track.durationSec || 0)}</span>
+                        <div className="flex items-center gap-1.5 text-xs text-[var(--sf-muted)] truncate">
+                          <span className="truncate">{artistTitle}</span>
+                          <span className="shrink-0 opacity-60">•</span>
+                          <span className="shrink-0 font-mono tabular-nums">
+                            {formatDuration(record.track.durationSec || 0)}
                           </span>
-                          <span className="text-[var(--sf-muted)]">•</span>
-                          <span className="font-mono tabular-nums text-[var(--sf-muted)]">
+                          <span className="shrink-0 opacity-60">•</span>
+                          <span className="shrink-0 font-mono tabular-nums">
                             {formatStorageSize(record.sizeBytes || 0, t, formatNum)}
                           </span>
 
                           {hasLyrics && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-500 border border-indigo-500/30">
-                              <MicrophoneStageIcon size={11} weight="fill" aria-hidden="true" />
-                              <span>{t("hasLyricsBadge")}</span>
+                            <span title={t("hasLyricsBadge")}>
+                              <MicrophoneStageIcon
+                                size={12}
+                                weight="fill"
+                                className="text-indigo-400 ms-0.5 shrink-0"
+                                aria-label={t("hasLyricsBadge")}
+                              />
                             </span>
                           )}
 
                           {isExported && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                              <CheckCircleIcon size={11} weight="fill" aria-hidden="true" />
-                              <span>{t("savedToDeviceBadge")}</span>
+                            <span title={t("savedToDeviceBadge")}>
+                              <HardDriveIcon
+                                size={12}
+                                weight="bold"
+                                className="text-emerald-500 dark:text-emerald-400 ms-0.5 shrink-0"
+                                aria-label={t("savedToDeviceBadge")}
+                              />
                             </span>
                           )}
                         </div>
                       </div>
 
-                      {/* Trailing: Action Controls (Apple HIG buttons ≥44x44pt hit target) */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        {/* Save to Device Storage Button */}
-                        <Button
-                          type="button"
-                          variant={isExported ? "glass" : "filled"}
-                          onClick={() => void handleExportTrack(record)}
-                          disabled={isExporting}
-                          icon={
-                            isExporting ? (
-                              <CircleNotchIcon size={16} className="animate-spin text-indigo-500" />
-                            ) : isExported ? (
-                              <CheckIcon size={16} weight="bold" className="text-emerald-500" />
-                            ) : (
-                              <ArrowLineDownIcon size={16} weight="bold" />
-                            )
-                          }
-                          className="text-xs min-h-[40px] px-3 font-semibold"
-                          title={t("saveToDeviceLong")}
-                        >
-                          <span className="hidden sm:inline">
-                            {isExporting ? t("savingToDevice") : isExported ? t("savedToDeviceBadge") : t("saveToDevice")}
-                          </span>
-                        </Button>
-
-                        {/* Remove Track Button */}
+                      {/* Trailing: Single Apple 3-Dots Action Button (Opens ActionSheet) */}
+                      <div className="flex items-center shrink-0">
                         <button
                           type="button"
-                          onClick={async () => {
-                            await batchDeleteTracks([record.trackId]);
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedActionTrack(record.track);
                           }}
-                          aria-label={t("removeFromDownloads")}
-                          title={t("removeFromDownloads")}
-                          className="inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full text-rose-500 hover:bg-rose-500/15 active:scale-95 transition-all cursor-pointer shrink-0"
+                          aria-label={`Options for ${trackTitle}`}
+                          className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-full flex items-center justify-center text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.05] dark:hover:bg-white/[0.1] active:scale-95 transition-all cursor-pointer"
                         >
-                          <TrashIcon size={17} aria-hidden="true" />
+                          <DotsThreeVerticalIcon size={20} weight="bold" />
                         </button>
                       </div>
                     </div>
@@ -1073,6 +1061,24 @@ export default function LibraryPage() {
           )}
           <span>{exportToast.message}</span>
         </div>
+      )}
+      {/* Apple HIG Download Action Sheet */}
+      {selectedActionTrack && (
+        <DownloadActionSheet
+          track={selectedActionTrack}
+          isOpen={Boolean(selectedActionTrack)}
+          onClose={() => setSelectedActionTrack(null)}
+          onRemove={async () => {
+            const trackId = selectedActionTrack.id;
+            setSelectedActionTrack(null);
+            await batchDeleteTracks([trackId]);
+          }}
+          onPlayOffline={() => {
+            const t = selectedActionTrack;
+            setSelectedActionTrack(null);
+            handlePlayDownloadedTrack(t);
+          }}
+        />
       )}
     </div>
     </PullToRefresh>

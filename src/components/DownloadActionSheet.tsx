@@ -198,7 +198,7 @@ export function DownloadActionSheet({
         <button
           type="button"
           onClick={onClose}
-          className="w-full py-3 rounded-2xl bg-white/[0.08] hover:bg-white/[0.14] active:bg-white/[0.18] text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98] text-center"
+          className="w-full min-h-[44px] py-3 rounded-2xl bg-white/[0.08] hover:bg-white/[0.14] active:bg-white/[0.18] text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98] inline-flex items-center justify-center text-center leading-none"
         >
           {lang === "fa" ? "لغو" : "Cancel"}
         </button>

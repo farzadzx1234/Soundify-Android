@@ -758,7 +758,7 @@ export function GlassSegmented({
               aria-selected={active}
               tabIndex={active ? 0 : -1}
               onClick={() => onValueChange(item.value)}
-              className={`relative z-10 cursor-pointer whitespace-nowrap rounded-full transition-colors outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/40 ${
+              className={`relative z-10 cursor-pointer whitespace-nowrap rounded-full transition-colors outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/40 inline-flex items-center justify-center text-center leading-none ${
                 isExtraSmall
                   ? "min-h-[24px] px-1.5 min-[360px]:px-2 py-0.5 text-[10px] min-[360px]:text-[10.5px] font-mono tabular-nums"
                   : isSmall

@@ -32,6 +32,11 @@ android {
             useLegacyPackaging = false
         }
     }
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "Soundify-v${defaultConfig.versionName}.apk"
+        }
+    }
 }
 
 repositories {

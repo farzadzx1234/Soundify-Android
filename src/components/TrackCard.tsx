@@ -6,6 +6,7 @@ import { Menu } from "@/components/GlassControls";
 import {
   ArrowsClockwiseIcon,
   ChatCircleTextIcon,
+  CircleNotchIcon,
   HeartIcon,
   PauseIcon,
   PlayIcon,
@@ -41,7 +42,7 @@ export const TrackCard = memo(function TrackCard({
 }: TrackCardProps) {
   const { user, openAuthDialog } = useAuth();
   const { pickText, formatNum, t } = useI18n();
-  const { currentTrack, isPlaying, playTrack, updateTrackInQueue, setExpanded } = usePlayer();
+  const { currentTrack, isPlaying, isBuffering, playTrack, updateTrackInQueue, setExpanded } = usePlayer();
   const [prevTrack, setPrevTrack] = useState(track);
   const [localTrack, setLocalTrack] = useState(track);
   const [toast, setToast] = useState("");
@@ -189,7 +190,15 @@ export const TrackCard = memo(function TrackCard({
 
         {/* Play Button & Integrated Live Equalizer Docked to Bottom-End of Artwork */}
         <div className="absolute bottom-2.5 end-2.5 z-20 flex items-center pointer-events-auto">
-          {isCurrentPlaying ? (
+          {isCurrent && isBuffering ? (
+            <button
+              type="button"
+              aria-label={pickText("Buffering...", "در حال بارگذاری...")}
+              className="sf-press flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white bg-black/82 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-wait"
+            >
+              <CircleNotchIcon size={20} className="animate-spin text-white" aria-hidden="true" />
+            </button>
+          ) : isCurrentPlaying ? (
             <button
               type="button"
               aria-label={`${t("pause")} ${title}`}

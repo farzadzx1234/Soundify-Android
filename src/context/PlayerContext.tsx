@@ -1279,6 +1279,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (audio.src !== targetAbsSrc && audio.src !== audioSource) {
         isSettingSourceRef.current = true;
         audio.src = audioSource;
+        try { audio.load(); } catch {}
       }
       setCurrentlyPlayingTrackId(trackToPlay.id);
       recordPlaybackSessionStep(audio);
@@ -2437,15 +2438,50 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
         const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
         if (fallbackQuery) {
-          const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 1);
-          if (scSearch.results && scSearch.results.length > 0) {
-            const scMatch = scSearch.results[0];
+          let fallbackResult: {
+            source: "soundcloud" | "youtube";
+            audioUrl: string;
+            pageUrl?: string;
+            coverUrl?: string;
+          } | null = null;
+
+          // 1. Try resilient SoundCloud stream first
+          try {
+            const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 2);
+            if (scSearch.results && scSearch.results.length > 0) {
+              const scMatch = scSearch.results[0];
+              fallbackResult = {
+                source: "soundcloud",
+                audioUrl: scMatch.audioUrl,
+                pageUrl: scMatch.pageUrl || curr.pageUrl,
+                coverUrl: scMatch.coverUrl || curr.coverUrl,
+              };
+            }
+          } catch {}
+
+          // 2. If SoundCloud fails or has no match, switch immediately to clean secondary YouTube mirror stream
+          if (!fallbackResult) {
+            try {
+              const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 3);
+              const ytMatch = ytSearch.results?.find((r) => r.id !== curr.id) || ytSearch.results?.[0];
+              if (ytMatch && ytMatch.id !== curr.id) {
+                fallbackResult = {
+                  source: "youtube",
+                  audioUrl: ytMatch.audioUrl,
+                  pageUrl: ytMatch.pageUrl || curr.pageUrl,
+                  coverUrl: ytMatch.coverUrl || curr.coverUrl,
+                };
+              }
+            } catch {}
+          }
+
+          if (fallbackResult) {
             const fallbackTrack: Track = {
               ...curr,
-              source: "soundcloud",
-              audioUrl: scMatch.audioUrl,
-              pageUrl: scMatch.pageUrl || curr.pageUrl,
-              coverUrl: scMatch.coverUrl || curr.coverUrl,
+              source: fallbackResult.source,
+              audioUrl: fallbackResult.audioUrl,
+              pageUrl: fallbackResult.pageUrl || curr.pageUrl,
+              coverUrl: fallbackResult.coverUrl || curr.coverUrl,
             };
             currentTrackRef.current = fallbackTrack;
             setCurrentTrack(fallbackTrack);

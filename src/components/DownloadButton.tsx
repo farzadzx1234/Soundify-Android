@@ -3,7 +3,7 @@
 import React, { memo, useState } from "react";
 import {
   ArrowClockwiseIcon,
-  CheckCircleIcon,
+  CheckIcon,
   ClockIcon,
   DownloadSimpleIcon,
   PauseIcon,
@@ -160,9 +160,9 @@ export const DownloadButton = memo(function DownloadButton({
           disabled={busy}
           aria-label={`${trackTitle} - ${t("downloaded")}`}
           title={t("downloaded")}
-          className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer ${sizeClasses} ${variantClasses} text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 ${className}`}
+          className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer leading-none ${sizeClasses} ${variantClasses} text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 ${className}`}
         >
-          <CheckCircleIcon size={iconSize} weight="fill" aria-hidden="true" className="sf-spring-pop text-emerald-500 dark:text-emerald-400" />
+          <CheckIcon size={iconSize} weight="bold" aria-hidden="true" className="sf-spring-pop text-emerald-500 dark:text-emerald-400" />
           {showLabel && (
             <span className="ms-1.5 font-bold text-xs">
               {t("downloaded")}
@@ -239,13 +239,13 @@ export const DownloadButton = memo(function DownloadButton({
           <PauseIcon
             size={Math.max(12, Math.round(iconSize * 0.72))}
             weight="bold"
-            className="text-indigo-600 dark:text-indigo-400 sf-spring-pop z-10"
+            className="text-current sf-spring-pop z-10"
             aria-hidden="true"
           />
         ) : (
           <span
             aria-hidden="true"
-            className={`block rounded-[2px] bg-indigo-600 dark:bg-indigo-400 z-10 transition-transform ${
+            className={`block rounded-[2px] bg-current z-10 transition-transform ${
               size === "sm" ? "h-2 w-2" : size === "lg" ? "h-3 w-3 rounded-[3px]" : "h-2.5 w-2.5"
             }`}
           />

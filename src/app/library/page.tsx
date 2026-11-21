@@ -7,7 +7,6 @@ import {
   ArrowLineDownIcon,
   BooksIcon,
   CheckCircleIcon,
-  CheckIcon,
   CheckSquareIcon,
   CircleNotchIcon,
   DotsThreeVerticalIcon,
@@ -61,7 +60,7 @@ function formatStorageSize(
 export default function LibraryPage() {
   const { user, openAuthDialog } = useAuth();
   const { t, pickText, formatNum } = useI18n();
-  const { playTrack, currentTrack, isPlaying, togglePlay } = usePlayer();
+  const { playTrack, currentTrack, isPlaying, isBuffering, togglePlay } = usePlayer();
   const {
     downloadedTracks,
     totalSizeBytes,
@@ -90,7 +89,6 @@ export default function LibraryPage() {
   const [downloadViewMode, setDownloadViewMode] = useState<"list" | "grid">("list");
   const [selectMode, setSelectMode] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
-  const [exportingTrackId, setExportingTrackId] = useState<string | null>(null);
   const [exportedTrackIds, setExportedTrackIds] = useState<Set<string>>(() => getExportedTrackIds());
   const [exportAllRunning, setExportAllRunning] = useState(false);
   const [exportToast, setExportToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -203,27 +201,6 @@ export default function LibraryPage() {
     const ids = Array.from(selectedTrackIds);
     await batchDeleteTracks(ids);
     setSelectedTrackIds(new Set());
-  };
-
-  const handleExportTrack = async (record: (typeof downloadedTracks)[0]) => {
-    if (exportingTrackId) return;
-    setExportingTrackId(record.trackId);
-    try {
-      const res = await exportTrackToDeviceStorage(record.track, record.audioBlob);
-      if (res.success) {
-        setExportedTrackIds((prev) => new Set(prev).add(record.trackId));
-        setExportToast({ message: t("saveToDeviceSuccess"), type: "success" });
-        setTimeout(() => setExportToast(null), 3500);
-      } else {
-        setExportToast({ message: res.error || t("saveToDeviceError"), type: "error" });
-        setTimeout(() => setExportToast(null), 4000);
-      }
-    } catch {
-      setExportToast({ message: t("saveToDeviceError"), type: "error" });
-      setTimeout(() => setExportToast(null), 4000);
-    } finally {
-      setExportingTrackId(null);
-    }
   };
 
   const handleExportAll = async () => {
@@ -741,7 +718,6 @@ export default function LibraryPage() {
                   const isChecked = selectedTrackIds.has(record.trackId);
                   const trackTitle = pickText(record.track.title, record.track.titleFa);
                   const artistTitle = pickText(record.track.artistName, record.track.artistNameFa);
-                  const isExporting = exportingTrackId === record.trackId;
                   const isExported = exportedTrackIds.has(record.trackId);
                   const hasLyrics = Boolean(record.lyrics?.lines && record.lyrics.lines.length > 0);
 
@@ -801,42 +777,19 @@ export default function LibraryPage() {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-mono tabular-nums text-[var(--sf-muted)] hidden sm:inline">
+                        <span className="text-xs font-mono tabular-nums text-[var(--sf-muted)]">
                           {formatStorageSize(record.sizeBytes || 0, t, formatNum)}
                         </span>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleExportTrack(record);
-                          }}
-                          disabled={isExporting}
-                          aria-label={t("saveToDevice")}
-                          title={t("saveToDeviceLong")}
-                          className="h-10 w-10 min-h-[40px] min-w-[40px] inline-flex items-center justify-center rounded-xl text-indigo-500 hover:bg-indigo-500/15 active:scale-95 transition-all cursor-pointer"
-                        >
-                          {isExporting ? (
-                            <CircleNotchIcon size={16} className="animate-spin text-indigo-500" />
-                          ) : isExported ? (
-                            <CheckIcon size={16} weight="bold" className="text-emerald-500" />
-                          ) : (
-                            <ArrowLineDownIcon size={16} weight="bold" />
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            await batchDeleteTracks([record.trackId]);
-                          }}
-                          aria-label={t("removeFromDownloads")}
-                          title={t("removeFromDownloads")}
-                          className="h-10 w-10 min-h-[40px] min-w-[40px] inline-flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-500/15 active:scale-95 transition-colors cursor-pointer"
-                        >
-                          <TrashIcon size={16} />
-                        </button>
+                        {isExported && (
+                          <span title={t("savedToDeviceBadge")}>
+                            <HardDriveIcon
+                              size={13}
+                              weight="bold"
+                              className="text-emerald-500 dark:text-emerald-400 ms-1 shrink-0"
+                              aria-label={t("savedToDeviceBadge")}
+                            />
+                          </span>
+                        )}
                       </div>
                     </div>
                   );
@@ -879,7 +832,9 @@ export default function LibraryPage() {
                         )}
                         {isCurrent && (
                           <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
-                            {isPlaying ? (
+                            {isBuffering ? (
+                              <CircleNotchIcon size={16} className="animate-spin text-white" aria-hidden="true" />
+                            ) : isPlaying ? (
                               <span className="flex items-end gap-0.5 h-3.5 w-3" aria-hidden="true">
                                 <span className="w-0.5 h-full bg-emerald-400 rounded-full animate-pulse" />
                                 <span className="w-0.5 h-2/3 bg-emerald-400 rounded-full animate-pulse delay-75" />

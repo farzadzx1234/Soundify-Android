@@ -36,7 +36,7 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
 }: ExternalTrackCardProps) {
   const { user, openAuthDialog } = useAuth();
   const { pickText, t } = useI18n();
-  const { currentTrack, isPlaying, playTrack, togglePlay, setExpanded } = usePlayer();
+  const { currentTrack, isPlaying, isBuffering, playTrack, togglePlay, setExpanded } = usePlayer();
 
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(false);
@@ -174,12 +174,14 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
         <span
           aria-hidden="true"
           className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${
-            isCurrentPlaying
+            isCurrentPlaying || (isCurrent && isBuffering)
               ? "bg-black/55 opacity-100"
               : "bg-black/35 opacity-0 group-hover/art:opacity-100"
           }`}
         >
-          {isCurrentPlaying ? (
+          {isCurrent && isBuffering ? (
+            <CircleNotchIcon size={22} className="animate-spin text-white drop-shadow" aria-hidden="true" />
+          ) : isCurrentPlaying ? (
             <span className="flex items-end gap-0.5 h-3.5">
               <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-400 rounded-full" />
               <span className="sf-eq-bar w-0.5 h-3.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.2s" }} />

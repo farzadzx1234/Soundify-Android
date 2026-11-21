@@ -1,4 +1,4 @@
-const CACHE_VERSION = "soundify-v1.0.13-b14";
+const CACHE_VERSION = "soundify-v1.0.14-b15";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
 const PRESERVED_COVER_CACHE = "soundify-covers-v1";

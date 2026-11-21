@@ -187,11 +187,18 @@ export const DownloadButton = memo(function DownloadButton({
   if (isDownloading) {
     const ringParams =
       size === "sm"
-        ? { dim: 32, center: 16, radius: 12, stroke: 2.5, circumference: 75.398 }
+        ? { dim: 32, center: 16, radius: 10, stroke: 2, circumference: 62.831 }
         : size === "lg"
-          ? { dim: 44, center: 22, radius: 17, stroke: 3.5, circumference: 106.814 }
-          : { dim: 36, center: 18, radius: 14, stroke: 3, circumference: 87.964 };
-    const dashOffset = ringParams.circumference * (1 - Math.max(0.04, Math.min(1, progress / 100)));
+          ? { dim: 44, center: 22, radius: 14, stroke: 2.5, circumference: 87.964 }
+          : { dim: 36, center: 18, radius: 12, stroke: 2.2, circumference: 75.398 };
+    const dashOffset = ringParams.circumference * (1 - Math.max(0.02, Math.min(1, progress / 100)));
+
+    const downloadingClasses =
+      variant === "glass"
+        ? "text-white bg-white/[0.12] hover:bg-white/[0.18] border border-white/15 backdrop-blur-md shadow-sm"
+        : variant === "pill"
+          ? "text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20"
+          : "text-emerald-500 dark:text-emerald-400 hover:bg-black/[0.05] dark:hover:bg-white/[0.08]";
 
     return (
       <button
@@ -202,13 +209,11 @@ export const DownloadButton = memo(function DownloadButton({
         disabled={busy}
         aria-label={`${trackTitle} - ${t("downloading")} ${formatNum(progress)}% - ${t("pauseDownload")}`}
         title={`${t("downloading")} (${formatNum(progress)}%) - ${t("pauseDownload")}`}
-        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer text-indigo-600 dark:text-indigo-400 bg-indigo-500/15 backdrop-blur-sm ${sizeClasses} ${className}`}
+        className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer select-none ${downloadingClasses} ${sizeClasses} ${className}`}
       >
         <svg
-          width={ringParams.dim}
-          height={ringParams.dim}
           viewBox={`0 0 ${ringParams.dim} ${ringParams.dim}`}
-          className="absolute inset-0 pointer-events-none"
+          className="absolute inset-0 w-full h-full pointer-events-none"
           aria-hidden="true"
         >
           <circle
@@ -245,8 +250,8 @@ export const DownloadButton = memo(function DownloadButton({
         ) : (
           <span
             aria-hidden="true"
-            className={`block rounded-[2px] bg-current z-10 transition-transform ${
-              size === "sm" ? "h-2 w-2" : size === "lg" ? "h-3 w-3 rounded-[3px]" : "h-2.5 w-2.5"
+            className={`block bg-current z-10 transition-transform ${
+              size === "sm" ? "h-2 w-2 rounded-[2px]" : size === "lg" ? "h-2.5 w-2.5 rounded-[2.5px]" : "h-2 w-2 rounded-[2px]"
             }`}
           />
         )}

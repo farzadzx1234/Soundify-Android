@@ -42,6 +42,7 @@ function PlayerDockMobileProgress({
   defaultDuration: number;
   accentColor: string;
 }) {
+  const { dir } = useI18n();
   const { currentTime, duration } = usePlayerProgress();
   const safeDuration = Math.max(1, duration || defaultDuration || 1);
   const ratio = Math.max(0, Math.min(1, currentTime / safeDuration));
@@ -49,11 +50,12 @@ function PlayerDockMobileProgress({
   return (
     <div
       aria-hidden="true"
-      dir="ltr"
-      className="md:hidden pointer-events-none absolute inset-x-3.5 bottom-0 h-[2px] overflow-hidden rounded-b-2xl bg-black/[0.06] dark:bg-white/[0.08]"
+      className="md:hidden pointer-events-none absolute inset-x-0 bottom-0 h-[2.5px] overflow-hidden rounded-b-2xl bg-black/[0.04] dark:bg-white/[0.06]"
     >
       <div
-        className="h-full w-full origin-left transition-transform duration-200 ease-out"
+        className={`h-full w-full transition-transform duration-200 ease-out ${
+          dir === "rtl" ? "origin-right" : "origin-left"
+        }`}
         style={{
           backgroundColor: accentColor || "var(--sf-accent)",
           transform: `scaleX(${ratio})`,
@@ -254,7 +256,7 @@ export function PlayerDock() {
           transform: dockTranslateX !== 0 ? `translate3d(${dockTranslateX}px, 0, 0)` : undefined,
           transition: isSwipingDock ? "none" : "transform 0.28s cubic-bezier(0.18, 0.89, 0.32, 1)",
         }}
-        className="sf-dock-glass relative pointer-events-auto mx-auto max-w-6xl rounded-2xl px-3 py-2 sm:px-5 sm:py-3 touch-pan-y select-none"
+        className="sf-dock-glass relative pointer-events-auto mx-auto max-w-6xl rounded-2xl px-3 py-2 sm:px-5 sm:py-3 touch-pan-y select-none overflow-hidden"
       >
         <PlayerDockMobileProgress defaultDuration={safeDuration} accentColor={currentTrack.accentColor} />
 
@@ -262,12 +264,13 @@ export function PlayerDock() {
         {isCurrentTrackDownloading && (
           <div
             aria-hidden="true"
-            dir="ltr"
-            className="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden rounded-t-2xl bg-white/10 z-20"
+            className="pointer-events-none absolute inset-x-0 top-0 h-[2.5px] overflow-hidden rounded-t-2xl bg-black/[0.04] dark:bg-white/[0.06] z-20"
           >
             <div
-              className="h-full bg-gradient-to-r from-indigo-500 via-teal-400 to-emerald-400 transition-all duration-200"
-              style={{ width: `${Math.max(3, currentTrackDownloadProgress)}%` }}
+              className={`h-full bg-emerald-500 dark:bg-emerald-400 transition-all duration-300 ease-out ${
+                dir === "rtl" ? "origin-right float-right" : "origin-left float-left"
+              }`}
+              style={{ width: `${Math.max(2, currentTrackDownloadProgress)}%` }}
             />
           </div>
         )}
@@ -302,14 +305,16 @@ export function PlayerDock() {
                       <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-500 dark:bg-emerald-400 rounded-full" style={{ animationDelay: "0.4s" }} />
                     </span>
                   )}
+                </div>
+                <div className="flex items-center gap-2 min-w-0 mt-0.5">
+                  <p className="truncate text-[11px] text-slate-500 dark:text-slate-300/85 font-medium">{artist}</p>
                   {isCurrentTrackDownloading && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-full border border-emerald-500/20 shrink-0" dir="ltr">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
-                      <span>{currentTrackDownloadProgress}%</span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-500 dark:text-emerald-400 shrink-0">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
+                      <span dir="ltr">{currentTrackDownloadProgress}%</span>
                     </span>
                   )}
                 </div>
-                <p className="truncate text-[11px] text-slate-500 dark:text-slate-300/85 font-medium mt-0.5">{artist}</p>
               </div>
             </div>
           </button>
@@ -385,14 +390,16 @@ export function PlayerDock() {
                       <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" style={{ animationDelay: "0.4s" }} />
                     </span>
                   )}
+                </div>
+                <div className="flex items-center gap-2 min-w-0 mt-0.5">
+                  <PlayerDockSubtitle fallback={artist} />
                   {isCurrentTrackDownloading && (
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0" dir="ltr">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
-                      <span>{pickText("Downloading", "در حال دانلود")} {currentTrackDownloadProgress}%</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 shrink-0">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span dir="ltr">{currentTrackDownloadProgress}%</span>
                     </span>
                   )}
                 </div>
-                <PlayerDockSubtitle fallback={artist} />
                 {isRemotePlaybackActive && (
                   <span
                     className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-bold text-emerald-400 mt-0.5 truncate max-w-full"

@@ -464,9 +464,9 @@ export default function LibraryPage() {
                         {dl.progress}%
                       </span>
                     </div>
-                    <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-2 rounded-full overflow-hidden p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
+                    <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-1.5 rounded-full overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-teal-400 to-emerald-400 transition-all duration-300"
+                        className="h-full rounded-full bg-emerald-500 dark:bg-emerald-400 transition-all duration-300"
                         style={{ width: `${Math.max(3, dl.progress)}%` }}
                       />
                     </div>

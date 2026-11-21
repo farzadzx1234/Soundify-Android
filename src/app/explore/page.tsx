@@ -16,7 +16,7 @@ import { api, getPlaylistDetailHref } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
-import { Button, Glass } from "@/components/GlassControls";
+import { Glass } from "@/components/GlassControls";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
 import { FALLBACK_PLAYLISTS, FALLBACK_TRACKS } from "@/lib/fallbackSeedData";
@@ -129,9 +129,8 @@ export default function ExplorePage() {
 
             {heroTrack && (
               <div className="pt-2 flex flex-wrap items-center gap-3">
-                <Button
-                  variant="filled"
-                  className="rounded-full shadow-lg shadow-indigo-500/25 gap-2"
+                <button
+                  type="button"
                   onClick={() => {
                     if (currentTrack?.id === heroTrack.id) {
                       togglePlay();
@@ -139,13 +138,14 @@ export default function ExplorePage() {
                       playTrack(heroTrack, filteredTracks);
                     }
                   }}
+                  className="sf-btn inline-flex items-center justify-center gap-2.5 h-11 px-6 rounded-full font-bold text-sm text-slate-950 bg-white hover:bg-white/95 active:scale-[0.96] shadow-[0_8px_24px_rgba(255,255,255,0.22)] transition-all cursor-pointer select-none"
                 >
                   {isHeroPlaying ? (
-                    <PauseIcon size={18} weight="fill" />
+                    <PauseIcon size={18} weight="fill" className="text-slate-950 shrink-0" aria-hidden="true" />
                   ) : (
-                    <PlayIcon size={18} weight="fill" />
+                    <PlayIcon size={18} weight="fill" className="text-slate-950 shrink-0" aria-hidden="true" />
                   )}
-                  <span>
+                  <span className="tracking-tight">
                     {isHeroPlaying
                       ? lang === "fa"
                         ? "توقف پخش"
@@ -154,12 +154,12 @@ export default function ExplorePage() {
                         ? "پخش برگزیده امروز"
                         : "Play Spotlight"}
                   </span>
-                </Button>
+                </button>
                 <Link
                   href="/search"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium bg-white/10 hover:bg-white/15 text-zinc-200 border border-white/10 transition-colors"
+                  className="sf-btn inline-flex items-center justify-center gap-2 h-11 px-5 rounded-full text-sm font-semibold bg-white/12 hover:bg-white/18 text-white border border-white/15 backdrop-blur-md active:scale-[0.96] transition-all cursor-pointer select-none"
                 >
-                  <MagnifyingGlassIcon size={16} />
+                  <MagnifyingGlassIcon size={17} className="text-white shrink-0" aria-hidden="true" />
                   <span>{t("navSearch")}</span>
                 </Link>
               </div>

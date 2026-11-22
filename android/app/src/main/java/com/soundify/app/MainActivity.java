@@ -41,8 +41,25 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onPause() {
+        super.onPause();
+        try {
+            WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+            if (wv != null) {
+                wv.post(() -> wv.evaluateJavascript("if (typeof window !== 'undefined' && window.__soundifySetBackground) { window.__soundifySetBackground(true); }", null));
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
     public void onResume() {
         super.onResume();
+        try {
+            WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+            if (wv != null) {
+                wv.post(() -> wv.evaluateJavascript("if (typeof window !== 'undefined' && window.__soundifySetBackground) { window.__soundifySetBackground(false); }", null));
+            }
+        } catch (Exception ignored) {}
         try {
             ViewCompat.requestApplyInsets(getWindow().getDecorView());
         } catch (Exception ignored) {}
@@ -273,7 +290,8 @@ public class MainActivity extends BridgeActivity {
 
                 webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
                 WebSettings settings = webView.getSettings();
-                settings.setOffscreenPreRaster(true);
+                // Thermal & memory optimization: disable offscreen pre-rasterization to prevent GPU overheating during background playback
+                settings.setOffscreenPreRaster(false);
                 // Allow background autoplay between queue transitions without user gesture
                 settings.setMediaPlaybackRequiresUserGesture(false);
                 // Disable direct file access and content scheme access (OWASP MASVS / MSTG-PLATFORM-05)

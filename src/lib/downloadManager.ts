@@ -370,9 +370,14 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       return false;
     }
 
-    const rawAudioUrl = track.audioUrl;
+    let rawAudioUrl = track.audioUrl;
     if (!rawAudioUrl) {
       throw new Error("Track has no valid audio URL");
+    }
+
+    if (rawAudioUrl.includes("/api/stream/external") && !rawAudioUrl.includes("fastStart=")) {
+      const sep = rawAudioUrl.includes("?") ? "&" : "?";
+      rawAudioUrl = `${rawAudioUrl}${sep}fastStart=true`;
     }
 
     const resolvedAudioUrl = resolveMediaUrl(rawAudioUrl);
@@ -482,12 +487,19 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       audioBlob = await audioRes.blob();
     }
 
-    // Download cover image if present
+    // Fast concurrent resolution of auxiliary assets (cover, lyrics, license)
+    // with a strict timeout so downloads finish in seconds and never hang on external lyrics providers
     let coverBlob: Blob | undefined;
-    if (track.coverUrl) {
+    let lyricsData: DownloadedLyrics | undefined;
+    let license: OfflineLicense | undefined;
+
+    const auxController = new AbortController();
+    const auxTimer = setTimeout(() => auxController.abort(), 3500);
+
+    const coverFetchPromise = (async () => {
+      if (!track.coverUrl) return;
       try {
         let coverUrlToFetch = resolveMediaUrl(track.coverUrl);
-        // If it's an external URL (e.g. YouTube), proxy it through external-cover to bypass CORS
         if (track.coverUrl.startsWith("http://") || track.coverUrl.startsWith("https://")) {
           const ytId =
             extractYouTubeIdClient(track.coverUrl) ||
@@ -499,32 +511,40 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
             );
           }
         }
-        const coverRes = await fetch(coverUrlToFetch, { signal });
+        const coverRes = await fetch(coverUrlToFetch, { signal: auxController.signal });
         if (coverRes.ok) {
           coverBlob = await coverRes.blob();
         }
-      } catch {
-        // Non-fatal if cover cannot be fetched
-      }
-    }
+      } catch {}
+    })();
 
-    // Download synced / plain lyrics if present
-    let lyricsData: DownloadedLyrics | undefined;
-    try {
-      const lyricsRes = await api.getLyrics(trackId);
-      if (lyricsRes && Array.isArray(lyricsRes.lines) && lyricsRes.lines.length > 0) {
-        lyricsData = {
-          lines: lyricsRes.lines,
-          source: lyricsRes.source || "lrclib",
-          lyricsOffsetMs: lyricsRes.lyricsOffsetMs || 0,
-        };
-      }
-    } catch {
-      // Non-fatal if primary lyrics cannot be fetched
-    }
+    const lyricsFetchPromise = (async () => {
+      try {
+        const lyricsRes = await api.getLyrics(trackId);
+        if (lyricsRes && Array.isArray(lyricsRes.lines) && lyricsRes.lines.length > 0) {
+          lyricsData = {
+            lines: lyricsRes.lines,
+            source: lyricsRes.source || "lrclib",
+            lyricsOffsetMs: lyricsRes.lyricsOffsetMs || 0,
+          };
+          return;
+        }
+      } catch {}
 
-    // Comprehensive fallback: Try autoFetchLyrics if primary fetch returned no lines
-    if (!lyricsData || lyricsData.lines.length === 0) {
+      // Fast fallback to embedded or quick auto-fetch
+      const inlineLyrics = (track as unknown as { lyrics?: string }).lyrics;
+      if (typeof inlineLyrics === "string" && inlineLyrics.trim()) {
+        const parsed = parseLrc(inlineLyrics);
+        if (parsed.length > 0) {
+          lyricsData = {
+            lines: parsed,
+            source: "embedded",
+            lyricsOffsetMs: 0,
+          };
+          return;
+        }
+      }
+
       try {
         const autoRes = await api.autoFetchLyrics(trackId, {
           queryTitle: track.title,
@@ -545,66 +565,23 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
               source: autoRes.source || "lrclib",
               lyricsOffsetMs: 0,
             };
-          } else {
-            const plainLines = autoRes.lrcContent
-              .split(/\r?\n/)
-              .map((l) => l.trim())
-              .filter(Boolean)
-              .map((text, idx) => ({ timeMs: idx * 3000, text }));
-            if (plainLines.length > 0) {
-              lyricsData = {
-                lines: plainLines,
-                source: autoRes.source || "plain",
-                lyricsOffsetMs: 0,
-              };
-            }
           }
         }
-      } catch {
-        // Non-fatal fallback
-      }
-    }
+      } catch {}
+    })();
 
-    // Fallback to track.lyrics if available
-    if (!lyricsData || lyricsData.lines.length === 0) {
-      const inlineLyrics = (track as unknown as { lyrics?: string }).lyrics;
-      if (typeof inlineLyrics === "string" && inlineLyrics.trim()) {
-        const parsed = parseLrc(inlineLyrics);
-        if (parsed.length > 0) {
-          lyricsData = {
-            lines: parsed,
-            source: "embedded",
-            lyricsOffsetMs: 0,
-          };
-        } else {
-          const plainLines = inlineLyrics
-            .split(/\r?\n/)
-            .map((l) => l.trim())
-            .filter(Boolean)
-            .map((text, idx) => ({ timeMs: idx * 3000, text }));
-          if (plainLines.length > 0) {
-            lyricsData = {
-              lines: plainLines,
-              source: "embedded",
-              lyricsOffsetMs: 0,
-            };
-          }
-        }
-      }
-    }
-
-    // Fetch cryptographic offline download license (Spotify architecture) if user is authenticated
-    let license: OfflineLicense | undefined;
-    if (token) {
+    const licenseFetchPromise = (async () => {
+      if (!token) return;
       try {
         const licRes = await api.getOfflineLicense(trackId);
         if (licRes && licRes.ok && licRes.license) {
           license = licRes.license;
         }
-      } catch {
-        // Non-fatal if offline license cannot be issued
-      }
-    }
+      } catch {}
+    })();
+
+    await Promise.allSettled([coverFetchPromise, lyricsFetchPromise, licenseFetchPromise]);
+    clearTimeout(auxTimer);
 
     const savingSession = activeDownloads.get(trackId);
     if (savingSession) {

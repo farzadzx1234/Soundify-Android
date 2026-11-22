@@ -311,375 +311,384 @@ export default function LibraryPage() {
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
-      <div className="mx-auto max-w-7xl space-y-6 sf-fade-up">
-      {/* Apple Music Library Header */}
-      <Glass className="rounded-3xl p-5 sm:p-7 space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className="text-2xl sm:text-3xl font-black flex items-center gap-2.5">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-md">
-                <BooksIcon size={22} weight="bold" aria-hidden="true" />
-              </span>
-              <span>{t("libraryTitle")}</span>
-            </h1>
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--sf-muted)] pt-0.5">
-              {user ? (
-                <>
-                  <bdi className="font-bold text-[var(--sf-text)]">{user.displayName}</bdi>
-                  <span>•</span>
-                  <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
-                  <span>•</span>
-                  <span>{formatNum(likedTracks.length)} {t("likedTracksTab")}</span>
-                  <span>•</span>
-                  <span>{formatNum(playlists.length)} {t("playlistsTab")}</span>
-                </>
-              ) : (
-                <>
-                  <span>{t("guestAccount")}</span>
-                  <span>•</span>
-                  <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
-                </>
-              )}
+      <div className="mx-auto max-w-7xl space-y-5 sf-fade-up px-1 sm:px-2">
+        {/* Apple Music / Spotify Clean Library Header */}
+        <header className="space-y-4 pt-1 sm:pt-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h1 className="text-2xl sm:text-3xl font-black text-[var(--sf-text)] tracking-tight flex items-center gap-2.5">
+                <span className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-md shrink-0">
+                  <BooksIcon size={20} weight="bold" aria-hidden="true" />
+                </span>
+                <span>{t("libraryTitle")}</span>
+              </h1>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--sf-muted)] font-medium">
+                {user ? (
+                  <>
+                    <bdi className="font-bold text-[var(--sf-text)]">{user.displayName}</bdi>
+                    <span>•</span>
+                    <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
+                    <span>•</span>
+                    <span>{formatNum(likedTracks.length)} {t("likedTracksTab")}</span>
+                    <span>•</span>
+                    <span>{formatNum(playlists.length)} {t("playlistsTab")}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{t("guestAccount")}</span>
+                    <span>•</span>
+                    <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
+                  </>
+                )}
+              </div>
             </div>
+
+            {/* Quick Play & Shuffle actions for current section (Compact Pill Controls) */}
+            {tab !== "playlists" && !isGuestTabLocked && activeTracks.length > 0 && !selectMode && (
+              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                <Button
+                  type="button"
+                  variant="filled"
+                  onClick={handlePlayAll}
+                  icon={<PlayIcon size={16} weight="fill" aria-hidden="true" />}
+                  className="!min-h-[40px] !px-4 text-xs font-bold"
+                >
+                  {t("playNow")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="glass"
+                  onClick={handleShuffle}
+                  icon={<ShuffleIcon size={16} weight="bold" aria-hidden="true" />}
+                  className="!min-h-[40px] !px-3.5 text-xs font-bold"
+                >
+                  {t("shuffle")}
+                </Button>
+              </div>
+            )}
           </div>
 
-          {/* Quick Play & Shuffle actions for current section */}
-          {tab !== "playlists" && !isGuestTabLocked && activeTracks.length > 0 && !selectMode && (
-            <div className="flex items-center gap-2">
+          {/* Spotify / Apple Music Filter Chips Row */}
+          <div className="overflow-x-auto no-scrollbar scroll-smooth -mx-1 px-1" role="tablist" aria-label={t("libraryTitle")}>
+            <div className="flex items-center gap-2 min-w-max pb-1">
+              {[
+                {
+                  id: "downloaded" as const,
+                  label: t("downloadedTracksTab"),
+                  count: downloadedTracks.length,
+                  icon: <ArrowCircleDownIcon size={16} weight="bold" />,
+                },
+                {
+                  id: "liked" as const,
+                  label: t("likedTracksTab"),
+                  count: likedTracks.length,
+                  icon: <HeartIcon size={16} weight="bold" />,
+                },
+                {
+                  id: "playlists" as const,
+                  label: t("playlistsTab"),
+                  count: playlists.length,
+                  icon: <PlaylistIcon size={16} weight="bold" />,
+                },
+                {
+                  id: "reposts" as const,
+                  label: t("repostsTab"),
+                  count: repostedTracks.length,
+                  icon: <RepeatIcon size={16} weight="bold" />,
+                },
+                {
+                  id: "history" as const,
+                  label: t("historyTab"),
+                  count: historyTracks.length,
+                  icon: <ClockCounterClockwiseIcon size={16} weight="bold" />,
+                },
+              ].map((tabItem) => {
+                const isActive = tab === tabItem.id;
+                return (
+                  <button
+                    key={tabItem.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => {
+                      setTab(tabItem.id);
+                      setSelectMode(false);
+                      setSelectedTrackIds(new Set());
+                    }}
+                    className={`min-h-[38px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs sm:text-[13px] font-bold transition-all cursor-pointer select-none active:scale-95 ${
+                      isActive
+                        ? "bg-[var(--sf-text)] text-[var(--sf-bg)] shadow-md"
+                        : "bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-black/[0.05] dark:border-white/[0.06]"
+                    }`}
+                  >
+                    <span className={isActive ? "text-[var(--sf-bg)]" : "text-indigo-500 dark:text-indigo-400"}>
+                      {tabItem.icon}
+                    </span>
+                    <span>{tabItem.label}</span>
+                    {tabItem.count !== undefined && tabItem.count > 0 && (
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums ${
+                          isActive
+                            ? "bg-black/20 dark:bg-white/25 text-[var(--sf-bg)]"
+                            : "bg-black/[0.06] dark:bg-white/[0.09] text-[var(--sf-text)]"
+                        }`}
+                      >
+                        {formatNum(tabItem.count)}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </header>
+
+        {actionErr && (
+          <p role="alert" className="rounded-2xl bg-rose-500/15 border border-rose-500/30 px-4 py-2.5 text-sm text-rose-600 dark:text-rose-300">
+            {actionErr}
+          </p>
+        )}
+
+        {/* Guest Lock Banner for Cloud Tabs */}
+        {isGuestTabLocked ? (
+          <Glass className="rounded-3xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto">
+            <div className="flex h-14 w-14 mx-auto items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-lg">
+              <UserCircleIcon size={30} weight="bold" aria-hidden="true" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-black">{t("loginRequired")}</h2>
+              <p className="text-xs text-[var(--sf-muted)]">
+                {t("guestAccount")} — {t("loginRequired")}
+              </p>
+            </div>
+            <div className="pt-2 flex justify-center gap-3">
               <Button
                 type="button"
                 variant="filled"
-                onClick={handlePlayAll}
-                icon={<PlayIcon size={18} weight="fill" aria-hidden="true" />}
+                onClick={openAuthDialog}
+                icon={<UserCircleIcon size={18} aria-hidden="true" />}
               >
-                {t("playNow")}
+                {t("signIn")}
               </Button>
               <Button
                 type="button"
                 variant="glass"
-                onClick={handleShuffle}
-                icon={<ShuffleIcon size={18} weight="bold" aria-hidden="true" />}
+                onClick={() => setTab("downloaded")}
+                icon={<ArrowCircleDownIcon size={18} aria-hidden="true" />}
               >
-                {t("shuffle")}
+                {t("downloadedTracksTab")}
               </Button>
             </div>
-          )}
-        </div>
-
-        {/* Apple Music HIG Pill Tabs Strip */}
-        <div className="pt-1 overflow-x-auto no-scrollbar scroll-smooth" role="tablist" aria-label={t("libraryTitle")}>
-          <div className="flex items-center gap-2 min-w-max pb-1">
-            {[
-              {
-                id: "downloaded" as const,
-                label: t("downloadedTracksTab"),
-                count: downloadedTracks.length,
-                icon: <ArrowCircleDownIcon size={17} weight="bold" />,
-              },
-              {
-                id: "liked" as const,
-                label: t("likedTracksTab"),
-                count: likedTracks.length,
-                icon: <HeartIcon size={17} weight="bold" />,
-              },
-              {
-                id: "playlists" as const,
-                label: t("playlistsTab"),
-                count: playlists.length,
-                icon: <PlaylistIcon size={17} weight="bold" />,
-              },
-              {
-                id: "reposts" as const,
-                label: t("repostsTab"),
-                count: repostedTracks.length,
-                icon: <RepeatIcon size={17} weight="bold" />,
-              },
-              {
-                id: "history" as const,
-                label: t("historyTab"),
-                count: historyTracks.length,
-                icon: <ClockCounterClockwiseIcon size={17} weight="bold" />,
-              },
-            ].map((tabItem) => {
-              const isActive = tab === tabItem.id;
-              return (
-                <button
-                  key={tabItem.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => {
-                    setTab(tabItem.id);
-                    setSelectMode(false);
-                    setSelectedTrackIds(new Set());
-                  }}
-                  className={`min-h-[44px] px-4 py-2 rounded-2xl flex items-center gap-2 text-xs sm:text-sm font-bold transition-all cursor-pointer select-none active:scale-95 ${
-                    isActive
-                      ? "bg-indigo-600 text-white shadow-md ring-1 ring-indigo-400/40"
-                      : "bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-black/[0.06] dark:border-white/[0.08]"
-                  }`}
-                >
-                  <span className={isActive ? "text-white" : "text-indigo-500 dark:text-indigo-400"}>
-                    {tabItem.icon}
+          </Glass>
+        ) : tab === "downloaded" ? (
+          /* Downloaded Tracks Section with Minimal Unified Sub-bar */
+          <div className="space-y-4">
+            {activeDownloads.length > 0 && (
+              <div className="rounded-2xl p-3.5 sm:p-4 space-y-2.5 border border-indigo-500/25 bg-indigo-500/[0.04]">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-xs sm:text-sm flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-indigo-500 animate-ping" />
+                    {pickText("Active Downloads", "دانلودهای در حال انجام")} ({formatNum(activeDownloads.length)})
                   </span>
-                  <span>{tabItem.label}</span>
-                  {tabItem.count !== undefined && tabItem.count > 0 && (
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums ${
-                        isActive
-                          ? "bg-white/25 text-white"
-                          : "bg-black/[0.06] dark:bg-white/[0.1] text-[var(--sf-text)]"
-                      }`}
-                    >
-                      {formatNum(tabItem.count)}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </Glass>
-
-      {actionErr && (
-        <p role="alert" className="rounded-2xl bg-rose-500/15 border border-rose-500/30 px-4 py-2.5 text-sm text-rose-600 dark:text-rose-300">
-          {actionErr}
-        </p>
-      )}
-
-      {/* Guest Lock Banner for Cloud Tabs */}
-      {isGuestTabLocked ? (
-        <Glass className="rounded-3xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto">
-          <div className="flex h-14 w-14 mx-auto items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-lg">
-            <UserCircleIcon size={30} weight="bold" aria-hidden="true" />
-          </div>
-          <div className="space-y-1">
-            <h2 className="text-xl font-black">{t("loginRequired")}</h2>
-            <p className="text-xs text-[var(--sf-muted)]">
-              {t("guestAccount")} — {t("loginRequired")}
-            </p>
-          </div>
-          <div className="pt-2 flex justify-center gap-3">
-            <Button
-              type="button"
-              variant="filled"
-              onClick={openAuthDialog}
-              icon={<UserCircleIcon size={18} aria-hidden="true" />}
-            >
-              {t("signIn")}
-            </Button>
-            <Button
-              type="button"
-              variant="glass"
-              onClick={() => setTab("downloaded")}
-              icon={<ArrowCircleDownIcon size={18} aria-hidden="true" />}
-            >
-              {t("downloadedTracksTab")}
-            </Button>
-          </div>
-        </Glass>
-      ) : tab === "downloaded" ? (
-        /* Downloaded Tracks Section with Storage Quota Meter & Batch Controls */
-        <div className="space-y-5">
-          {activeDownloads.length > 0 && (
-            <Glass className="rounded-3xl p-4 sm:p-5 space-y-3 border border-indigo-500/25 bg-indigo-500/[0.04]">
-              <div className="flex items-center justify-between">
-                <span className="font-extrabold text-sm sm:text-base flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-indigo-500 animate-ping" />
-                  {pickText("Active Downloads", "دانلودهای در حال انجام")} ({formatNum(activeDownloads.length)})
-                </span>
-              </div>
-              <div className="space-y-2.5 divide-y divide-black/[0.04] dark:divide-white/[0.06]">
-                {activeDownloads.map((dl) => (
-                  <div key={dl.trackId} className="pt-2 first:pt-0 space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold truncate max-w-[220px] sm:max-w-md">
-                        {dl.track ? pickText(dl.track.title, dl.track.titleFa) : dl.trackId}
-                      </span>
-                      <span className="tabular-nums font-black text-indigo-500" dir="ltr">
-                        {dl.progress}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-emerald-500 dark:bg-emerald-400 transition-all duration-300"
-                        style={{ width: `${Math.max(3, dl.progress)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Glass>
-          )}
-
-          {/* Search Filter, View Toggle, Export All & Multi-Select Batch Actions Bar */}
-          {downloadedTracks.length > 0 && (
-            <Glass className="rounded-3xl p-3 sm:p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 flex-1 max-w-lg">
-                <div className="relative flex-1">
-                  <Input
-                    aria-label={t("searchDownloadedPlaceholder")}
-                    placeholder={t("searchDownloadedPlaceholder")}
-                    value={downloadSearchQuery}
-                    onValueChange={setDownloadSearchQuery}
-                    icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
-                  />
                 </div>
-                <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.06] text-xs font-semibold text-[var(--sf-muted)] shrink-0">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-                  <span>{formatNum(filteredDownloadedTracks.length)} {t("tracksCount")}</span>
-                  <span>•</span>
-                  <span className="tabular-nums text-[var(--sf-text)] font-bold">{formatStorageSize(totalSizeBytes, t, formatNum)}</span>
+                <div className="space-y-2 divide-y divide-black/[0.04] dark:divide-white/[0.06]">
+                  {activeDownloads.map((dl) => (
+                    <div key={dl.trackId} className="pt-2 first:pt-0 space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold truncate max-w-[200px] sm:max-w-md">
+                          {dl.track ? pickText(dl.track.title, dl.track.titleFa) : dl.trackId}
+                        </span>
+                        <span className="tabular-nums font-black text-indigo-500" dir="ltr">
+                          {dl.progress}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 dark:bg-emerald-400 transition-all duration-300"
+                          style={{ width: `${Math.max(3, dl.progress)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
 
-              <div className="flex flex-wrap items-center gap-2 self-end md:self-auto shrink-0">
-                {/* Export All to Device Storage Button */}
-                {!selectMode && filteredDownloadedTracks.length > 0 && (
-                  <Button
-                    type="button"
-                    variant="glass"
-                    onClick={() => void handleExportAll()}
-                    disabled={exportAllRunning}
-                    icon={
-                      exportAllRunning ? (
-                        <CircleNotchIcon size={15} className="animate-spin text-indigo-500" aria-hidden="true" />
-                      ) : (
-                        <ArrowLineDownIcon size={15} weight="bold" aria-hidden="true" />
-                      )
-                    }
-                    className="text-xs font-semibold"
-                    title={t("exportAllToDevice")}
-                  >
-                    <span>{exportAllRunning ? t("exportingToDevice") : t("exportAllToDevice")}</span>
-                  </Button>
-                )}
-
-                {/* View Mode Toggle (List / Grid) */}
-                {!selectMode && (
-                  <div className="inline-flex rounded-2xl bg-black/[0.04] dark:bg-white/[0.06] p-1 border border-black/[0.04] dark:border-white/[0.06]">
-                    <button
-                      type="button"
-                      onClick={() => setDownloadViewMode("list")}
-                      aria-label={t("viewModeList")}
-                      title={t("viewModeList")}
-                      className={`p-1.5 rounded-xl transition-all cursor-pointer ${
-                        downloadViewMode === "list"
-                          ? "bg-white dark:bg-white/20 text-indigo-500 shadow-sm"
-                          : "text-[var(--sf-muted)] hover:text-[var(--sf-text)]"
-                      }`}
-                    >
-                      <ListDashesIcon size={16} weight="bold" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDownloadViewMode("grid")}
-                      aria-label={t("viewModeGrid")}
-                      title={t("viewModeGrid")}
-                      className={`p-1.5 rounded-xl transition-all cursor-pointer ${
-                        downloadViewMode === "grid"
-                          ? "bg-white dark:bg-white/20 text-indigo-500 shadow-sm"
-                          : "text-[var(--sf-muted)] hover:text-[var(--sf-text)]"
-                      }`}
-                    >
-                      <SquaresFourIcon size={16} weight="bold" />
-                    </button>
+            {/* Clean Minimal Search & Action Strip (Spotify / Apple Music Design) */}
+            {downloadedTracks.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 py-1">
+                <div className="flex items-center gap-2.5 flex-1">
+                  <div className="relative flex-1 max-w-md">
+                    <Input
+                      aria-label={t("searchDownloadedPlaceholder")}
+                      placeholder={t("searchDownloadedPlaceholder")}
+                      value={downloadSearchQuery}
+                      onValueChange={setDownloadSearchQuery}
+                      icon={<MagnifyingGlassIcon size={15} aria-hidden="true" />}
+                    />
                   </div>
-                )}
+                  <div className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/[0.03] dark:bg-white/[0.04] text-[11px] font-semibold text-[var(--sf-muted)] shrink-0 border border-black/[0.04] dark:border-white/[0.05]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+                    <span>{formatNum(filteredDownloadedTracks.length)} {t("tracksCount")}</span>
+                    <span>•</span>
+                    <span className="tabular-nums text-[var(--sf-text)] font-bold">{formatStorageSize(totalSizeBytes, t, formatNum)}</span>
+                  </div>
+                </div>
 
-                <Button
-                  type="button"
-                  variant={selectMode ? "filled" : "glass"}
-                  onClick={() => {
-                    setSelectMode(!selectMode);
-                    setSelectedTrackIds(new Set());
-                    setConfirmDeleteSelected(false);
-                  }}
-                  className="text-xs font-semibold"
-                >
-                  {selectMode ? t("cancelSelect") : t("selectMode")}
-                </Button>
-
-                {selectMode && (
-                  <>
+                <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                  {/* Export All to Device Button */}
+                  {!selectMode && filteredDownloadedTracks.length > 0 && (
                     <Button
                       type="button"
-                      variant="ghost"
-                      onClick={handleSelectAll}
+                      variant="glass"
+                      onClick={() => void handleExportAll()}
+                      disabled={exportAllRunning}
                       icon={
-                        selectedTrackIds.size === filteredDownloadedTracks.length && filteredDownloadedTracks.length > 0 ? (
-                          <CheckSquareIcon size={16} weight="fill" className="text-indigo-500" aria-hidden="true" />
+                        exportAllRunning ? (
+                          <CircleNotchIcon size={15} className="animate-spin text-indigo-500" aria-hidden="true" />
                         ) : (
-                          <SquareIcon size={16} aria-hidden="true" />
+                          <ArrowLineDownIcon size={15} weight="bold" aria-hidden="true" />
                         )
                       }
-                      className="text-xs"
+                      className="!min-h-[36px] !px-3 text-xs font-semibold"
+                      title={t("exportAllToDevice")}
                     >
-                      {t("selectAll")}
+                      <span className="max-[400px]:hidden">{exportAllRunning ? t("exportingToDevice") : t("exportAllToDevice")}</span>
                     </Button>
+                  )}
 
-                    {selectedTrackIds.size > 0 && (
-                      <>
-                        <Button
-                          type="button"
-                          variant="glass"
-                          onClick={() => void handleExportSelected()}
-                          disabled={exportAllRunning}
-                          icon={
-                            exportAllRunning ? (
-                              <CircleNotchIcon size={15} className="animate-spin text-indigo-500" />
-                            ) : (
-                              <ArrowLineDownIcon size={15} weight="bold" />
-                            )
-                          }
-                          className="text-xs font-semibold"
-                          title={t("saveToDevice")}
-                        >
-                          {exportAllRunning
-                            ? t("exportingToDevice")
-                            : `${t("saveToDevice")} (${formatNum(selectedTrackIds.size)})`}
-                        </Button>
+                  {/* View Mode Toggle (List / Grid) */}
+                  {!selectMode && (
+                    <div className="inline-flex rounded-full bg-black/[0.04] dark:bg-white/[0.06] p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
+                      <button
+                        type="button"
+                        onClick={() => setDownloadViewMode("list")}
+                        aria-label={t("viewModeList")}
+                        title={t("viewModeList")}
+                        className={`p-1.5 rounded-full transition-all cursor-pointer ${
+                          downloadViewMode === "list"
+                            ? "bg-white dark:bg-white/20 text-indigo-500 shadow-sm"
+                            : "text-[var(--sf-muted)] hover:text-[var(--sf-text)]"
+                        }`}
+                      >
+                        <ListDashesIcon size={15} weight="bold" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDownloadViewMode("grid")}
+                        aria-label={t("viewModeGrid")}
+                        title={t("viewModeGrid")}
+                        className={`p-1.5 rounded-full transition-all cursor-pointer ${
+                          downloadViewMode === "grid"
+                            ? "bg-white dark:bg-white/20 text-indigo-500 shadow-sm"
+                            : "text-[var(--sf-muted)] hover:text-[var(--sf-text)]"
+                        }`}
+                      >
+                        <SquaresFourIcon size={15} weight="bold" />
+                      </button>
+                    </div>
+                  )}
 
-                        <Button
-                          type="button"
-                          variant="filled"
-                          destructive
-                          onClick={() => void handleDeleteSelected()}
-                          icon={<TrashIcon size={15} aria-hidden="true" />}
-                          className="text-xs"
-                        >
-                          {confirmDeleteSelected
-                            ? t("deleteSelectedConfirm")
-                            : `${t("deleteSelected")} (${formatNum(selectedTrackIds.size)})`}
-                        </Button>
-                      </>
-                    )}
-                  </>
-                )}
+                  <Button
+                    type="button"
+                    variant={selectMode ? "filled" : "glass"}
+                    onClick={() => {
+                      setSelectMode(!selectMode);
+                      setSelectedTrackIds(new Set());
+                      setConfirmDeleteSelected(false);
+                    }}
+                    className="!min-h-[36px] !px-3 text-xs font-semibold"
+                  >
+                    {selectMode ? t("cancelSelect") : t("selectMode")}
+                  </Button>
+                </div>
               </div>
-            </Glass>
-          )}
+            )}
 
-          {downloadedTracks.length === 0 ? (
-            <Glass className="rounded-3xl p-12 text-center space-y-4 max-w-xl mx-auto">
-              <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-3xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                <ArrowCircleDownIcon size={36} weight="duotone" aria-hidden="true" />
+            {/* Contextual Batch Action Bar when selectMode is Active */}
+            {selectMode && filteredDownloadedTracks.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 sf-fade-up">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={handleSelectAll}
+                    icon={
+                      selectedTrackIds.size === filteredDownloadedTracks.length && filteredDownloadedTracks.length > 0 ? (
+                        <CheckSquareIcon size={16} weight="fill" className="text-indigo-500" aria-hidden="true" />
+                      ) : (
+                        <SquareIcon size={16} aria-hidden="true" />
+                      )
+                    }
+                    className="!min-h-[34px] !px-2.5 text-xs font-bold"
+                  >
+                    {t("selectAll")}
+                  </Button>
+                  <span className="text-xs font-bold text-[var(--sf-muted)]">
+                    ({formatNum(selectedTrackIds.size)} / {formatNum(filteredDownloadedTracks.length)})
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedTrackIds.size > 0 && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="glass"
+                        onClick={() => void handleExportSelected()}
+                        disabled={exportAllRunning}
+                        icon={
+                          exportAllRunning ? (
+                            <CircleNotchIcon size={14} className="animate-spin text-indigo-500" />
+                          ) : (
+                            <ArrowLineDownIcon size={14} weight="bold" />
+                          )
+                        }
+                        className="!min-h-[34px] !px-3 text-xs font-semibold"
+                        title={t("saveToDevice")}
+                      >
+                        {exportAllRunning
+                          ? t("exportingToDevice")
+                          : `${t("saveToDevice")} (${formatNum(selectedTrackIds.size)})`}
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="filled"
+                        destructive
+                        onClick={() => void handleDeleteSelected()}
+                        icon={<TrashIcon size={14} aria-hidden="true" />}
+                        className="!min-h-[34px] !px-3 text-xs font-semibold"
+                      >
+                        {confirmDeleteSelected
+                          ? t("deleteSelectedConfirm")
+                          : `${t("deleteSelected")} (${formatNum(selectedTrackIds.size)})`}
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1">
-                <h2 className="text-lg font-bold">{t("downloadedTracksTab")}</h2>
-                <p className="text-xs text-[var(--sf-muted)] max-w-sm mx-auto leading-relaxed">
-                  {t("noDownloadedTracks")}
-                </p>
-              </div>
-            </Glass>
-          ) : filteredDownloadedTracks.length === 0 ? (
-            <Glass className="rounded-3xl p-8 text-center space-y-2 max-w-md mx-auto">
-              <p className="text-sm font-semibold">{t("noOfflineMatch")}</p>
-            </Glass>
-          ) : selectMode ? (
-            /* Multi-select Batch Management Table / List */
-            <div className="space-y-2">
-              <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+            )}
+
+            {downloadedTracks.length === 0 ? (
+              <Glass className="rounded-3xl p-12 text-center space-y-4 max-w-xl mx-auto">
+                <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-3xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                  <ArrowCircleDownIcon size={36} weight="duotone" aria-hidden="true" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-bold">{t("downloadedTracksTab")}</h2>
+                  <p className="text-xs text-[var(--sf-muted)] max-w-sm mx-auto leading-relaxed">
+                    {t("noDownloadedTracks")}
+                  </p>
+                </div>
+              </Glass>
+            ) : filteredDownloadedTracks.length === 0 ? (
+              <Glass className="rounded-3xl p-8 text-center space-y-2 max-w-md mx-auto">
+                <p className="text-sm font-semibold">{t("noOfflineMatch")}</p>
+              </Glass>
+            ) : selectMode ? (
+              /* Multi-select Batch Management Table / List */
+              <div className="rounded-2xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.05] overflow-hidden">
                 {filteredDownloadedTracks.map((record) => {
                   const isChecked = selectedTrackIds.has(record.trackId);
                   const trackTitle = pickText(record.track.title, record.track.titleFa);
@@ -691,10 +700,10 @@ export default function LibraryPage() {
                     <div
                       key={record.trackId}
                       onClick={() => handleToggleSelectTrack(record.trackId)}
-                      className={`flex items-center justify-between gap-3 p-3.5 sm:px-5 cursor-pointer transition-colors ${
+                      className={`flex items-center justify-between gap-3 p-3 sm:px-4 cursor-pointer transition-colors ${
                         isChecked
                           ? "bg-indigo-500/10 dark:bg-indigo-500/15"
-                          : "hover:bg-black/[0.02] dark:hover:bg-white/[0.04]"
+                          : "hover:bg-black/[0.02] dark:hover:bg-white/[0.03]"
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -714,7 +723,7 @@ export default function LibraryPage() {
                           )}
                         </button>
 
-                        <div className="h-11 w-11 rounded-xl overflow-hidden bg-slate-800 shrink-0">
+                        <div className="h-11 w-11 rounded-xl overflow-hidden bg-slate-800 shrink-0 shadow-sm">
                           {record.track.coverUrl ? (
                             <img
                               src={record.track.coverUrl}
@@ -761,11 +770,9 @@ export default function LibraryPage() {
                   );
                 })}
               </div>
-            </div>
-          ) : downloadViewMode === "list" ? (
-            /* Apple Music / iOS 18 Sleek Row List View for Downloaded Music */
-            <div className="space-y-2">
-              <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+            ) : downloadViewMode === "list" ? (
+              /* Apple Music / Spotify Sleek Scannable Row List */
+              <div className="rounded-2xl sf-content-card border border-black/[0.05] dark:border-white/[0.07] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.05] overflow-hidden">
                 {filteredDownloadedTracks.map((record) => {
                   const trackTitle = pickText(record.track.title, record.track.titleFa);
                   const artistTitle = pickText(record.track.artistName, record.track.artistNameFa);
@@ -777,10 +784,10 @@ export default function LibraryPage() {
                     <div
                       key={record.trackId}
                       onClick={() => handlePlayDownloadedTrack(record.track)}
-                      className={`group flex items-center justify-between gap-3 px-3.5 sm:px-4 py-2.5 sm:py-3 transition-colors cursor-pointer select-none active:scale-[0.99] ${
+                      className={`group flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 sm:py-3 transition-colors cursor-pointer select-none active:scale-[0.99] ${
                         isCurrent
                           ? "bg-indigo-500/[0.08] dark:bg-indigo-500/[0.12]"
-                          : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+                          : "hover:bg-black/[0.025] dark:hover:bg-white/[0.035]"
                       }`}
                     >
                       {/* Leading: Apple Music 44x44 Album Art with Playing Indicator */}
@@ -880,17 +887,16 @@ export default function LibraryPage() {
                   );
                 })}
               </div>
-            </div>
-          ) : (
-            <VirtualizedTrackGrid
-              tracks={filteredDownloadedTrackObjects}
-              queue={filteredDownloadedTrackObjects}
-              playlists={playlists}
-              onTrackUpdated={handleTrackUpdated}
-            />
-          )}
-        </div>
-      ) : tab === "playlists" ? (
+            ) : (
+              <VirtualizedTrackGrid
+                tracks={filteredDownloadedTrackObjects}
+                queue={filteredDownloadedTrackObjects}
+                playlists={playlists}
+                onTrackUpdated={handleTrackUpdated}
+              />
+            )}
+          </div>
+        ) : tab === "playlists" ? (
         /* Playlists Section */
         <div className="space-y-6">
           <Glass className="rounded-3xl p-4 sm:p-5">

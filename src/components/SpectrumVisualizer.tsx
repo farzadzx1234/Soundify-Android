@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { usePlayer } from "@/context/PlayerContext";
+import { isAppInForeground, subscribeToAppState } from "@/lib/androidBridge";
 
 const BAND_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0.0, 0.08],
@@ -142,13 +143,21 @@ export function SpectrumVisualizer({
     configureMetrics();
     const hasRoundRect = typeof ctx.roundRect === "function";
 
+    const isMobile =
+      typeof window !== "undefined" &&
+      (window.innerWidth <= 768 || window.matchMedia("(pointer: coarse)").matches);
+    const frameInterval = isMobile ? 1000 / 30 : 1000 / 60;
+
     const drawBars = (values: Float32Array, alpha: number) => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
       ctx.fillStyle = grad;
       ctx.globalAlpha = alpha;
-      ctx.shadowColor = "rgba(132, 204, 22, 0.28)";
-      ctx.shadowBlur = 5 * dpr;
+      // High-performance rendering: bypass expensive canvas gaussian shadow passes on mobile/touch screens
+      if (!isMobile) {
+        ctx.shadowColor = "rgba(132, 204, 22, 0.28)";
+        ctx.shadowBlur = 5 * dpr;
+      }
       ctx.beginPath();
       for (let i = 0; i < barCount; i++) {
         const norm = Math.max(0.04, Math.min(0.96, values[i]));
@@ -190,11 +199,6 @@ export function SpectrumVisualizer({
       };
     }
 
-    const isMobile =
-      typeof window !== "undefined" &&
-      (window.innerWidth <= 768 || window.matchMedia("(pointer: coarse)").matches);
-    const frameInterval = isMobile ? 1000 / 30 : 1000 / 60;
-
     let rafId = 0;
     let lastDrawTime = 0;
     const bins = analyserNode ? analyserNode.frequencyBinCount : 32;
@@ -203,7 +207,8 @@ export function SpectrumVisualizer({
     let tick = 0.95;
 
     const draw = (now: number) => {
-      if (document.hidden || !isVisibleRef.current) {
+      // Immediately cancel animation frames if document is hidden, offscreen, or app is in background/multitasking
+      if (document.hidden || !isVisibleRef.current || !isAppInForeground()) {
         rafId = 0;
         return;
       }
@@ -245,7 +250,7 @@ export function SpectrumVisualizer({
     };
 
     const startLoop = () => {
-      if (!rafId && !document.hidden && isVisibleRef.current) {
+      if (!rafId && !document.hidden && isVisibleRef.current && isAppInForeground()) {
         lastDrawTime = performance.now();
         rafId = requestAnimationFrame(draw);
       }
@@ -259,7 +264,7 @@ export function SpectrumVisualizer({
     };
 
     const onVisibility = () => {
-      if (document.hidden) {
+      if (document.hidden || !isAppInForeground()) {
         stopLoop();
       } else {
         startLoop();
@@ -272,7 +277,7 @@ export function SpectrumVisualizer({
         (entries) => {
           const entry = entries[0];
           isVisibleRef.current = entry?.isIntersecting ?? true;
-          if (isVisibleRef.current) {
+          if (isVisibleRef.current && isAppInForeground()) {
             startLoop();
           } else {
             stopLoop();
@@ -284,10 +289,19 @@ export function SpectrumVisualizer({
     }
 
     document.addEventListener("visibilitychange", onVisibility);
+    const unsubAppState = subscribeToAppState((inForeground) => {
+      if (inForeground) {
+        startLoop();
+      } else {
+        stopLoop();
+      }
+    });
+
     startLoop();
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
+      unsubAppState();
       if (observer) observer.disconnect();
       ro?.disconnect();
       stopLoop();

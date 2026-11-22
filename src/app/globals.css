@@ -1118,6 +1118,18 @@ dialog.sf-now-playing-dialog::backdrop {
     transform: translate3d(0, 0, 0);
   }
 
+  /* Thermal and background battery preservation: when app is backgrounded or multitasking */
+  html[data-app-state="background"] .sf-ambient-stage,
+  html[data-app-state="background"] canvas,
+  html[data-app-state="background"] .sf-float-orb,
+  html[data-app-state="background"] .sf-float-orb-delay {
+    display: none !important;
+  }
+
+  html[data-app-state="background"] * {
+    animation-play-state: paused !important;
+  }
+
   /* Battery saver & 60-120fps Android compositor: halt idle drifts, sheen sweeps, ping ripples & grid stagger animations on touch devices */
   @media (pointer: coarse) {
     .sf-float-orb,

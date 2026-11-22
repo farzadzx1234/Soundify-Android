@@ -140,3 +140,48 @@ export function dispatchAndroidBack(): boolean {
   }
   return false;
 }
+
+let appForegroundState = true;
+const appStateListeners = new Set<(isActive: boolean) => void>();
+
+/**
+ * Checks whether the app is currently actively visible and in the foreground.
+ * Evaluates document visibility, documentElement data attributes, and Capacitor app state.
+ */
+export function isAppInForeground(): boolean {
+  if (typeof document !== "undefined") {
+    if (document.hidden) return false;
+    if (document.documentElement.getAttribute("data-app-state") === "background") return false;
+  }
+  return appForegroundState;
+}
+
+/**
+ * Updates the foreground/background state and notifies active visualizers and tickers.
+ */
+export function setAppForegroundState(isActive: boolean): void {
+  appForegroundState = isActive;
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-app-state", isActive ? "active" : "background");
+  }
+  for (const listener of appStateListeners) {
+    try {
+      listener(isActive);
+    } catch {}
+  }
+}
+
+/**
+ * Subscribes a visualizer or ticker to app state changes.
+ */
+export function subscribeToAppState(callback: (isActive: boolean) => void): () => void {
+  appStateListeners.add(callback);
+  return () => appStateListeners.delete(callback);
+}
+
+// Global hook for Android MainActivity to communicate backgrounding immediately
+if (typeof window !== "undefined") {
+  (window as unknown as { __soundifySetBackground?: (isBg: boolean) => void }).__soundifySetBackground = (isBg: boolean) => {
+    setAppForegroundState(!isBg);
+  };
+}

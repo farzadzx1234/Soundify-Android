@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
-import { dispatchAndroidBack, isAndroidNative, registerBackButtonHandler } from "@/lib/androidBridge";
+import { dispatchAndroidBack, isAndroidNative, registerBackButtonHandler, setAppForegroundState } from "@/lib/androidBridge";
 import { installLogSanitizer } from "@/lib/secureLogger";
 import { secureStorage } from "@/lib/secureStorage";
 import { runAfterInitialPaint } from "@/lib/startupScheduler";
@@ -30,6 +30,42 @@ export function AndroidInitializer() {
       void checkDeviceIntegrity();
     }, 800);
     return () => cancel();
+  }, []);
+
+  // Monitor foreground / background transitions to stop GPU/CPU hogs when multitasking or screen locked
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleVisibility = () => {
+      setAppForegroundState(!document.hidden);
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    let stateHandleCleanup: (() => void) | undefined;
+    const capAppAny = window.Capacitor?.Plugins?.App as {
+      addListener?: (
+        eventName: string,
+        listenerFunc: (state: { isActive: boolean }) => void
+      ) => Promise<{ remove: () => Promise<void> }> | { remove: () => void };
+    } | null;
+
+    if (capAppAny?.addListener) {
+      const handle = capAppAny.addListener("appStateChange", ({ isActive }) => {
+        setAppForegroundState(isActive);
+      });
+      stateHandleCleanup = () => {
+        if (handle && "then" in handle) {
+          handle.then((h) => h.remove()).catch(() => {});
+        } else if (handle && "remove" in handle) {
+          handle.remove();
+        }
+      };
+    }
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      stateHandleCleanup?.();
+    };
   }, []);
 
   const router = useRouter();

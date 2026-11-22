@@ -12,7 +12,7 @@ import {
   resolveSpotifyTrackStream,
   synthesizeExternalTrack,
 } from "@/lib/api";
-import { isAndroidNative } from "@/lib/androidBridge";
+import { isAndroidNative, isAppInForeground, subscribeToAppState } from "@/lib/androidBridge";
 import { getServerConnectivityStatus, setServerConnectivityStatus } from "@/lib/mobileBackend";
 import {
   clearPreservedPlaybackIntent,
@@ -806,7 +806,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       const isExternalTrackItem = isExternalTrack(track);
 
-      const retryDelays = isExternalTrackItem ? [0, 2500, 5000] : [0, 450, 1200];
+      const retryDelays = isExternalTrackItem ? [0, 800, 1800] : [0, 450, 1200];
       for (let attempt = 0; attempt < retryDelays.length; attempt++) {
         if (playRequestIdRef.current !== reqId || userPausedIntentRef.current) {
           isRetryingPlayRef.current = false;
@@ -823,7 +823,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
 
           // If the audio element is already playing or ready to play, do NOT disrupt it!
-          if (!audio.paused || audio.readyState >= 3) {
+          if (!audio.paused && audio.readyState >= 3) {
             isRetryingPlayRef.current = false;
             isSettingSourceRef.current = false;
             return true;
@@ -843,11 +843,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             (!isActivelyBuffering || Boolean(audio.error))
           ) {
             const cleanedSource = rawSource.replace(/([?&])_rt=\d+/g, "$1").replace(/[?&]$/, "").replace(/\?&/, "?");
-            const sep = cleanedSource.includes("?") ? "&" : "?";
-            const bustedUrl = `${cleanedSource}${sep}_rt=${Date.now()}`;
             const resumeAt = audio.currentTime > 0 ? audio.currentTime : desiredPos;
             isSettingSourceRef.current = true;
-            audio.src = bustedUrl;
+            // Only add cache-buster if actual media error occurred
+            const retrySrc = audio.error ? `${cleanedSource}${cleanedSource.includes("?") ? "&" : "?"}_rt=${Date.now()}` : cleanedSource;
+            audio.src = retrySrc;
             if (resumeAt > 0) {
               const onMeta = () => {
                 try {
@@ -1182,6 +1182,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         };
         audioSource = resolveMediaUrl(resolvedAudio);
         externalTracksCache.set(trackToPlay.id, trackToPlay);
+        void prebufferTrack(trackToPlay);
         setQueue((prevQueue) => {
           const nextQ = prevQueue.map((t) => (t.id === trackToPlay.id ? trackToPlay : t));
           queueRef.current = nextQ;
@@ -1244,13 +1245,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (lyricsRef.current.length === 0) {
           void loadLyricsForTrack(track.id, false);
         }
-        if (audio.paused && resolvedAutoPlay) {
+        if (resolvedAutoPlay) {
           initAudioGraph();
           if (audioCtxRef.current?.state === "suspended") {
             void audioCtxRef.current.resume();
           }
-          await attemptPlayWithRetry(audio, trackToPlay, isDownloaded, audioSource, startSec);
-        } else if (!audio.paused && !resolvedAutoPlay) {
+          if (audio.paused || audio.readyState < 2 || isBufferingRef.current || Boolean(audio.error)) {
+            await attemptPlayWithRetry(audio, trackToPlay, isDownloaded, audioSource, startSec);
+          } else if (typeof startTime === "number" && startTime >= 0) {
+            try {
+              audio.currentTime = startSec;
+              currentTimeRef.current = startSec;
+              setCurrentTime(startSec);
+            } catch {}
+          }
+        } else if (!audio.paused) {
           userPausedIntentRef.current = true;
           playRequestIdRef.current += 1;
           clearPreservedPlaybackIntent();
@@ -1259,14 +1268,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           audio.pause();
           setIsPlaying(false);
           isPlayingRef.current = false;
+          setIsBuffering(false);
+          isBufferingRef.current = false;
           broadcastLeaderState();
           broadcastCurrentState();
-        } else if (!audio.paused && resolvedAutoPlay && typeof startTime === "number" && startTime >= 0) {
-          try {
-            audio.currentTime = startSec;
-            currentTimeRef.current = startSec;
-            setCurrentTime(startSec);
-          } catch {}
         }
         return;
       }
@@ -2626,8 +2631,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       currentTimeRef.current = playbackPos;
       const now = performance.now();
 
-      // Battery optimization: skip React UI re-renders 4x/sec while app is in background / screen locked
-      if (typeof document === "undefined" || !document.hidden) {
+      // Battery & thermal optimization: skip React UI re-renders 4x/sec while app is in background / multitasking / screen locked
+      const inForeground = isAppInForeground() && (typeof document === "undefined" || !document.hidden);
+      if (inForeground) {
         // Throttle React state updates to at most once every 250ms
         if (now - lastTimeUpdate >= 250) {
           lastTimeUpdate = now;
@@ -2972,9 +2978,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     audio.addEventListener("loadedmetadata", onLoadedMetadata);
     audio.addEventListener("error", onError);
 
+    const unsubApp = subscribeToAppState((inFg) => {
+      if (inFg && audio) {
+        currentTimeRef.current = audio.currentTime;
+        setCurrentTime(audio.currentTime);
+      }
+    });
+
     return () => {
       // NOTE: Do not call audio.pause() here so soft client-side navigation
       // never stops playback!
+      unsubApp();
       if (stallProbeTimerRef.current) {
         clearTimeout(stallProbeTimerRef.current);
         stallProbeTimerRef.current = null;

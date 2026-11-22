@@ -6,6 +6,7 @@ import {
   extractCanonicalExternalUrl,
   extractYouTubeIdClient,
   externalTracksCache,
+  getApiTokenAsync,
   isExternalTrack,
   normalizeTrack,
   resolveMediaUrl,
@@ -806,7 +807,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       const isExternalTrackItem = isExternalTrack(track);
 
-      const retryDelays = isExternalTrackItem ? [0, 800, 1800] : [0, 450, 1200];
+      const retryDelays = isExternalTrackItem ? [0, 500, 1200] : [0, 400, 1000];
       for (let attempt = 0; attempt < retryDelays.length; attempt++) {
         if (playRequestIdRef.current !== reqId || userPausedIntentRef.current) {
           isRetryingPlayRef.current = false;
@@ -928,43 +929,41 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             coverUrl?: string;
           }> = [];
 
-          // 1. Collect SoundCloud candidates
-          if (track.source !== "soundcloud") {
-            try {
-              const scSearch = await api.searchExternal(fallbackQ, "soundcloud", 3);
-              if (scSearch.results && scSearch.results.length > 0) {
-                for (const r of scSearch.results) {
-                  if (r.audioUrl) {
-                    candidates.push({
-                      source: "soundcloud",
-                      audioUrl: r.audioUrl,
-                      pageUrl: r.pageUrl || track.pageUrl,
-                      coverUrl: r.coverUrl || track.coverUrl,
-                    });
-                  }
-                }
-              }
-            } catch {}
-          }
+          // Collect SoundCloud + alternative YouTube candidates concurrently for fast playback failover
+          const [scSettled, ytSettled] = await Promise.allSettled([
+            track.source !== "soundcloud"
+              ? api.searchExternal(fallbackQ, "soundcloud", 3)
+              : Promise.resolve({ results: [] as Track[] }),
+            api.searchExternal(`${fallbackQ} audio`, "youtube", 3),
+          ]);
 
-          // 2. Collect alternative YouTube candidates
-          try {
-            const ytSearch = await api.searchExternal(`${fallbackQ} audio`, "youtube", 3);
-            const currentYtId = extractYouTubeIdClient(track.pageUrl || track.audioUrl || track.id);
-            if (ytSearch.results && ytSearch.results.length > 0) {
-              for (const r of ytSearch.results) {
-                const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
-                if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== track.id) {
-                  candidates.push({
-                    source: "youtube",
-                    audioUrl: r.audioUrl,
-                    pageUrl: r.pageUrl || track.pageUrl,
-                    coverUrl: r.coverUrl || track.coverUrl,
-                  });
-                }
+          if (scSettled.status === "fulfilled" && scSettled.value.results && scSettled.value.results.length > 0) {
+            for (const r of scSettled.value.results) {
+              if (r.audioUrl) {
+                candidates.push({
+                  source: "soundcloud",
+                  audioUrl: r.audioUrl,
+                  pageUrl: r.pageUrl || track.pageUrl,
+                  coverUrl: r.coverUrl || track.coverUrl,
+                });
               }
             }
-          } catch {}
+          }
+
+          const currentYtId = extractYouTubeIdClient(track.pageUrl || track.audioUrl || track.id);
+          if (ytSettled.status === "fulfilled" && ytSettled.value.results && ytSettled.value.results.length > 0) {
+            for (const r of ytSettled.value.results) {
+              const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
+              if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== track.id) {
+                candidates.push({
+                  source: "youtube",
+                  audioUrl: r.audioUrl,
+                  pageUrl: r.pageUrl || track.pageUrl,
+                  coverUrl: r.coverUrl || track.coverUrl,
+                });
+              }
+            }
+          }
 
           // 3. Fallback for soundcloud tracks: try alternative soundcloud or standard youtube query
           if (track.source === "soundcloud") {
@@ -1146,6 +1145,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const audio = getSingletonAudio();
       if (!audio) return;
 
+      // Guarantee auth token is hydrated in memory before resolveMediaUrl attaches ?token= to external stream URLs
+      try {
+        await getApiTokenAsync();
+      } catch {}
+
       // Resolve audio source URL and offline cover if downloaded
       let audioSource = resolveMediaUrl(normalizedTrack.audioUrl);
       let trackToPlay = normalizedTrack;
@@ -1153,7 +1157,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const isExternal = isExternalTrack(trackToPlay);
 
       if (isExternal && !isDownloaded) {
-        if (trackToPlay.source === "spotify") {
+        const needsSpotifyResolution =
+          trackToPlay.source === "spotify" &&
+          (!trackToPlay.audioUrl ||
+            trackToPlay.audioUrl.includes("open.spotify.com") ||
+            trackToPlay.audioUrl.includes("fallback-preview.mp3"));
+        if (needsSpotifyResolution) {
           try {
             trackToPlay = await resolveSpotifyTrackStream(trackToPlay);
           } catch {}
@@ -2848,41 +2857,40 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                     coverUrl?: string;
                   }> = [];
 
-                  if (curr.source !== "soundcloud") {
-                    try {
-                      const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 3);
-                      if (scSearch.results) {
-                        for (const r of scSearch.results) {
-                          if (r.audioUrl) {
-                            fallbackCandidates.push({
-                              source: "soundcloud",
-                              audioUrl: r.audioUrl,
-                              pageUrl: r.pageUrl || curr.pageUrl,
-                              coverUrl: r.coverUrl || curr.coverUrl,
-                            });
-                          }
-                        }
-                      }
-                    } catch {}
-                  }
+                  const [scRes, ytRes] = await Promise.allSettled([
+                    curr.source !== "soundcloud"
+                      ? api.searchExternal(fallbackQuery, "soundcloud", 3)
+                      : Promise.resolve({ results: [] as Track[] }),
+                    api.searchExternal(fallbackQuery, "youtube", 3),
+                  ]);
 
-                  try {
-                    const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 3);
-                    const currentYtId = extractYouTubeIdClient(curr.pageUrl || curr.audioUrl || curr.id);
-                    if (ytSearch.results) {
-                      for (const r of ytSearch.results) {
-                        const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
-                        if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== curr.id) {
-                          fallbackCandidates.push({
-                            source: "youtube",
-                            audioUrl: r.audioUrl,
-                            pageUrl: r.pageUrl || curr.pageUrl,
-                            coverUrl: r.coverUrl || curr.coverUrl,
-                          });
-                        }
+                  if (scRes.status === "fulfilled" && scRes.value.results) {
+                    for (const r of scRes.value.results) {
+                      if (r.audioUrl) {
+                        fallbackCandidates.push({
+                          source: "soundcloud",
+                          audioUrl: r.audioUrl,
+                          pageUrl: r.pageUrl || curr.pageUrl,
+                          coverUrl: r.coverUrl || curr.coverUrl,
+                        });
                       }
                     }
-                  } catch {}
+                  }
+
+                  const currentYtId = extractYouTubeIdClient(curr.pageUrl || curr.audioUrl || curr.id);
+                  if (ytRes.status === "fulfilled" && ytRes.value.results) {
+                    for (const r of ytRes.value.results) {
+                      const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
+                      if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== curr.id) {
+                        fallbackCandidates.push({
+                          source: "youtube",
+                          audioUrl: r.audioUrl,
+                          pageUrl: r.pageUrl || curr.pageUrl,
+                          coverUrl: r.coverUrl || curr.coverUrl,
+                        });
+                      }
+                    }
+                  }
 
                   if (curr.source === "soundcloud" && fallbackCandidates.length === 0) {
                     try {

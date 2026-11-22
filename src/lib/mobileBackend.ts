@@ -7,7 +7,23 @@
 
 import { isAndroidNative } from "./androidBridge";
 import { APP_VERSION } from "./appVersion";
+import { secureStorage } from "./secureStorage";
 import type { MobileHealthDiagnostic, MobileStatus } from "./types";
+
+let mediaAuthToken: string | null = null;
+
+export function setMediaAuthToken(token: string | null): void {
+  mediaAuthToken = token || null;
+}
+
+export function getMediaAuthToken(): string | null {
+  if (mediaAuthToken) return mediaAuthToken;
+  try {
+    return secureStorage.getItemSync("soundify_token");
+  } catch {
+    return null;
+  }
+}
 
 export const PRODUCTION_SOUNDIFY_URL =
   process.env.NEXT_PUBLIC_SOUNDIFY_URL || "https://soundify.mashhad-ix.ir";
@@ -126,13 +142,24 @@ export function resolveMobileV1Url(subPath: string): string {
 export function resolveMediaUrl(url: string | null | undefined): string {
   if (!url) return "";
 
-  // Helper to ensure external audio stream URLs include appVersion for HTTP 426 server compliance
+  // Helper to ensure external audio stream URLs include appVersion (HTTP 426 gate) and token (HTTP 403 cross-origin <audio> auth)
   const ensureAppVersion = (target: string): string => {
-    if (target.includes("/api/stream/external") && !target.includes("appVersion=")) {
-      const sep = target.includes("?") ? "&" : "?";
-      return `${target}${sep}appVersion=${APP_VERSION}`;
+    if (!target.includes("/api/stream/external")) {
+      return target;
     }
-    return target;
+    let next = target;
+    if (!next.includes("appVersion=")) {
+      const sep = next.includes("?") ? "&" : "?";
+      next = `${next}${sep}appVersion=${APP_VERSION}`;
+    }
+    if (!next.includes("token=")) {
+      const tok = getMediaAuthToken();
+      if (tok) {
+        const sep = next.includes("?") ? "&" : "?";
+        next = `${next}${sep}token=${encodeURIComponent(tok)}`;
+      }
+    }
+    return next;
   };
 
   if (

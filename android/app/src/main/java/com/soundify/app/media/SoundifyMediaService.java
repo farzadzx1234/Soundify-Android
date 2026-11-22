@@ -666,8 +666,8 @@ public class SoundifyMediaService extends Service {
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                     conn.setConnectTimeout(5000);
                     conn.setReadTimeout(5000);
-                    conn.setRequestProperty("User-Agent", "Soundify-Android/1.0.17");
-                    conn.setRequestProperty("X-App-Version", "1.0.17");
+                    conn.setRequestProperty("User-Agent", "Soundify-Android/1.0.18");
+                    conn.setRequestProperty("X-App-Version", "1.0.18");
                     conn.setInstanceFollowRedirects(true);
                     conn.connect();
                     if (conn.getResponseCode() == 200) {

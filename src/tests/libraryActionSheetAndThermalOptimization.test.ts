@@ -97,8 +97,8 @@ describe("Library, Action Sheet Dismiss, FastStart & Thermal Performance Audit",
       const playerPath = path.resolve(__dirname, "../context/PlayerContext.tsx");
       const code = fs.readFileSync(playerPath, "utf8");
 
-      // Fast retry delays [0, 800, 1800] instead of sluggish multi-second waits
-      expect(code).toContain("0, 800, 1800");
+      // Fast retry delays [0, 500, 1200] instead of sluggish multi-second waits
+      expect(code).toContain("0, 500, 1200");
 
       // Pre-buffering track for queue items
       expect(code).toContain("prebufferTrack");

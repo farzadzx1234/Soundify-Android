@@ -4,6 +4,8 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:windowBackground">#070810</item>
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:colorBackgroundFloating">@android:color/transparent</item>
         <item name="colorPrimary">#6366f1</item>
         <item name="colorPrimaryDark">#4f46e5</item>
         <item name="colorAccent">#6366f1</item>

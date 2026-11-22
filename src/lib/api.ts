@@ -44,6 +44,7 @@ import {
   resolveMediaUrl,
   resolveMobileV1Url,
   setBackendUrl,
+  setMediaAuthToken,
   setServerConnectivityStatus,
   MOBILE_V1_PREFIX,
 } from "./mobileBackend";
@@ -547,6 +548,7 @@ export function onAuthTokensChanged(listener: AuthTokenListener): () => void {
 
 export function setApiTokens(token: string | null, newRefreshToken?: string | null) {
   authToken = token;
+  setMediaAuthToken(token);
   if (token) {
     void secureStorage.setItem("soundify_token", token);
   } else {
@@ -577,12 +579,14 @@ export function setApiToken(token: string | null) {
 export function getApiToken(): string | null {
   if (authToken) return authToken;
   authToken = secureStorage.getItemSync("soundify_token");
+  if (authToken) setMediaAuthToken(authToken);
   return authToken;
 }
 
 export async function getApiTokenAsync(): Promise<string | null> {
   if (authToken) return authToken;
   authToken = await secureStorage.getItem("soundify_token");
+  if (authToken) setMediaAuthToken(authToken);
   return authToken;
 }
 
@@ -712,6 +716,13 @@ async function executeFetch(path: string, init: RequestInit, token: string | nul
     const isTestEnv = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
     const isExternalLongOp =
       path.includes("/api/external/") ||
+      path.includes("/api/mobile/v1/external") ||
+      path.includes("/api/mobile/v1/youtube") ||
+      path.includes("/api/mobile/v1/soundcloud") ||
+      path.includes("/api/mobile/v1/spotify") ||
+      path.includes("/api/youtube") ||
+      path.includes("/api/soundcloud") ||
+      path.includes("/api/spotify") ||
       path.includes("/api/stream/") ||
       path.includes("/api/admin/external") ||
       path.includes("/api/admin/ytdlp");
@@ -962,20 +973,11 @@ export const api = {
     }
 
     try {
-      const sp = new URLSearchParams({
-        q: effectiveQuery,
-        source: isSpotifyUrl ? "youtube" : source,
-        limit: String(limit),
-      });
-      const res = await apiFetch<{
-        query: string;
-        source: string;
-        results: Track[];
-        total: number;
-        error?: string;
-      }>(`/api/external/search?${sp.toString()}`);
-      if (res?.results && Array.isArray(res.results)) {
-        const normalized = res.results.map((tr) => {
+      const targetSource = isSpotifyUrl ? "youtube" : source;
+      const effectiveLimit = targetSource === "all" ? limit : Math.min(limit, 12);
+
+      const normalizeExternalResults = (items: Track[]): Track[] => {
+        const normalized = items.map((tr) => {
           const norm = normalizeTrack(tr);
           if (
             norm.audioUrl &&
@@ -984,19 +986,71 @@ export const api = {
           ) {
             norm.audioUrl = `${norm.audioUrl}${norm.audioUrl.includes("?") ? "&" : "?"}fastStart=true`;
           }
-          if (isSpotifyUrl && spotifyTitle) {
+          if (source === "spotify" || (isSpotifyUrl && spotifyTitle)) {
             norm.source = "spotify";
             norm.album = "Spotify";
             norm.albumFa = "اسپاتیفای";
             norm.qualityLabel = "Spotify High";
-            if (spotifyCover && (!norm.coverUrl || norm.coverUrl.includes("unsplash"))) {
+            if (isSpotifyUrl && spotifyCover && (!norm.coverUrl || norm.coverUrl.includes("unsplash"))) {
               norm.coverUrl = spotifyCover;
             }
           }
           externalTracksCache.set(norm.id, norm);
           return norm;
         });
-        const sanitizedResults = filterSensitiveTracks(normalized);
+        return filterSensitiveTracks(normalized);
+      };
+
+      const sp = new URLSearchParams({
+        q: effectiveQuery,
+        source: targetSource,
+        limit: String(effectiveLimit),
+      });
+      let res = await apiFetch<{
+        query: string;
+        source: string;
+        results: Track[];
+        total: number;
+        error?: string;
+      }>(`/api/external/search?${sp.toString()}`);
+
+      // Fast secondary alias fallback if specific source returned empty results (e.g. SoundCloud/YouTube/Spotify)
+      if ((!res?.results || res.results.length === 0) && targetSource !== "all") {
+        try {
+          const aliasPath =
+            targetSource === "soundcloud"
+              ? `/api/mobile/v1/soundcloud/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`
+              : targetSource === "spotify"
+                ? `/api/mobile/v1/spotify/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`
+                : `/api/mobile/v1/youtube/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`;
+          const aliasRes = await apiFetch<{
+            query: string;
+            source: string;
+            results: Track[];
+            total: number;
+            error?: string;
+          }>(aliasPath);
+          if (aliasRes?.results && aliasRes.results.length > 0) {
+            res = aliasRes;
+          } else if (source === "spotify") {
+            const ytFallbackRes = await apiFetch<{
+              query: string;
+              source: string;
+              results: Track[];
+              total: number;
+              error?: string;
+            }>(`/api/mobile/v1/youtube/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`);
+            if (ytFallbackRes?.results && ytFallbackRes.results.length > 0) {
+              res = ytFallbackRes;
+            }
+          }
+        } catch {
+          // Keep original response unless auth/version gate rejected
+        }
+      }
+
+      if (res?.results && Array.isArray(res.results)) {
+        const sanitizedResults = normalizeExternalResults(res.results);
         return { ...res, results: sanitizedResults, total: sanitizedResults.length };
       }
       if (res?.error) {

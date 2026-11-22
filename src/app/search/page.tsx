@@ -423,8 +423,9 @@ function SearchPageInner() {
 
       setExternalLoading(true);
       setExternalError(null);
+      const searchLimit = extSubSource === "all" ? 16 : 10;
       api
-        .searchExternal(cleanQ, extSubSource, 20)
+        .searchExternal(cleanQ, extSubSource, searchLimit)
         .then((res) => {
           if (!active) return;
           if (res.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" || res.error?.includes("GLOBAL_SEARCH_ACCESS_REQUIRED")) {
@@ -499,6 +500,10 @@ function SearchPageInner() {
   const handleExtSubSourceChange = (newSub: string) => {
     const next = newSub as ExternalSubSource;
     setExtSubSource(next);
+    setExternalError(null);
+    if (next !== "all") {
+      setExternalTracks((prev) => prev.filter((tr) => tr.source === next));
+    }
     syncUrl(inputValue, searchSource, next);
   };
 
@@ -771,20 +776,28 @@ function SearchPageInner() {
               ))}
             </div>
           ) : localTracks.length === 0 ? (
-            <Glass className="rounded-3xl p-12 text-center space-y-3 opacity-80">
-              <MagnifyingGlassIcon size={44} weight="duotone" className="mx-auto text-[var(--sf-muted)]" aria-hidden="true" />
+            <Glass className="rounded-3xl p-8 sm:p-12 text-center space-y-3 opacity-90">
+              <MagnifyingGlassIcon size={40} weight="duotone" className="mx-auto text-[var(--sf-muted)]" aria-hidden="true" />
               <p className="text-base font-bold">{t("searchEmpty")}</p>
-              <p className="text-xs text-[var(--sf-muted)]">نام خواننده، آهنگ یا آلبوم را با عبارت دیگری جستجو کنید</p>
-              <div className="pt-2">
-                <Button
-                  type="button"
-                  variant="glass"
-                  onClick={() => handleSourceChange("external")}
-                  icon={<GlobeHemisphereWestIcon size={16} aria-hidden="true" />}
-                >
-                  {pickText("Search online on YouTube / SoundCloud / Spotify", "جستجو در منابع آنلاین (یوتیوب / ساندکلود / اسپاتیفای)")}
-                </Button>
-              </div>
+              <p className="text-xs text-[var(--sf-muted)] max-w-xs mx-auto leading-relaxed">
+                {pickText(
+                  "Try another artist, track title, or album name.",
+                  "نام خواننده، آهنگ یا آلبوم را با عبارت دیگری جستجو کنید.",
+                )}
+              </p>
+              {canAccessGlobal && (
+                <div className="pt-2 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="glass"
+                    onClick={() => handleSourceChange("external")}
+                    icon={<GlobeHemisphereWestIcon size={16} className="text-emerald-500 shrink-0" aria-hidden="true" />}
+                    className="max-w-full !px-5 text-xs font-bold"
+                  >
+                    {pickText("Search Global Streams", "جستجو در پخش جهانی")}
+                  </Button>
+                </div>
+              )}
             </Glass>
           ) : (
             <div className="space-y-6">

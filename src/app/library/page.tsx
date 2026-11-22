@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowCircleDownIcon,
   ArrowLineDownIcon,
-  BooksIcon,
   CheckCircleIcon,
   CheckSquareIcon,
   CircleNotchIcon,
@@ -71,6 +70,7 @@ export default function LibraryPage() {
   const activeDownloads = useActiveDownloads();
 
   const [tab, setTab] = useState<LibraryTab>(() => (user ? "liked" : "downloaded"));
+  const hasManuallySwitchedTab = useRef(false);
   const [likedTracks, setLikedTracks] = useState<Track[]>([]);
   const [repostedTracks, setRepostedTracks] = useState<Track[]>([]);
   const [historyTracks, setHistoryTracks] = useState<Track[]>([]);
@@ -89,6 +89,12 @@ export default function LibraryPage() {
   const [exportAllRunning, setExportAllRunning] = useState(false);
   const [exportToast, setExportToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [selectedActionTrack, setSelectedActionTrack] = useState<Track | null>(null);
+
+  useEffect(() => {
+    if (user && !hasManuallySwitchedTab.current && downloadedTracks.length === 0) {
+      setTab("liked");
+    }
+  }, [user, downloadedTracks.length]);
 
   useEffect(() => {
     if (!user) return;
@@ -311,47 +317,32 @@ export default function LibraryPage() {
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
-      <div className="mx-auto max-w-7xl space-y-5 sf-fade-up px-1 sm:px-2">
-        {/* Apple Music / Spotify Clean Library Header */}
+      <div className="mx-auto max-w-7xl w-full overflow-x-hidden space-y-5 sf-fade-up px-1 sm:px-2">
+        {/* Apple Music HIG Clean Library Header */}
         <header className="space-y-4 pt-1 sm:pt-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1">
-              <h1 className="text-2xl sm:text-3xl font-black text-[var(--sf-text)] tracking-tight flex items-center gap-2.5">
-                <span className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-md shrink-0">
-                  <BooksIcon size={20} weight="bold" aria-hidden="true" />
-                </span>
-                <span>{t("libraryTitle")}</span>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 space-y-0.5">
+              <h1 className="text-[26px] sm:text-3xl font-black text-[var(--sf-text)] tracking-tight truncate">
+                {t("libraryTitle")}
               </h1>
-              <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--sf-muted)] font-medium">
+              <p className="text-xs text-[var(--sf-muted)] font-medium truncate">
                 {user ? (
-                  <>
-                    <bdi className="font-bold text-[var(--sf-text)]">{user.displayName}</bdi>
-                    <span>•</span>
-                    <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
-                    <span>•</span>
-                    <span>{formatNum(likedTracks.length)} {t("likedTracksTab")}</span>
-                    <span>•</span>
-                    <span>{formatNum(playlists.length)} {t("playlistsTab")}</span>
-                  </>
+                  <bdi className="font-semibold text-[var(--sf-muted)]">{user.displayName}</bdi>
                 ) : (
-                  <>
-                    <span>{t("guestAccount")}</span>
-                    <span>•</span>
-                    <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
-                  </>
+                  t("guestAccount")
                 )}
-              </div>
+              </p>
             </div>
 
-            {/* Quick Play & Shuffle actions for current section (Compact Pill Controls) */}
+            {/* Quick Play & Shuffle actions for current section (44pt Apple HIG touch targets) */}
             {tab !== "playlists" && !isGuestTabLocked && activeTracks.length > 0 && !selectMode && (
-              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 <Button
                   type="button"
                   variant="filled"
                   onClick={handlePlayAll}
                   icon={<PlayIcon size={16} weight="fill" aria-hidden="true" />}
-                  className="!min-h-[40px] !px-4 text-xs font-bold"
+                  className="!min-h-[44px] !px-4 text-xs font-bold"
                 >
                   {t("playNow")}
                 </Button>
@@ -360,47 +351,46 @@ export default function LibraryPage() {
                   variant="glass"
                   onClick={handleShuffle}
                   icon={<ShuffleIcon size={16} weight="bold" aria-hidden="true" />}
-                  className="!min-h-[40px] !px-3.5 text-xs font-bold"
-                >
-                  {t("shuffle")}
-                </Button>
+                  aria-label={t("shuffle")}
+                  className="!min-h-[44px] !px-3.5 text-xs font-bold"
+                />
               </div>
             )}
           </div>
 
-          {/* Spotify / Apple Music Filter Chips Row */}
-          <div className="overflow-x-auto no-scrollbar scroll-smooth -mx-1 px-1" role="tablist" aria-label={t("libraryTitle")}>
-            <div className="flex items-center gap-2 min-w-max pb-1">
+          {/* Apple Music / Spotify Filter Chips */}
+          <div className="w-full max-w-full overflow-x-auto no-scrollbar scroll-smooth" role="tablist" aria-label={t("libraryTitle")}>
+            <div className="flex items-center gap-2 min-w-max py-0.5">
               {[
                 {
                   id: "downloaded" as const,
                   label: t("downloadedTracksTab"),
                   count: downloadedTracks.length,
-                  icon: <ArrowCircleDownIcon size={16} weight="bold" />,
+                  icon: <ArrowCircleDownIcon size={15} weight="bold" />,
                 },
                 {
                   id: "liked" as const,
                   label: t("likedTracksTab"),
                   count: likedTracks.length,
-                  icon: <HeartIcon size={16} weight="bold" />,
+                  icon: <HeartIcon size={15} weight="bold" />,
                 },
                 {
                   id: "playlists" as const,
                   label: t("playlistsTab"),
                   count: playlists.length,
-                  icon: <PlaylistIcon size={16} weight="bold" />,
+                  icon: <PlaylistIcon size={15} weight="bold" />,
                 },
                 {
                   id: "reposts" as const,
                   label: t("repostsTab"),
                   count: repostedTracks.length,
-                  icon: <RepeatIcon size={16} weight="bold" />,
+                  icon: <RepeatIcon size={15} weight="bold" />,
                 },
                 {
                   id: "history" as const,
                   label: t("historyTab"),
                   count: historyTracks.length,
-                  icon: <ClockCounterClockwiseIcon size={16} weight="bold" />,
+                  icon: <ClockCounterClockwiseIcon size={15} weight="bold" />,
                 },
               ].map((tabItem) => {
                 const isActive = tab === tabItem.id;
@@ -411,26 +401,27 @@ export default function LibraryPage() {
                     role="tab"
                     aria-selected={isActive}
                     onClick={() => {
+                      hasManuallySwitchedTab.current = true;
                       setTab(tabItem.id);
                       setSelectMode(false);
                       setSelectedTrackIds(new Set());
                     }}
-                    className={`min-h-[38px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs sm:text-[13px] font-bold transition-all cursor-pointer select-none active:scale-95 ${
+                    className={`min-h-[40px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs sm:text-[13px] font-bold transition-all cursor-pointer select-none active:scale-95 shrink-0 ${
                       isActive
-                        ? "bg-[var(--sf-text)] text-[var(--sf-bg)] shadow-md"
-                        : "bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-black/[0.05] dark:border-white/[0.06]"
+                        ? "bg-indigo-600 text-white shadow-sm shadow-indigo-500/25 border border-indigo-500"
+                        : "bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-black/[0.06] dark:border-white/[0.08]"
                     }`}
                   >
-                    <span className={isActive ? "text-[var(--sf-bg)]" : "text-indigo-500 dark:text-indigo-400"}>
+                    <span className={isActive ? "text-white" : "text-indigo-500 dark:text-indigo-400"}>
                       {tabItem.icon}
                     </span>
                     <span>{tabItem.label}</span>
                     {tabItem.count !== undefined && tabItem.count > 0 && (
                       <span
-                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums ${
+                        className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums leading-none ${
                           isActive
-                            ? "bg-black/20 dark:bg-white/25 text-[var(--sf-bg)]"
-                            : "bg-black/[0.06] dark:bg-white/[0.09] text-[var(--sf-text)]"
+                            ? "bg-white/20 text-white"
+                            : "bg-black/[0.06] dark:bg-white/[0.1] text-[var(--sf-text)]"
                         }`}
                       >
                         {formatNum(tabItem.count)}
@@ -451,17 +442,17 @@ export default function LibraryPage() {
 
         {/* Guest Lock Banner for Cloud Tabs */}
         {isGuestTabLocked ? (
-          <Glass className="rounded-3xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto">
-            <div className="flex h-14 w-14 mx-auto items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white shadow-lg">
-              <UserCircleIcon size={30} weight="bold" aria-hidden="true" />
+          <Glass className="rounded-3xl p-8 sm:p-10 text-center space-y-4 max-w-md mx-auto">
+            <div className="flex h-12 w-12 mx-auto items-center justify-center rounded-2xl bg-indigo-500/12 text-indigo-500 border border-indigo-500/20">
+              <UserCircleIcon size={28} weight="bold" aria-hidden="true" />
             </div>
             <div className="space-y-1">
-              <h2 className="text-xl font-black">{t("loginRequired")}</h2>
+              <h2 className="text-lg font-bold">{t("loginRequired")}</h2>
               <p className="text-xs text-[var(--sf-muted)]">
                 {t("guestAccount")} — {t("loginRequired")}
               </p>
             </div>
-            <div className="pt-2 flex justify-center gap-3">
+            <div className="pt-2 flex justify-center gap-2.5">
               <Button
                 type="button"
                 variant="filled"
@@ -473,7 +464,10 @@ export default function LibraryPage() {
               <Button
                 type="button"
                 variant="glass"
-                onClick={() => setTab("downloaded")}
+                onClick={() => {
+                  hasManuallySwitchedTab.current = true;
+                  setTab("downloaded");
+                }}
                 icon={<ArrowCircleDownIcon size={18} aria-hidden="true" />}
               >
                 {t("downloadedTracksTab")}
@@ -671,17 +665,26 @@ export default function LibraryPage() {
             )}
 
             {downloadedTracks.length === 0 ? (
-              <Glass className="rounded-3xl p-12 text-center space-y-4 max-w-xl mx-auto">
-                <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-3xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                  <ArrowCircleDownIcon size={36} weight="duotone" aria-hidden="true" />
+              <div className="sf-content-card rounded-3xl p-8 sm:p-10 text-center space-y-4 max-w-md mx-auto border border-black/[0.06] dark:border-white/[0.08]">
+                <div className="flex h-12 w-12 mx-auto items-center justify-center rounded-2xl bg-indigo-500/12 text-indigo-500 border border-indigo-500/20">
+                  <ArrowCircleDownIcon size={26} weight="duotone" aria-hidden="true" />
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-lg font-bold">{t("downloadedTracksTab")}</h2>
-                  <p className="text-xs text-[var(--sf-muted)] max-w-sm mx-auto leading-relaxed">
+                  <h2 className="text-base font-bold text-[var(--sf-text)]">{t("downloadedTracksTab")}</h2>
+                  <p className="text-xs text-[var(--sf-muted)] leading-relaxed">
                     {t("noDownloadedTracks")}
                   </p>
                 </div>
-              </Glass>
+                <div className="pt-1 flex justify-center">
+                  <Link
+                    href="/search"
+                    className="sf-btn inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-indigo-600 hover:bg-indigo-500 px-5 py-2 text-xs font-bold text-white shadow-sm active:scale-[0.97] transition-all"
+                  >
+                    <MagnifyingGlassIcon size={15} weight="bold" aria-hidden="true" />
+                    <span>{pickText("Discover & Download Music", "جستجو و دانلود آهنگ")}</span>
+                  </Link>
+                </div>
+              </div>
             ) : filteredDownloadedTracks.length === 0 ? (
               <Glass className="rounded-3xl p-8 text-center space-y-2 max-w-md mx-auto">
                 <p className="text-sm font-semibold">{t("noOfflineMatch")}</p>

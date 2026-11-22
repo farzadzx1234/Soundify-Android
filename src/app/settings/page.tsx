@@ -244,7 +244,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-7 sf-fade-up">
+    <div className="mx-auto max-w-3xl space-y-7 sf-fade-up pb-16 sm:pb-12">
       {/* Apple Settings Large Header */}
       <div className="space-y-1">
         <h1 className="text-3xl sm:text-4xl font-black tracking-tight flex items-center gap-3">
@@ -263,7 +263,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {t("settingsGeneralGroup")}
         </span>
-        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
           {/* Language Row */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:px-5">
             <div className="flex items-center gap-3">
@@ -318,7 +318,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {t("settingsPlaybackGroup")}
         </span>
-        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
           {/* Live Waveform Visualizer */}
           <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
             <div className="flex items-center gap-3">
@@ -380,7 +380,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {t("settingsAppGroup")}
         </span>
-        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
           {/* Clear Cache */}
           <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
             <div className="flex items-center gap-3">
@@ -409,7 +409,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {t("storageMeter")}
         </span>
-        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
           {/* Storage Meter & Visual Usage Display */}
           <div className="p-4 sm:px-5 space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -486,16 +486,16 @@ export default function SettingsPage() {
           onClick={() => setConfirmClearOfflineCache(false)}
         >
           <div
-            className="w-full max-w-sm sm:max-w-md bg-zinc-900/95 dark:bg-[#12131a]/98 text-white rounded-t-[32px] sm:rounded-3xl p-6 shadow-2xl border border-white/10 backdrop-blur-2xl space-y-4"
+            className="w-full max-w-sm sm:max-w-md bg-white/95 dark:bg-[#12131a]/98 text-[var(--sf-text)] rounded-t-[32px] sm:rounded-3xl p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.85)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 backdrop-blur-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-10 h-1.5 rounded-full bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
+            <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
             <div className="text-center space-y-2 pt-1">
-              <div className="h-12 w-12 rounded-2xl bg-amber-500/15 text-amber-400 mx-auto flex items-center justify-center mb-1 ring-1 ring-amber-500/20">
+              <div className="h-12 w-12 rounded-2xl bg-amber-500/15 text-amber-500 dark:text-amber-400 mx-auto flex items-center justify-center mb-1 ring-1 ring-amber-500/25">
                 <TrashIcon size={24} weight="bold" />
               </div>
-              <h3 id="clear-cache-dialog-title" className="text-base font-bold text-white">{t("clearOfflineCacheTitle")}</h3>
-              <p className="text-xs text-white/70 leading-relaxed px-2">
+              <h3 id="clear-cache-dialog-title" className="text-base font-bold text-[var(--sf-text)]">{t("clearOfflineCacheTitle")}</h3>
+              <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
                 {t("confirmClearCache")}
               </p>
             </div>
@@ -510,7 +510,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => setConfirmClearOfflineCache(false)}
-                className="w-full min-h-[50px] rounded-2xl bg-white/10 hover:bg-white/15 active:bg-white/20 text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98]"
+                className="w-full min-h-[50px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] active:bg-black/[0.14] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm transition-all cursor-pointer active:scale-[0.98] border border-black/[0.08] dark:border-white/10"
               >
                 {lang === "fa" ? "لغو" : "Cancel"}
               </button>
@@ -530,16 +530,16 @@ export default function SettingsPage() {
           onClick={() => setConfirmDeleteAllDownloads(false)}
         >
           <div
-            className="w-full max-w-sm sm:max-w-md bg-zinc-900/95 dark:bg-[#12131a]/98 text-white rounded-t-[32px] sm:rounded-3xl p-6 shadow-2xl border border-white/10 backdrop-blur-2xl space-y-4"
+            className="w-full max-w-sm sm:max-w-md bg-white/95 dark:bg-[#12131a]/98 text-[var(--sf-text)] rounded-t-[32px] sm:rounded-3xl p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.85)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 backdrop-blur-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-10 h-1.5 rounded-full bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
+            <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
             <div className="text-center space-y-2 pt-1">
-              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-400 mx-auto flex items-center justify-center mb-1 ring-1 ring-rose-500/20">
+              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 dark:text-rose-400 mx-auto flex items-center justify-center mb-1 ring-1 ring-rose-500/25">
                 <TrashIcon size={24} weight="bold" />
               </div>
-              <h3 id="delete-all-dialog-title" className="text-base font-bold text-rose-400">{t("deleteAllDownloadsTitle")}</h3>
-              <p className="text-xs text-white/70 leading-relaxed px-2">
+              <h3 id="delete-all-dialog-title" className="text-base font-bold text-rose-600 dark:text-rose-400">{t("deleteAllDownloadsTitle")}</h3>
+              <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
                 {t("confirmClearDownloads")}
               </p>
             </div>
@@ -554,7 +554,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => setConfirmDeleteAllDownloads(false)}
-                className="w-full min-h-[50px] rounded-2xl bg-white/10 hover:bg-white/15 active:bg-white/20 text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98]"
+                className="w-full min-h-[50px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] active:bg-black/[0.14] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm transition-all cursor-pointer active:scale-[0.98] border border-black/[0.08] dark:border-white/10"
               >
                 {lang === "fa" ? "لغو" : "Cancel"}
               </button>
@@ -569,7 +569,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {t("settingsAccountGroup")}
         </span>
-        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-white/[0.06]">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-white/[0.06]">
           {user ? (
             <>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:px-5">
@@ -737,7 +737,7 @@ export default function SettingsPage() {
             </Button>
           </div>
 
-          <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm p-4 sm:p-5 space-y-4">
+          <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm p-4 sm:p-5 space-y-4">
             <div className="flex items-start gap-3.5">
               <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
                 <GlobeHemisphereWestIcon size={22} weight="duotone" aria-hidden="true" />
@@ -837,7 +837,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {lang === "fa" ? "درباره برنامه" : "About"}
         </span>
-        <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
           <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-5 min-h-[56px]">
             <div className="flex items-center gap-3 min-w-0">
               <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#8E8E93] text-white shadow-sm shrink-0">

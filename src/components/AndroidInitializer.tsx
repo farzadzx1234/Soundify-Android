@@ -5,16 +5,22 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
-import { dispatchAndroidBack, registerBackButtonHandler } from "@/lib/androidBridge";
+import { dispatchAndroidBack, isAndroidNative, registerBackButtonHandler } from "@/lib/androidBridge";
 import { installLogSanitizer } from "@/lib/secureLogger";
 import { secureStorage } from "@/lib/secureStorage";
 import { runAfterInitialPaint } from "@/lib/startupScheduler";
 import { checkDeviceIntegrity } from "@/lib/mobileSecurityIntegrity";
 
 export function AndroidInitializer() {
-  // Install log sanitizer immediately, but defer heavy crypto/vault init and integrity checks until after initial paint
+  // Install log sanitizer and safe area insets immediately, but defer heavy crypto/vault init until after initial paint
   useEffect(() => {
     installLogSanitizer();
+    if (typeof document !== "undefined" && isAndroidNative()) {
+      const current = document.documentElement.style.getPropertyValue("--sab");
+      if (!current || current === "0px") {
+        document.documentElement.style.setProperty("--sab", "48px");
+      }
+    }
     const cancel = runAfterInitialPaint(() => {
       void secureStorage.init();
       void checkDeviceIntegrity();

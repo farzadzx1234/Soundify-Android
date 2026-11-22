@@ -3,7 +3,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { triggerHapticFeedback } from "./hapticFeedback";
 import { parseLrc } from "./lrc";
-import { isAndroidNative } from "./androidBridge";
 import { exportTrackToDeviceStorage } from "./mediaExport";
 import {
   APP_VERSION,
@@ -616,13 +615,12 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     // Save record to IndexedDB
     await saveDownloadedTrack(track, audioBlob, lyricsData, coverBlob, license);
 
-    // Auto-export to phone's public MediaStore on native Android so external music players discover it
-    if (isAndroidNative()) {
-      try {
-        await exportTrackToDeviceStorage(track, audioBlob);
-      } catch (autoExpErr) {
-        console.warn("Auto-export to native device storage non-fatal error:", autoExpErr);
-      }
+    // Automatically export track to device's public storage (MediaStore on Android, download trigger on web)
+    // without requiring user prompt or second button tap
+    try {
+      await exportTrackToDeviceStorage(track, audioBlob);
+    } catch (autoExpErr) {
+      console.warn("Auto-export to device storage non-fatal error:", autoExpErr);
     }
 
     activeDownloads.delete(trackId);

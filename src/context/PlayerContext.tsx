@@ -921,68 +921,82 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(track.title, track.artistName);
         const fallbackQ = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
         if (fallbackQ) {
-          // 1. Try SoundCloud mirror first (especially resilient for Persian rap tracks like Putak - Helia or Hoosein - Be Mola)
+          const candidates: Array<{
+            source: "soundcloud" | "youtube";
+            audioUrl: string;
+            pageUrl?: string;
+            coverUrl?: string;
+          }> = [];
+
+          // 1. Collect SoundCloud candidates
           if (track.source !== "soundcloud") {
             try {
               const scSearch = await api.searchExternal(fallbackQ, "soundcloud", 3);
               if (scSearch.results && scSearch.results.length > 0) {
-                const scMatch = scSearch.results[0];
-                const fallbackTrack: Track = {
-                  ...track,
-                  source: "soundcloud",
-                  audioUrl: scMatch.audioUrl,
-                  pageUrl: scMatch.pageUrl || track.pageUrl,
-                  coverUrl: scMatch.coverUrl || track.coverUrl,
-                };
-                currentTrackRef.current = fallbackTrack;
-                setCurrentTrack(fallbackTrack);
-                setQueue((prevQueue) => {
-                  const nextQ = prevQueue.map((t) => (t.id === track.id ? fallbackTrack : t));
-                  queueRef.current = nextQ;
-                  return nextQ;
-                });
-                externalTracksCache.set(track.id, fallbackTrack);
-                const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-                isSettingSourceRef.current = true;
-                audio.src = fbSource;
-                if (desiredPos > 0) {
-                  const onMeta = () => {
-                    try {
-                      audio.currentTime = desiredPos;
-                    } catch {}
-                    audio.removeEventListener("loadedmetadata", onMeta);
-                  };
-                  audio.addEventListener("loadedmetadata", onMeta);
+                for (const r of scSearch.results) {
+                  if (r.audioUrl) {
+                    candidates.push({
+                      source: "soundcloud",
+                      audioUrl: r.audioUrl,
+                      pageUrl: r.pageUrl || track.pageUrl,
+                      coverUrl: r.coverUrl || track.coverUrl,
+                    });
+                  }
                 }
-                await audio.play();
-                isSettingSourceRef.current = false;
-                isRetryingPlayRef.current = false;
-                setIsPlaying(true);
-                isPlayingRef.current = true;
-                broadcastLeaderState();
-                noticeTypeRef.current = null;
-                setOfflineNotice(null);
-                return true;
               }
             } catch {}
           }
 
-          // 2. Try alternative YouTube search query (clean audio / lyric version)
+          // 2. Collect alternative YouTube candidates
           try {
             const ytSearch = await api.searchExternal(`${fallbackQ} audio`, "youtube", 3);
             const currentYtId = extractYouTubeIdClient(track.pageUrl || track.audioUrl || track.id);
-            const ytMatch = ytSearch.results?.find((r) => {
-              const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
-              return rId && rId !== currentYtId;
-            }) || ytSearch.results?.[0];
+            if (ytSearch.results && ytSearch.results.length > 0) {
+              for (const r of ytSearch.results) {
+                const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
+                if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== track.id) {
+                  candidates.push({
+                    source: "youtube",
+                    audioUrl: r.audioUrl,
+                    pageUrl: r.pageUrl || track.pageUrl,
+                    coverUrl: r.coverUrl || track.coverUrl,
+                  });
+                }
+              }
+            }
+          } catch {}
 
-            if (ytMatch && ytMatch.id !== track.id) {
+          // 3. Fallback for soundcloud tracks: try alternative soundcloud or standard youtube query
+          if (track.source === "soundcloud") {
+            try {
+              const ytSearch = await api.searchExternal(fallbackQ, "youtube", 3);
+              if (ytSearch.results && ytSearch.results.length > 0) {
+                for (const r of ytSearch.results) {
+                  if (r.audioUrl) {
+                    candidates.push({
+                      source: "youtube",
+                      audioUrl: r.audioUrl,
+                      pageUrl: r.pageUrl || track.pageUrl,
+                      coverUrl: r.coverUrl || track.coverUrl,
+                    });
+                  }
+                }
+              }
+            } catch {}
+          }
+
+          // Try each candidate sequentially until audio playback succeeds
+          for (const candidate of candidates) {
+            if (playRequestIdRef.current !== reqId || userPausedIntentRef.current) {
+              return false;
+            }
+            try {
               const fallbackTrack: Track = {
                 ...track,
-                source: "youtube",
-                audioUrl: ytMatch.audioUrl,
-                pageUrl: ytMatch.pageUrl || track.pageUrl,
-                coverUrl: ytMatch.coverUrl || track.coverUrl,
+                source: candidate.source,
+                audioUrl: candidate.audioUrl,
+                pageUrl: candidate.pageUrl || track.pageUrl,
+                coverUrl: candidate.coverUrl || track.coverUrl,
               };
               currentTrackRef.current = fallbackTrack;
               setCurrentTrack(fallbackTrack);
@@ -1013,8 +1027,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               noticeTypeRef.current = null;
               setOfflineNotice(null);
               return true;
+            } catch {
+              // Try next candidate
             }
-          } catch {}
+          }
         }
       }
 
@@ -1025,19 +1041,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isPlayingRef.current = false;
         broadcastLeaderState();
         if (isExternalTrackItem) {
-          noticeTypeRef.current = "stream";
-          setOfflineNotice(
-            lang === "fa"
-              ? "امکان پخش این قطعه وجود ندارد (محدودیت سنی یا کپی‌رایت منبع آنلاین). منبع جایگزین یا آهنگ دیگری را امتحان کنید."
-              : "Unable to stream this track (source restricted or blocked). Try an alternative track or source.",
-          );
+          noticeTypeRef.current = null;
+          setOfflineNotice(null);
         } else if (!isDownloaded) {
           notifyServerConnectivityIssue();
         }
       }
       return false;
     },
-    [broadcastLeaderState, broadcastLocalState, lang, notifyServerConnectivityIssue],
+    [broadcastLeaderState, broadcastLocalState, notifyServerConnectivityIssue],
   );
 
   const playTrack = useCallback(
@@ -2819,150 +2831,112 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                   broadcastLeaderState();
                 }
               } else {
-                // If stream recovery failed for SoundCloud or Spotify, try matching on YouTube
-                if (curr.source === "soundcloud" || curr.source === "spotify") {
+                // Multi-candidate resilient fallback across SoundCloud and YouTube
+                const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
+                const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
+                if (fallbackQuery) {
+                  const fallbackCandidates: Array<{
+                    source: "soundcloud" | "youtube";
+                    audioUrl: string;
+                    pageUrl?: string;
+                    coverUrl?: string;
+                  }> = [];
+
+                  if (curr.source !== "soundcloud") {
+                    try {
+                      const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 3);
+                      if (scSearch.results) {
+                        for (const r of scSearch.results) {
+                          if (r.audioUrl) {
+                            fallbackCandidates.push({
+                              source: "soundcloud",
+                              audioUrl: r.audioUrl,
+                              pageUrl: r.pageUrl || curr.pageUrl,
+                              coverUrl: r.coverUrl || curr.coverUrl,
+                            });
+                          }
+                        }
+                      }
+                    } catch {}
+                  }
+
                   try {
-                    const fallbackQuery = `${curr.artistName && curr.artistName !== "Artist" ? curr.artistName : ""} ${curr.title}`.trim();
-                    if (fallbackQuery) {
-                      const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 1);
-                      if (ytSearch.results && ytSearch.results.length > 0) {
-                        const ytMatch = ytSearch.results[0];
-                        const fallbackTrack: Track = {
-                          ...curr,
-                          audioUrl: ytMatch.audioUrl,
-                          pageUrl: ytMatch.pageUrl || curr.pageUrl,
-                        };
-                        currentTrackRef.current = fallbackTrack;
-                        setCurrentTrack(fallbackTrack);
-                        updateTrackInQueue(fallbackTrack);
-                        externalTracksCache.set(curr.id, fallbackTrack);
-                        const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-                        isSettingSourceRef.current = true;
-                        audio.src = fbSource;
-                        await audio.play();
-                        isSettingSourceRef.current = false;
-                        setIsPlaying(true);
-                        isPlayingRef.current = true;
-                        broadcastLeaderState();
-                        broadcastCurrentState();
-                        noticeTypeRef.current = null;
-                        setOfflineNotice(null);
-                        return;
+                    const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 3);
+                    const currentYtId = extractYouTubeIdClient(curr.pageUrl || curr.audioUrl || curr.id);
+                    if (ytSearch.results) {
+                      for (const r of ytSearch.results) {
+                        const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
+                        if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== curr.id) {
+                          fallbackCandidates.push({
+                            source: "youtube",
+                            audioUrl: r.audioUrl,
+                            pageUrl: r.pageUrl || curr.pageUrl,
+                            coverUrl: r.coverUrl || curr.coverUrl,
+                          });
+                        }
                       }
                     }
                   } catch {}
-                } else {
-                  // YouTube stream failed (e.g. age-restricted Persian rap, explicit cipher gate)
-                  // Try SoundCloud fallback first, then clean YouTube query
-                  try {
-                    const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
-                    const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
-                    if (fallbackQuery) {
-                      const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 1);
-                      if (scSearch.results && scSearch.results.length > 0) {
-                        const scMatch = scSearch.results[0];
-                        const fallbackTrack: Track = {
-                          ...curr,
-                          source: "soundcloud",
-                          audioUrl: scMatch.audioUrl,
-                          pageUrl: scMatch.pageUrl || curr.pageUrl,
-                          coverUrl: scMatch.coverUrl || curr.coverUrl,
-                        };
-                        currentTrackRef.current = fallbackTrack;
-                        setCurrentTrack(fallbackTrack);
-                        updateTrackInQueue(fallbackTrack);
-                        externalTracksCache.set(curr.id, fallbackTrack);
-                        const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-                        isSettingSourceRef.current = true;
-                        audio.src = fbSource;
-                        await audio.play();
-                        isSettingSourceRef.current = false;
-                        setIsPlaying(true);
-                        isPlayingRef.current = true;
-                        broadcastLeaderState();
-                        broadcastCurrentState();
-                        noticeTypeRef.current = null;
-                        setOfflineNotice(null);
-                        return;
+
+                  if (curr.source === "soundcloud" && fallbackCandidates.length === 0) {
+                    try {
+                      const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 3);
+                      if (scSearch.results) {
+                        for (const r of scSearch.results) {
+                          if (r.audioUrl && r.audioUrl !== curr.audioUrl) {
+                            fallbackCandidates.push({
+                              source: "soundcloud",
+                              audioUrl: r.audioUrl,
+                              pageUrl: r.pageUrl || curr.pageUrl,
+                              coverUrl: r.coverUrl || curr.coverUrl,
+                            });
+                          }
+                        }
                       }
-                    }
-                  } catch {}
+                    } catch {}
+                  }
+
+                  for (const candidate of fallbackCandidates) {
+                    try {
+                      const fallbackTrack: Track = {
+                        ...curr,
+                        source: candidate.source,
+                        audioUrl: candidate.audioUrl,
+                        pageUrl: candidate.pageUrl || curr.pageUrl,
+                        coverUrl: candidate.coverUrl || curr.coverUrl,
+                      };
+                      currentTrackRef.current = fallbackTrack;
+                      setCurrentTrack(fallbackTrack);
+                      updateTrackInQueue(fallbackTrack);
+                      externalTracksCache.set(curr.id, fallbackTrack);
+                      const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
+                      isSettingSourceRef.current = true;
+                      audio.src = fbSource;
+                      await audio.play();
+                      isSettingSourceRef.current = false;
+                      setIsPlaying(true);
+                      isPlayingRef.current = true;
+                      broadcastLeaderState();
+                      broadcastCurrentState();
+                      noticeTypeRef.current = null;
+                      setOfflineNotice(null);
+                      return;
+                    } catch {}
+                  }
                 }
                 setIsPlaying(false);
                 isPlayingRef.current = false;
                 broadcastLeaderState();
+                noticeTypeRef.current = null;
+                setOfflineNotice(null);
               }
             })
-            .catch(async () => {
-              if (curr.source === "soundcloud" || curr.source === "spotify") {
-                try {
-                  const fallbackQuery = `${curr.artistName && curr.artistName !== "Artist" ? curr.artistName : ""} ${curr.title}`.trim();
-                  if (fallbackQuery) {
-                    const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 1);
-                    if (ytSearch.results && ytSearch.results.length > 0) {
-                      const ytMatch = ytSearch.results[0];
-                      const fallbackTrack: Track = {
-                        ...curr,
-                        audioUrl: ytMatch.audioUrl,
-                        pageUrl: ytMatch.pageUrl || curr.pageUrl,
-                      };
-                      currentTrackRef.current = fallbackTrack;
-                      setCurrentTrack(fallbackTrack);
-                      updateTrackInQueue(fallbackTrack);
-                      externalTracksCache.set(curr.id, fallbackTrack);
-                      const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-                      isSettingSourceRef.current = true;
-                      audio.src = fbSource;
-                      await audio.play();
-                      isSettingSourceRef.current = false;
-                      setIsPlaying(true);
-                      isPlayingRef.current = true;
-                      broadcastLeaderState();
-                      broadcastCurrentState();
-                      noticeTypeRef.current = null;
-                      setOfflineNotice(null);
-                      return;
-                    }
-                  }
-                } catch {}
-              } else {
-                try {
-                  const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
-                  const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
-                  if (fallbackQuery) {
-                    const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 1);
-                    if (scSearch.results && scSearch.results.length > 0) {
-                      const scMatch = scSearch.results[0];
-                      const fallbackTrack: Track = {
-                        ...curr,
-                        source: "soundcloud",
-                        audioUrl: scMatch.audioUrl,
-                        pageUrl: scMatch.pageUrl || curr.pageUrl,
-                        coverUrl: scMatch.coverUrl || curr.coverUrl,
-                      };
-                      currentTrackRef.current = fallbackTrack;
-                      setCurrentTrack(fallbackTrack);
-                      updateTrackInQueue(fallbackTrack);
-                      externalTracksCache.set(curr.id, fallbackTrack);
-                      const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-                      isSettingSourceRef.current = true;
-                      audio.src = fbSource;
-                      await audio.play();
-                      isSettingSourceRef.current = false;
-                      setIsPlaying(true);
-                      isPlayingRef.current = true;
-                      broadcastLeaderState();
-                      broadcastCurrentState();
-                      noticeTypeRef.current = null;
-                      setOfflineNotice(null);
-                      return;
-                    }
-                  }
-                } catch {}
-              }
+            .catch(() => {
               setIsPlaying(false);
               isPlayingRef.current = false;
               broadcastLeaderState();
+              noticeTypeRef.current = null;
+              setOfflineNotice(null);
             });
           return;
         }
@@ -2976,22 +2950,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const isExternalFailed = isExternalTrack(curr);
       if (!isExternalFailed) {
         notifyServerConnectivityIssue();
+        const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
+        noticeTypeRef.current = "stream";
+        setOfflineNotice(
+          isServerDown
+            ? (lang === "fa"
+                ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
+                : "Cannot connect to server - check internet connection or VPN status")
+            : (lang === "fa"
+                ? "خطا در پخش قطعه صوتی آنلاین - لطفاً اتصال اینترنت یا وضعیت سرور را بررسی کنید"
+                : "Error playing online audio track - please check connection or server status"),
+        );
+      } else {
+        noticeTypeRef.current = null;
+        setOfflineNotice(null);
       }
-      const isServerDown = getServerConnectivityStatus() === "vpn_or_server_down" || getServerConnectivityStatus() === "offline";
-      noticeTypeRef.current = "stream";
-      setOfflineNotice(
-        isExternalFailed
-          ? (lang === "fa"
-              ? "امکان پخش این قطعه وجود ندارد (محدودیت سنی یا کپی‌رایت منبع آنلاین). منبع جایگزین یا آهنگ دیگری را امتحان کنید."
-              : "Unable to stream this track (source restricted or blocked). Try an alternative track or source.")
-          : (isServerDown
-              ? (lang === "fa"
-                  ? "عدم برقراری ارتباط با سرور - اتصال اینترنت یا وضعیت فیلترشکن خود را بررسی کنید"
-                  : "Cannot connect to server - check internet connection or VPN status")
-              : (lang === "fa"
-                  ? "خطا در پخش قطعه صوتی آنلاین - لطفاً اتصال اینترنت یا وضعیت سرور را بررسی کنید"
-                  : "Error playing online audio track - please check connection or server status")),
-      );
     };
 
     audio.addEventListener("play", onPlay);

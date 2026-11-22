@@ -215,7 +215,7 @@ export function PlayerDock() {
   const safeDuration = Math.max(1, duration || currentTrack.durationSec || 1);
 
   return (
-    <div className="fixed inset-x-2.5 sm:inset-x-4 bottom-[calc(4.25rem+max(0.65rem,calc(env(safe-area-inset-bottom)+0.2rem)))] lg:bottom-4 lg:inset-x-6 lg:ms-[264px] z-[45] pointer-events-none sf-fade-up">
+    <div className="fixed inset-x-2.5 sm:inset-x-4 bottom-[calc(4.5rem+max(0.75rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.35rem)))] lg:bottom-4 lg:inset-x-6 lg:ms-[264px] z-[45] pointer-events-none sf-fade-up">
       {/* Apple Liquid Glass Active Remote AirPlay Pill */}
       {isRemotePlaybackActive && (
         <div className="mx-auto max-w-6xl mb-2 px-1 pointer-events-auto flex justify-center sm:justify-start">

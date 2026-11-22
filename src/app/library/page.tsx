@@ -322,17 +322,25 @@ export default function LibraryPage() {
               </span>
               <span>{t("libraryTitle")}</span>
             </h1>
-            <p className="text-xs text-[var(--sf-muted)]">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--sf-muted)] pt-0.5">
               {user ? (
                 <>
-                  {user.displayName} • {formatNum(downloadedTracks.length)} {t("downloadedTracksTab")} • {formatNum(likedTracks.length)} {t("likedTracksTab")} • {formatNum(playlists.length)} {t("playlistsTab")}
+                  <bdi className="font-bold text-[var(--sf-text)]">{user.displayName}</bdi>
+                  <span>•</span>
+                  <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
+                  <span>•</span>
+                  <span>{formatNum(likedTracks.length)} {t("likedTracksTab")}</span>
+                  <span>•</span>
+                  <span>{formatNum(playlists.length)} {t("playlistsTab")}</span>
                 </>
               ) : (
                 <>
-                  {t("guestAccount")} • {formatNum(downloadedTracks.length)} {t("downloadedTracksTab")} (Offline)
+                  <span>{t("guestAccount")}</span>
+                  <span>•</span>
+                  <span>{formatNum(downloadedTracks.length)} {t("downloadedTracksTab")}</span>
                 </>
               )}
-            </p>
+            </div>
           </div>
 
           {/* Quick Play & Shuffle actions for current section */}
@@ -408,19 +416,19 @@ export default function LibraryPage() {
                   className={`min-h-[44px] px-4 py-2 rounded-2xl flex items-center gap-2 text-xs sm:text-sm font-bold transition-all cursor-pointer select-none active:scale-95 ${
                     isActive
                       ? "bg-indigo-600 text-white shadow-md ring-1 ring-indigo-400/40"
-                      : "bg-white/[0.05] hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-white/[0.06]"
+                      : "bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-black/[0.06] dark:border-white/[0.08]"
                   }`}
                 >
-                  <span className={isActive ? "text-white" : "text-indigo-400"}>
+                  <span className={isActive ? "text-white" : "text-indigo-500 dark:text-indigo-400"}>
                     {tabItem.icon}
                   </span>
                   <span>{tabItem.label}</span>
                   {tabItem.count !== undefined && tabItem.count > 0 && (
                     <span
-                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono tabular-nums ${
+                      className={`px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums ${
                         isActive
-                          ? "bg-white/20 text-white"
-                          : "bg-white/[0.08] text-[var(--sf-muted)]"
+                          ? "bg-white/25 text-white"
+                          : "bg-black/[0.06] dark:bg-white/[0.1] text-[var(--sf-text)]"
                       }`}
                     >
                       {formatNum(tabItem.count)}
@@ -517,11 +525,11 @@ export default function LibraryPage() {
                     icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
                   />
                 </div>
-                <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white/[0.04] border border-white/[0.06] text-xs font-semibold text-[var(--sf-muted)] shrink-0">
+                <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.06] text-xs font-semibold text-[var(--sf-muted)] shrink-0">
                   <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
                   <span>{formatNum(filteredDownloadedTracks.length)} {t("tracksCount")}</span>
                   <span>•</span>
-                  <span className="font-mono tabular-nums text-[var(--sf-text)] font-bold">{formatStorageSize(totalSizeBytes, t, formatNum)}</span>
+                  <span className="tabular-nums text-[var(--sf-text)] font-bold">{formatStorageSize(totalSizeBytes, t, formatNum)}</span>
                 </div>
               </div>
 
@@ -671,7 +679,7 @@ export default function LibraryPage() {
           ) : selectMode ? (
             /* Multi-select Batch Management Table / List */
             <div className="space-y-2">
-              <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+              <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
                 {filteredDownloadedTracks.map((record) => {
                   const isChecked = selectedTrackIds.has(record.trackId);
                   const trackTitle = pickText(record.track.title, record.track.titleFa);
@@ -735,7 +743,7 @@ export default function LibraryPage() {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-mono tabular-nums text-[var(--sf-muted)]">
+                        <span className="text-xs font-semibold tabular-nums text-[var(--sf-muted)]">
                           {formatStorageSize(record.sizeBytes || 0, t, formatNum)}
                         </span>
                         {isExported && (
@@ -757,7 +765,7 @@ export default function LibraryPage() {
           ) : downloadViewMode === "list" ? (
             /* Apple Music / iOS 18 Sleek Row List View for Downloaded Music */
             <div className="space-y-2">
-              <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
+              <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
                 {filteredDownloadedTracks.map((record) => {
                   const trackTitle = pickText(record.track.title, record.track.titleFa);
                   const artistTitle = pickText(record.track.artistName, record.track.artistNameFa);
@@ -822,11 +830,11 @@ export default function LibraryPage() {
                         <div className="flex items-center gap-1.5 text-xs text-[var(--sf-muted)] truncate">
                           <span className="truncate">{artistTitle}</span>
                           <span className="shrink-0 opacity-60">•</span>
-                          <span className="shrink-0 font-mono tabular-nums">
+                          <span className="shrink-0 font-semibold tabular-nums">
                             {formatDuration(record.track.durationSec || 0)}
                           </span>
                           <span className="shrink-0 opacity-60">•</span>
-                          <span className="shrink-0 font-mono tabular-nums">
+                          <span className="shrink-0 font-semibold tabular-nums">
                             {formatStorageSize(record.sizeBytes || 0, t, formatNum)}
                           </span>
 

@@ -4,9 +4,15 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.Display;
+import android.view.WindowManager;
 import android.webkit.ServiceWorkerController;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.getcapacitor.BridgeActivity;
 import com.soundify.app.media.MediaSessionPlugin;
@@ -136,6 +142,79 @@ public class MainActivity extends BridgeActivity {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 1001);
             }
+        }
+
+        // Enable Hardware Acceleration and request highest available refresh rate (90Hz / 120Hz)
+        try {
+            getWindow().setFlags(
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            );
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Display display = getDisplay();
+                if (display != null) {
+                    Display.Mode[] modes = display.getSupportedModes();
+                    Display.Mode bestMode = null;
+                    float maxRate = 60.0f;
+                    for (Display.Mode mode : modes) {
+                        if (mode.getRefreshRate() > maxRate) {
+                            maxRate = mode.getRefreshRate();
+                            bestMode = mode;
+                        }
+                    }
+                    if (bestMode != null) {
+                        WindowManager.LayoutParams lp = getWindow().getAttributes();
+                        lp.preferredDisplayModeId = bestMode.getModeId();
+                        getWindow().setAttributes(lp);
+                    }
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Display display = getWindowManager().getDefaultDisplay();
+                if (display != null) {
+                    Display.Mode[] modes = display.getSupportedModes();
+                    Display.Mode bestMode = null;
+                    float maxRate = 60.0f;
+                    for (Display.Mode mode : modes) {
+                        if (mode.getRefreshRate() > maxRate) {
+                            maxRate = mode.getRefreshRate();
+                            bestMode = mode;
+                        }
+                    }
+                    if (bestMode != null) {
+                        WindowManager.LayoutParams lp = getWindow().getAttributes();
+                        lp.preferredDisplayModeId = bestMode.getModeId();
+                        getWindow().setAttributes(lp);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Non-fatal
+        }
+
+        // Dispatch exact Android System Navigation Bar and Status Bar insets to WebView CSS variables (--sab, --sat)
+        try {
+            ViewCompat.setOnApplyWindowInsetsListener(getWindow().getDecorView(), (v, insets) -> {
+                Insets systemBars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
+                );
+                float density = getResources().getDisplayMetrics().density;
+                int bottomDp = density > 0 ? Math.round(systemBars.bottom / density) : 0;
+                int topDp = density > 0 ? Math.round(systemBars.top / density) : 0;
+                int safeBottom = Math.max(bottomDp, 0);
+
+                WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+                if (wv != null) {
+                    String script = String.format(
+                        "document.documentElement.style.setProperty('--sab', '%dpx');" +
+                        "document.documentElement.style.setProperty('--sat', '%dpx');",
+                        safeBottom, topDp
+                    );
+                    wv.post(() -> wv.evaluateJavascript(script, null));
+                }
+                return insets;
+            });
+        } catch (Exception ignored) {
+            // Non-fatal
         }
 
         // Harden the Capacitor WebView and enable uninterrupted media playback

@@ -37,6 +37,9 @@
 :root {
   color-scheme: light dark;
 
+  --safe-area-bottom: max(env(safe-area-inset-bottom, 0px), var(--sab, 0px));
+  --safe-area-top: max(env(safe-area-inset-top, 0px), var(--sat, 0px));
+
   --sf-bg-light: #f5f6fa;
   --sf-bg-dark: #070810;
 
@@ -278,6 +281,18 @@ body {
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: none;
+}
+
+#main-content {
+  -webkit-overflow-scrolling: touch;
+  transform: translateZ(0);
+}
+
+/* Match native caret and text selection indicators with theme accent */
+input,
+textarea {
+  caret-color: var(--sf-accent, #6366f1);
 }
 
 /* Eliminate 300ms mobile touch-action tap delay on all interactive elements */

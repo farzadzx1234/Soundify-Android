@@ -442,7 +442,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Native Apple HIG Mobile Navigation Bar */}
-        <header className="lg:hidden sticky top-0 z-30 pt-[max(0.4rem,env(safe-area-inset-top))] border-b border-black/[0.06] dark:border-white/[0.08] bg-white/92 dark:bg-[#070810]/92 backdrop-blur-md px-3.5 py-2.5 flex items-center justify-between gap-2 shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.25)]">
+        <header className="lg:hidden sticky top-0 z-30 pt-[max(0.5rem,var(--sat,env(safe-area-inset-top,0px)))] border-b border-black/[0.06] dark:border-white/[0.08] bg-white/92 dark:bg-[#070810]/92 backdrop-blur-md px-3.5 py-2.5 flex items-center justify-between gap-2 shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.25)]">
           {isSubPage ? (
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <button
@@ -627,7 +627,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </aside>
         )}
 
-        <main id="main-content" tabIndex={-1} className="flex-1 px-3 sm:px-6 pt-3 pb-[max(14.5rem,calc(12rem+env(safe-area-inset-bottom)))] md:pb-48 lg:pb-32">
+        <main id="main-content" tabIndex={-1} className="flex-1 px-3 sm:px-6 pt-3 pb-[max(15.5rem,calc(13rem+var(--sab,env(safe-area-inset-bottom,0px))))] md:pb-48 lg:pb-32">
           <div key={pathname} className="mx-auto w-full max-w-[1600px]">
             {children}
           </div>
@@ -637,7 +637,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Native Apple HIG Liquid Glass Mobile Tab Bar */}
       <nav
         aria-label="Mobile Navigation"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 select-none touch-manipulation [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none] border-t border-black/[0.08] dark:border-white/[0.1] bg-white/92 dark:bg-[#070913]/92 backdrop-blur-md pt-1.5 pb-[max(0.6rem,calc(env(safe-area-inset-bottom)+0.2rem))] shadow-[0_-4px_24px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.7)] dark:shadow-[0_-8px_32px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.08)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 select-none touch-manipulation [user-select:none] [-webkit-user-select:none] [-webkit-touch-callout:none] border-t border-black/[0.08] dark:border-white/[0.1] bg-white/92 dark:bg-[#070913]/92 backdrop-blur-md pt-1.5 pb-[max(0.75rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.35rem))] shadow-[0_-4px_24px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.7)] dark:shadow-[0_-8px_32px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.08)]"
       >
         <div className="relative mx-auto max-w-md px-1.5">
           {/* GPU-gliding Liquid Glass Active Pill */}

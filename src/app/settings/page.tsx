@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
+  ArrowClockwiseIcon,
   CloudCheckIcon,
   DeviceMobileIcon,
   GearSixIcon,
+  GlobeHemisphereWestIcon,
   GlobeIcon,
   HardDriveIcon,
   InfoIcon,
@@ -15,6 +17,8 @@ import {
   UserCircleIcon,
   WaveformIcon,
 } from "@phosphor-icons/react";
+import { api } from "@/lib/api";
+import type { AdminUser } from "@/lib/types";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n, type Lang } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -131,6 +135,74 @@ export default function SettingsPage() {
   const [newPwd, setNewPwd] = useState("");
   const [pwdSaving, setPwdSaving] = useState(false);
   const [pwdFeedback, setPwdFeedback] = useState<string | null>(null);
+
+  // Admin permissions management state
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminSearchQuery, setAdminSearchQuery] = useState("");
+  const [adminActionFeedback, setAdminActionFeedback] = useState<string | null>(null);
+
+  const fetchAdminUsers = useCallback(async () => {
+    if (!user || (user.role !== "admin" && !user.isAdmin)) return;
+    setAdminUsersLoading(true);
+    try {
+      const res = await api.adminGetUsers({ limit: 50 });
+      setAdminUsers(res.users);
+    } catch {
+      // Ignore
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    let active = true;
+    if (user?.role === "admin" || user?.isAdmin) {
+      api
+        .adminGetUsers({ limit: 50 })
+        .then((res) => {
+          if (active) setAdminUsers(res.users);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
+  const handleToggleUserGlobalSearch = async (targetUserId: string, nextValue: boolean) => {
+    setAdminUsers((prev) =>
+      prev.map((u) => (u.id === targetUserId ? { ...u, canAccessGlobalSearch: nextValue } : u)),
+    );
+    try {
+      await api.adminUpdateUserPermissions(targetUserId, { canAccessGlobalSearch: nextValue });
+      setAdminActionFeedback(
+        lang === "fa"
+          ? `دسترسی کاربر با موفقیت ${nextValue ? "فعال" : "غیرفعال"} شد.`
+          : `User permission updated to ${nextValue ? "enabled" : "disabled"}.`,
+      );
+      setTimeout(() => setAdminActionFeedback(null), 3000);
+    } catch {
+      setAdminUsers((prev) =>
+        prev.map((u) => (u.id === targetUserId ? { ...u, canAccessGlobalSearch: !nextValue } : u)),
+      );
+      setAdminActionFeedback(
+        lang === "fa" ? "خطا در به‌روزرسانی دسترسی کاربر" : "Failed to update user permission",
+      );
+      setTimeout(() => setAdminActionFeedback(null), 3000);
+    }
+  };
+
+  const filteredAdminUsers = useMemo(() => {
+    const q = adminSearchQuery.trim().toLowerCase();
+    if (!q) return adminUsers;
+    return adminUsers.filter(
+      (u) =>
+        u.username.toLowerCase().includes(q) ||
+        u.displayName?.toLowerCase().includes(q) ||
+        u.displayNameFa?.toLowerCase().includes(q),
+    );
+  }, [adminUsers, adminSearchQuery]);
 
   const handleClearCache = () => {
     if (typeof window !== "undefined" && "caches" in window) {
@@ -595,6 +667,120 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {/* Group Admin: Global Search Access Management (Visible to Admins only) */}
+      {Boolean(user && (user.role === "admin" || user.isAdmin)) && (
+        <div className="space-y-2 sf-fade-up">
+          <div className="flex items-center justify-between px-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)]">
+              {lang === "fa" ? "مدیریت دسترسی‌های جستجوی جهانی" : "Global Search Permissions"}
+            </span>
+            <Button
+              type="button"
+              variant="glass"
+              disabled={adminUsersLoading}
+              onClick={() => void fetchAdminUsers()}
+              icon={<ArrowClockwiseIcon size={14} className={adminUsersLoading ? "animate-spin" : ""} />}
+              className="!h-7 !px-2.5 !text-[11px]"
+            >
+              {lang === "fa" ? "بروزرسانی" : "Refresh"}
+            </Button>
+          </div>
+
+          <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm p-4 sm:p-5 space-y-4">
+            <div className="flex items-start gap-3.5">
+              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
+                <GlobeHemisphereWestIcon size={22} weight="duotone" aria-hidden="true" />
+              </span>
+              <div>
+                <p className="font-extrabold text-sm sm:text-base">
+                  {lang === "fa" ? "مجوز جستجو در شبکه‌های جهانی" : "External Music Access Control"}
+                </p>
+                <p className="text-xs text-[var(--sf-muted)]">
+                  {lang === "fa"
+                    ? "کاربرانی که این گزینه برای آن‌ها فعال باشد، می‌توانند در یوتیوب، ساندکلود و اسپاتیفای جستجو و پخش آنلاین داشته باشند."
+                    : "Users with this permission enabled can search and stream directly from YouTube, SoundCloud, and Spotify."}
+                </p>
+              </div>
+            </div>
+
+            {/* Filter / Search input */}
+            <div className="relative">
+              <input
+                type="text"
+                value={adminSearchQuery}
+                onChange={(e) => setAdminSearchQuery(e.target.value)}
+                placeholder={lang === "fa" ? "جستجوی کاربر بر اساس نام یا نام کاربری..." : "Search user by name or username..."}
+                className="w-full rounded-2xl bg-white/[0.05] border border-white/10 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+              />
+            </div>
+
+            {adminActionFeedback && (
+              <div className="rounded-xl bg-indigo-500/15 border border-indigo-500/30 p-2.5 text-xs text-indigo-300 font-medium">
+                {adminActionFeedback}
+              </div>
+            )}
+
+            {/* Users List */}
+            <div className="divide-y divide-white/[0.06] max-h-72 overflow-y-auto rounded-2xl border border-white/[0.06] bg-black/20">
+              {filteredAdminUsers.length === 0 ? (
+                <div className="p-4 text-center text-xs text-[var(--sf-muted)]">
+                  {adminUsersLoading
+                    ? (lang === "fa" ? "در حال بارگذاری کاربران..." : "Loading users...")
+                    : (lang === "fa" ? "کاربری یافت نشد." : "No users found.")}
+                </div>
+              ) : (
+                filteredAdminUsers.map((u) => {
+                  const isEnabled = Boolean(u.canAccessGlobalSearch || u.role === "admin" || u.isAdmin);
+                  const isSelf = user ? u.id === user.id : false;
+
+                  return (
+                    <div key={u.id} className="flex items-center justify-between gap-3 p-3 hover:bg-white/[0.02] transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className="h-8 w-8 rounded-full flex items-center justify-center font-bold text-xs text-white shrink-0 shadow-sm"
+                          style={{ backgroundColor: u.avatarColor || "#6366F1" }}
+                        >
+                          {(u.displayName || u.username || "U").slice(0, 1).toUpperCase()}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-xs truncate">{u.displayName || u.username}</span>
+                            {u.role === "admin" && (
+                              <span className="rounded-full bg-violet-500/20 px-1.5 py-0.2 text-[9px] font-bold text-violet-400">
+                                Admin
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-[var(--sf-muted)] truncate block">
+                            @{u.username}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 shrink-0">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          isEnabled
+                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
+                            : "bg-amber-500/15 text-amber-400 border-amber-500/25"
+                        }`}>
+                          {isEnabled ? (lang === "fa" ? "فعال" : "Enabled") : (lang === "fa" ? "غیرفعال" : "Disabled")}
+                        </span>
+                        <Switch
+                          checked={isEnabled}
+                          disabled={isSelf || u.role === "admin" || Boolean(u.isAdmin)}
+                          onCheckedChange={(next) => void handleToggleUserGlobalSearch(u.id, next)}
+                          aria-label={`Toggle global search access for ${u.username}`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Group 5: About & App Version (Apple HIG Grouped Settings List) */}
       <div className="space-y-2">

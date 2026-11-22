@@ -69,6 +69,20 @@ import {
 } from "./mobileCrypto";
 import { getCachedUserSync, queueOfflineLike } from "./mobileSync";
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  data?: unknown;
+
+  constructor(message: string, status: number, code?: string, data?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.data = data;
+  }
+}
+
 export {
   checkBackendHealth,
   checkDeepBackendHealth,
@@ -758,13 +772,17 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 
       if (!res.ok) {
         let errMsg = `HTTP ${res.status}`;
+        let errCode: string | undefined;
+        let errData: unknown;
         try {
-          const data = (await res.json()) as { error?: string; errorFa?: string };
-          errMsg = data.error || errMsg;
+          const data = (await res.json()) as { error?: string; errorFa?: string; code?: string; message?: string };
+          errData = data;
+          errCode = data.code;
+          errMsg = data.message || data.error || data.errorFa || errMsg;
         } catch {
           // ignore
         }
-        throw new Error(errMsg);
+        throw new ApiError(errMsg, res.status, errCode, errData);
       }
 
       reportNetworkSuccess();
@@ -877,7 +895,18 @@ export const api = {
     const filteredTracks = filterSensitiveTracks(filtered);
     return { tracks: filteredTracks.map(normalizeTrack) };
   },
-  async searchExternal(q: string, source: "all" | "youtube" | "soundcloud" | "spotify" = "all", limit = 16) {
+  async searchExternal(
+    q: string,
+    source: "all" | "youtube" | "soundcloud" | "spotify" = "all",
+    limit = 16,
+  ): Promise<{
+    query: string;
+    source: string;
+    results: Track[];
+    total: number;
+    error?: string;
+    code?: string;
+  }> {
     const cleanQ = q.trim();
     if (!cleanQ || cleanQ.length < 2) {
       return { query: q, source, results: [], total: 0 };
@@ -955,7 +984,22 @@ export const api = {
       if (res?.error) {
         return { query: q, source, results: [], total: 0, error: res.error };
       }
-    } catch (err) {
+    } catch (err: unknown) {
+      if (
+        (err instanceof ApiError && (err.status === 403 || err.code === "GLOBAL_SEARCH_ACCESS_REQUIRED")) ||
+        (err as { code?: string })?.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" ||
+        String(err).includes("GLOBAL_SEARCH_ACCESS_REQUIRED")
+      ) {
+        return {
+          query: q,
+          source,
+          results: [],
+          total: 0,
+          error: err instanceof Error ? err.message : "دسترسی به جستجوی شبکه‌های جهانی نیازمند تایید مدیر است.",
+          code: "GLOBAL_SEARCH_ACCESS_REQUIRED",
+        };
+      }
+
       // If user searched a specific external provider (youtube/soundcloud/spotify), do NOT pollute with local seed tracks!
       if (source !== "all") {
         return {
@@ -1653,6 +1697,12 @@ export const api = {
     return apiFetch<{ user: AdminUser }>(`/api/admin/users/${encodeURIComponent(id)}/status`, {
       method: "PATCH",
       body: JSON.stringify({ isActive }),
+    });
+  },
+  adminUpdateUserPermissions(id: string, permissions: { canAccessGlobalSearch: boolean }) {
+    return apiFetch<{ user: AdminUser }>(`/api/admin/users/${encodeURIComponent(id)}/permissions`, {
+      method: "PATCH",
+      body: JSON.stringify(permissions),
     });
   },
   adminDeleteUser(id: string) {

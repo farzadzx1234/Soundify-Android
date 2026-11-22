@@ -6,6 +6,7 @@ import {
   BooksIcon,
   CheckCircleIcon,
   DeviceMobileIcon,
+  GlobeHemisphereWestIcon,
   KeyIcon,
   PaintBrushIcon,
   SignOutIcon,
@@ -160,6 +161,32 @@ export default function ProfilePage() {
           </div>
         </div>
       </section>
+
+      {/* Global Search Access Permission Banner (Only visible if access is granted) */}
+      {Boolean(user.canAccessGlobalSearch || user.role === "admin" || user.isAdmin) && (
+        <section className="rounded-3xl p-5 border border-emerald-500/20 bg-emerald-950/10 backdrop-blur-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-md shadow-emerald-500/10">
+              <GlobeHemisphereWestIcon size={24} weight="duotone" aria-hidden="true" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white">
+                  {lang === "fa" ? "دسترسی به جستجوی جهانی" : "Global Search Access"}
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                  {lang === "fa" ? "فعال" : "Enabled"}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 pt-0.5">
+                {lang === "fa"
+                  ? "شما مجاز به جستجو و استریم آنلاین در یوتیوب، ساندکلود و اسپاتیفای هستید."
+                  : "You have full access to stream music from YouTube, SoundCloud, and Spotify."}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Edit Profile Form */}

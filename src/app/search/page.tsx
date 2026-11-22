@@ -7,6 +7,7 @@ import {
   ClockCounterClockwiseIcon,
   GlobeHemisphereWestIcon,
   HardDrivesIcon,
+  LockSimpleIcon,
   MagnifyingGlassIcon,
   MusicNotesSimpleIcon,
   PauseIcon,
@@ -17,7 +18,7 @@ import {
   XIcon,
   YoutubeLogoIcon,
 } from "@phosphor-icons/react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -133,9 +134,13 @@ const PLACEHOLDER_SUGGESTIONS_EN = [
 
 function SearchPageInner() {
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, openAuthDialog } = useAuth();
   const { t, pickText, formatNum, lang } = useI18n();
   const { currentTrack, isPlaying, playTrack, setExpanded } = usePlayer();
+
+  const canAccessGlobal = Boolean(
+    user && (user.canAccessGlobalSearch || user.role === "admin" || user.isAdmin),
+  );
 
   const urlQ = searchParams.get("q") ?? "";
   const rawSource = searchParams.get("source");
@@ -145,13 +150,73 @@ function SearchPageInner() {
     ? (rawExt as ExternalSubSource)
     : "all");
 
-  const [searchSource, setSearchSource] = useState<SearchSource>(urlSource);
+  const initialSource: SearchSource =
+    urlSource === "external" && canAccessGlobal ? "external" : "local";
+
+  const [searchSource, setSearchSource] = useState<SearchSource>(initialSource);
   const [extSubSource, setExtSubSource] = useState<ExternalSubSource>(urlExtSource);
   const [inputValue, setInputValue] = useState(urlQ);
   const [debouncedQuery, setDebouncedQuery] = useState(urlQ);
   const [mood, setMood] = useState("all");
 
+  // Pure in-place URL synchronization without triggering Next.js route navigation
+  // Prevents mobile virtual keyboard dismiss, focus resets, and unneeded RSC payload fetches
+  const syncUrl = useCallback(
+    (q: string, src: SearchSource, extSrc: ExternalSubSource) => {
+      if (typeof window === "undefined") return;
+      const cleanQ = q.trim();
+      const sp = new URLSearchParams();
+      if (cleanQ) sp.set("q", cleanQ);
+      if (src === "external") {
+        sp.set("source", "external");
+        if (extSrc !== "all") sp.set("ext", extSrc);
+      }
+      const queryStr = sp.toString();
+      const nextUrl = queryStr ? `/search?${queryStr}` : "/search";
+      const currentUrl = `${window.location.pathname}${window.location.search}`;
+      if (currentUrl !== nextUrl) {
+        window.history.replaceState(window.history.state, "", nextUrl);
+      }
+    },
+    [],
+  );
+
+  const [accessModalOpen, setAccessModalOpen] = useState(false);
+  const accessDialogRef = useRef<HTMLDialogElement | null>(null);
+
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Synchronize access modal open/close lifecycle
+  useEffect(() => {
+    const dlg = accessDialogRef.current;
+    if (!dlg) return;
+    if (accessModalOpen && !dlg.open) {
+      dlg.showModal();
+    } else if (!accessModalOpen && dlg.open) {
+      dlg.close();
+    }
+  }, [accessModalOpen]);
+
+  // Click outside and cancel listener for access dialog
+  useEffect(() => {
+    const dlg = accessDialogRef.current;
+    if (!dlg) return;
+    const onCancel = (e: Event) => {
+      e.preventDefault();
+      setAccessModalOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (e.target === dlg) {
+        setAccessModalOpen(false);
+      }
+    };
+    dlg.addEventListener("cancel", onCancel);
+    dlg.addEventListener("click", onClick);
+    return () => {
+      dlg.removeEventListener("cancel", onCancel);
+      dlg.removeEventListener("click", onClick);
+    };
+  }, []);
 
   // Recent Searches State
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -206,7 +271,7 @@ function SearchPageInner() {
   }, []);
 
   const activePlaceholder = useMemo(() => {
-    if (searchSource === "external") {
+    if (canAccessGlobal && searchSource === "external") {
       return pickText(
         "Search YouTube, SoundCloud & Spotify...",
         "جستجو در یوتیوب، ساندکلود و اسپاتیفای...",
@@ -214,7 +279,7 @@ function SearchPageInner() {
     }
     const list = lang === "fa" ? PLACEHOLDER_SUGGESTIONS_FA : PLACEHOLDER_SUGGESTIONS_EN;
     return list[placeholderIndex % list.length];
-  }, [searchSource, lang, placeholderIndex, pickText]);
+  }, [canAccessGlobal, searchSource, lang, placeholderIndex, pickText]);
 
   // Local Catalog State
   const [localTracks, setLocalTracks] = useState<Track[]>([]);
@@ -230,35 +295,13 @@ function SearchPageInner() {
     api.getPlaylists().then((r) => setPlaylists(r.playlists)).catch(() => {});
   }, [user?.id]);
 
-  // Pure in-place URL synchronization without triggering Next.js route navigation
-  // Prevents mobile virtual keyboard dismiss, focus resets, and unneeded RSC payload fetches
-  const syncUrl = useCallback(
-    (q: string, src: SearchSource, extSrc: ExternalSubSource) => {
-      if (typeof window === "undefined") return;
-      const cleanQ = q.trim();
-      const sp = new URLSearchParams();
-      if (cleanQ) sp.set("q", cleanQ);
-      if (src === "external") {
-        sp.set("source", "external");
-        if (extSrc !== "all") sp.set("ext", extSrc);
-      }
-      const queryStr = sp.toString();
-      const nextUrl = queryStr ? `/search?${queryStr}` : "/search";
-      const currentUrl = `${window.location.pathname}${window.location.search}`;
-      if (currentUrl !== nextUrl) {
-        window.history.replaceState(window.history.state, "", nextUrl);
-      }
-    },
-    [],
-  );
-
   // Sync state if browser Back/Forward is clicked
   useEffect(() => {
     const handlePopState = () => {
       const sp = new URLSearchParams(window.location.search);
       const q = sp.get("q") ?? "";
       const rawSrc = sp.get("source");
-      const src: SearchSource = rawSrc === "external" ? "external" : "local";
+      const src: SearchSource = rawSrc === "external" && canAccessGlobal ? "external" : "local";
       const rawE = sp.get("ext") ?? "all";
       const ext: ExternalSubSource = ["all", "youtube", "soundcloud", "spotify"].includes(rawE)
         ? (rawE as ExternalSubSource)
@@ -272,7 +315,7 @@ function SearchPageInner() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [canAccessGlobal]);
 
   // Sync if external navigation occurs (e.g. from AppShell desktop search bar or link)
   // Protected: NEVER overwrite input state if user is currently focused/typing in the input
@@ -282,9 +325,9 @@ function SearchPageInner() {
     }
     setInputValue(urlQ);
     setDebouncedQuery(urlQ);
-    setSearchSource(urlSource);
+    setSearchSource(urlSource === "external" && !canAccessGlobal ? "local" : urlSource);
     setExtSubSource(urlExtSource);
-  }, [urlQ, urlSource, urlExtSource]);
+  }, [urlQ, urlSource, urlExtSource, canAccessGlobal]);
 
   // Debounce typing: sync debouncedQuery and URL 280ms after user pauses typing
   useEffect(() => {
@@ -357,7 +400,7 @@ function SearchPageInner() {
 
   // External search effect (YouTube / SoundCloud / Spotify)
   useEffect(() => {
-    if (searchSource !== "external") return;
+    if (!canAccessGlobal || searchSource !== "external") return;
     const cleanQ = debouncedQuery.trim();
     let active = true;
 
@@ -384,13 +427,31 @@ function SearchPageInner() {
         .searchExternal(cleanQ, extSubSource, 20)
         .then((res) => {
           if (!active) return;
+          if (res.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" || res.error?.includes("GLOBAL_SEARCH_ACCESS_REQUIRED")) {
+            setExternalTracks([]);
+            setSearchSource("local");
+            syncUrl(cleanQ, "local", extSubSource);
+            setAccessModalOpen(true);
+            return;
+          }
           setExternalTracks(filterSensitiveTracks(res.results || []));
           if (res.error && (!res.results || res.results.length === 0)) {
             setExternalError(res.error);
           }
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           if (!active) return;
+          if (
+            (err instanceof ApiError && (err.status === 403 || err.code === "GLOBAL_SEARCH_ACCESS_REQUIRED")) ||
+            (err as { code?: string })?.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" ||
+            String(err).includes("GLOBAL_SEARCH_ACCESS_REQUIRED")
+          ) {
+            setExternalTracks([]);
+            setSearchSource("local");
+            syncUrl(cleanQ, "local", extSubSource);
+            setAccessModalOpen(true);
+            return;
+          }
           setExternalTracks([]);
           setExternalError(err instanceof Error ? err.message : t("actionFailed"));
         })
@@ -403,10 +464,18 @@ function SearchPageInner() {
       active = false;
       clearTimeout(timer);
     };
-  }, [debouncedQuery, searchSource, extSubSource, t]);
+  }, [canAccessGlobal, debouncedQuery, searchSource, extSubSource, syncUrl, t]);
 
   const handleSourceChange = (newSource: string) => {
     const next = newSource as SearchSource;
+    if (next === "external" && !canAccessGlobal) {
+      if (!user) {
+        openAuthDialog();
+      } else {
+        setAccessModalOpen(true);
+      }
+      return;
+    }
     setSearchSource(next);
     syncUrl(inputValue, next, extSubSource);
   };
@@ -466,36 +535,38 @@ function SearchPageInner() {
           </h1>
         </div>
 
-        {/* Primary Source Switcher: Local Catalog vs Online Streams (YouTube/SoundCloud/Spotify) */}
-        <div className="pt-1">
-          <GlassSegmented
-            aria-label="Search Source"
-            fullWidth
-            size="sm"
-            value={searchSource}
-            onValueChange={handleSourceChange}
-            items={[
-              {
-                value: "local",
-                label: (
-                  <span className="inline-flex items-center justify-center gap-1.5 font-bold">
-                    <HardDrivesIcon size={16} weight="duotone" className="text-indigo-400 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{pickText("Soundify", "آرشیو ساندیفای")}</span>
-                  </span>
-                ),
-              },
-              {
-                value: "external",
-                label: (
-                  <span className="inline-flex items-center justify-center gap-1.5 font-bold">
-                    <GlobeHemisphereWestIcon size={16} weight="duotone" className="text-emerald-400 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{pickText("Global Search", "پخش جهانی")}</span>
-                  </span>
-                ),
-              },
-            ]}
-          />
-        </div>
+        {/* Primary Source Switcher: Local Catalog vs Online Streams (Only visible when user has global access) */}
+        {canAccessGlobal && (
+          <div className="pt-1">
+            <GlassSegmented
+              aria-label="Search Source"
+              fullWidth
+              size="sm"
+              value={searchSource}
+              onValueChange={handleSourceChange}
+              items={[
+                {
+                  value: "local",
+                  label: (
+                    <span className="inline-flex items-center justify-center gap-1.5 font-bold">
+                      <HardDrivesIcon size={16} weight="duotone" className="text-indigo-400 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{pickText("Soundify", "آرشیو ساندیفای")}</span>
+                    </span>
+                  ),
+                },
+                {
+                  value: "external",
+                  label: (
+                    <span className="inline-flex items-center justify-center gap-1.5 font-bold">
+                      <GlobeHemisphereWestIcon size={16} weight="duotone" className="text-emerald-400 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{pickText("Global Search", "پخش جهانی")}</span>
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        )}
 
         {/* Large Apple Search Pill */}
         <form onSubmit={handleSearchSubmit} role="search" className="max-w-2xl">
@@ -510,7 +581,7 @@ function SearchPageInner() {
         </form>
 
         {/* Sub-Filters: Mood filter for Local, or Service filter for External */}
-        {searchSource === "local" ? (
+        {(!canAccessGlobal || searchSource === "local") ? (
           <div className="pt-1 max-w-full">
             <GlassSegmented
               aria-label="Filter by mood"
@@ -585,7 +656,7 @@ function SearchPageInner() {
       {/* ========================================================================= */}
       {/* SOURCE 1: LOCAL SOUNDIFY CATALOG VIEW */}
       {/* ========================================================================= */}
-      {searchSource === "local" && (
+      {(!canAccessGlobal || searchSource === "local") && (
         <>
           {/* Recent Searches Pills (Apple HIG Tag Cloud) */}
           {recentSearches.length > 0 && !inputValue.trim() && (
@@ -807,7 +878,7 @@ function SearchPageInner() {
       {/* ========================================================================= */}
       {/* SOURCE 2: ONLINE EXTERNAL STREAMS (YOUTUBE / SOUNDCLOUD / SPOTIFY) */}
       {/* ========================================================================= */}
-      {searchSource === "external" && (
+      {canAccessGlobal && searchSource === "external" && (
         <div className="space-y-4">
           {!inputValue.trim() || inputValue.trim().length < 2 ? (
             <Glass className="rounded-3xl p-10 text-center space-y-4">
@@ -898,6 +969,84 @@ function SearchPageInner() {
           )}
         </div>
       )}
+      {/* Global Search Access Required Modal (Apple HIG Style) */}
+      <dialog
+        ref={accessDialogRef}
+        {...({ closedby: "any" } as Record<string, string>)}
+        aria-labelledby="global-access-dialog-title"
+        className="sf-dialog max-w-md w-[92vw]"
+        onClose={() => setAccessModalOpen(false)}
+      >
+        <div className="p-6 sm:p-7 space-y-5 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400 border border-amber-500/25 shadow-lg shadow-amber-500/10">
+            <LockSimpleIcon size={32} weight="duotone" aria-hidden="true" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 id="global-access-dialog-title" className="text-lg sm:text-xl font-black">
+              {pickText("Global Search Access Required", "دسترسی به جستجوی شبکه‌های جهانی")}
+            </h2>
+            <p className="text-xs sm:text-sm text-[var(--sf-muted)] leading-relaxed">
+              {pickText(
+                "Access to external music sources (YouTube, SoundCloud, Spotify) requires administrator authorization.",
+                "جستجو و پخش از سرورهای جهانی (یوتیوب، ساندکلود و اسپاتیفای) نیازمند تایید و فعال‌سازی توسط مدیر سیستم است."
+              )}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] p-3.5 text-xs text-start space-y-1.5">
+            {user ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--sf-muted)]">{pickText("Account:", "حساب کاربری:")}</span>
+                  <span className="font-semibold text-white">@{user.username}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--sf-muted)]">{pickText("Status:", "وضعیت دسترسی:")}</span>
+                  <span className="font-bold text-amber-400">{pickText("Pending Admin Approval", "در انتظار تایید مدیر")}</span>
+                </div>
+                <p className="text-[11px] text-[var(--sf-muted)] pt-1 border-t border-white/[0.06]">
+                  {pickText(
+                    "Please contact your administrator to activate global search permission for your account.",
+                    "برای فعال‌سازی این قابلیت، از مدیر سیستم درخواست کنید تا دسترسی جستجوی جهانی را برای شما فعال کند."
+                  )}
+                </p>
+              </>
+            ) : (
+              <p className="text-center text-[var(--sf-muted)]">
+                {pickText(
+                  "Please sign in to your account first so the administrator can verify your access.",
+                  "جهت دسترسی، ابتدا وارد حساب کاربری خود شوید تا مدیر امکان تایید دسترسی شما را داشته باشد."
+                )}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1">
+            {!user ? (
+              <Button
+                type="button"
+                variant="filled"
+                className="w-full justify-center text-xs font-bold"
+                onClick={() => {
+                  setAccessModalOpen(false);
+                  openAuthDialog();
+                }}
+              >
+                {t("signIn")}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant={user ? "filled" : "glass"}
+              className="w-full justify-center text-xs font-bold"
+              onClick={() => setAccessModalOpen(false)}
+            >
+              {pickText("Got it", "متوجه شدم")}
+            </Button>
+          </div>
+        </div>
+      </dialog>
     </div>
     </PullToRefresh>
   );

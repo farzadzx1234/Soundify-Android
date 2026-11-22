@@ -7,6 +7,8 @@ export interface User {
   role: "user" | "creator" | "admin";
   avatarColor: string;
   isActive?: boolean;
+  canAccessGlobalSearch?: boolean;
+  isAdmin?: boolean;
 }
 
 export interface Track {
@@ -157,6 +159,8 @@ export interface AdminUser {
   avatarColor: string;
   createdAt: string;
   isActive: boolean;
+  canAccessGlobalSearch?: boolean;
+  isAdmin?: boolean;
   likedTracksCount: number;
   playlistsCount: number;
   commentsCount: number;

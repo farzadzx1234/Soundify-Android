@@ -47,6 +47,11 @@ import {
   setServerConnectivityStatus,
   MOBILE_V1_PREFIX,
 } from "./mobileBackend";
+import {
+  APP_VERSION,
+  MIN_SERVER_SUPPORTED_VERSION,
+  triggerAppUpdateRequired,
+} from "./appVersion";
 import { reportNetworkFailure, reportNetworkSuccess } from "./networkResilience";
 import {
   FALLBACK_ARTISTS,
@@ -355,7 +360,7 @@ export function synthesizeExternalTrack(id: string, partial?: Partial<Track>): T
   const audioUrl =
     partial?.audioUrl && !partial.audioUrl.includes("fallback-preview.mp3")
       ? partial.audioUrl
-      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&title=${encodeURIComponent(rawTitle)}&artist=${encodeURIComponent(rawArtist)}&fastStart=true`;
+      : `/api/stream/external?url=${encodeURIComponent(canonical || cleanId)}&id=${encodeURIComponent(cleanId)}&title=${encodeURIComponent(rawTitle)}&artist=${encodeURIComponent(rawArtist)}&fastStart=true&appVersion=${APP_VERSION}`;
 
   const track: Track = {
     id: cleanId,
@@ -610,6 +615,7 @@ async function attemptTokenRefresh(): Promise<string | null> {
         headers: {
           "Content-Type": "application/json",
           "X-Client-Platform": "Android",
+          "X-App-Version": APP_VERSION,
         },
         body: JSON.stringify({ refreshToken: refreshTokenValue }),
       });
@@ -686,6 +692,7 @@ export function getCachedCatalogArtists(): Artist[] | null {
 
 async function executeFetch(path: string, init: RequestInit, token: string | null): Promise<Response> {
   const headers = new Headers(init.headers);
+  headers.set("X-App-Version", APP_VERSION);
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   } else {
@@ -775,13 +782,24 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
         let errCode: string | undefined;
         let errData: unknown;
         try {
-          const data = (await res.json()) as { error?: string; errorFa?: string; code?: string; message?: string };
+          const data = (await res.json()) as { error?: string; errorFa?: string; errorEn?: string; code?: string; message?: string; minSupportedVersion?: string };
           errData = data;
           errCode = data.code;
           errMsg = data.message || data.error || data.errorFa || errMsg;
         } catch {
           // ignore
         }
+
+        if (res.status === 426 || errCode === "APP_UPDATE_REQUIRED") {
+          const typedData = errData as { error?: string; errorFa?: string; errorEn?: string; code?: string; message?: string; minSupportedVersion?: string } | undefined;
+          triggerAppUpdateRequired({
+            minSupportedVersion: typedData?.minSupportedVersion || MIN_SERVER_SUPPORTED_VERSION,
+            message: errMsg,
+            messageFa: typedData?.errorFa || typedData?.message,
+            messageEn: typedData?.errorEn || typedData?.message,
+          });
+        }
+
         throw new ApiError(errMsg, res.status, errCode, errData);
       }
 
@@ -985,6 +1003,21 @@ export const api = {
         return { query: q, source, results: [], total: 0, error: res.error };
       }
     } catch (err: unknown) {
+      if (
+        (err instanceof ApiError && (err.status === 426 || err.code === "APP_UPDATE_REQUIRED")) ||
+        (err as { code?: string })?.code === "APP_UPDATE_REQUIRED" ||
+        String(err).includes("APP_UPDATE_REQUIRED")
+      ) {
+        return {
+          query: q,
+          source,
+          results: [],
+          total: 0,
+          error: err instanceof Error ? err.message : "به‌روزرسانی الزامی برنامه",
+          code: "APP_UPDATE_REQUIRED",
+        };
+      }
+
       if (
         (err instanceof ApiError && (err.status === 403 || err.code === "GLOBAL_SEARCH_ACCESS_REQUIRED")) ||
         (err as { code?: string })?.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" ||

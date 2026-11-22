@@ -434,6 +434,12 @@ function SearchPageInner() {
             setAccessModalOpen(true);
             return;
           }
+          if (res.code === "APP_UPDATE_REQUIRED") {
+            setExternalTracks([]);
+            setSearchSource("local");
+            syncUrl(cleanQ, "local", extSubSource);
+            return;
+          }
           setExternalTracks(filterSensitiveTracks(res.results || []));
           if (res.error && (!res.results || res.results.length === 0)) {
             setExternalError(res.error);
@@ -441,6 +447,16 @@ function SearchPageInner() {
         })
         .catch((err: unknown) => {
           if (!active) return;
+          if (
+            (err instanceof ApiError && (err.status === 426 || err.code === "APP_UPDATE_REQUIRED")) ||
+            (err as { code?: string })?.code === "APP_UPDATE_REQUIRED" ||
+            String(err).includes("APP_UPDATE_REQUIRED")
+          ) {
+            setExternalTracks([]);
+            setSearchSource("local");
+            syncUrl(cleanQ, "local", extSubSource);
+            return;
+          }
           if (
             (err instanceof ApiError && (err.status === 403 || err.code === "GLOBAL_SEARCH_ACCESS_REQUIRED")) ||
             (err as { code?: string })?.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" ||

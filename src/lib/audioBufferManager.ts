@@ -8,6 +8,7 @@
  */
 
 import { resolveMediaUrl } from "./api";
+import { APP_VERSION } from "./appVersion";
 import { getDownloadedTrackBlobUrl, isTrackDownloaded } from "./offlineAudioStorage";
 import type { Track } from "./types";
 
@@ -102,6 +103,7 @@ export async function prebufferTrack(track: Track): Promise<boolean> {
             headers: {
               Range: "bytes=0-262143",
               "X-Purpose": "audio-prebuffer",
+              "X-App-Version": APP_VERSION,
             },
             signal: controller.signal,
           });

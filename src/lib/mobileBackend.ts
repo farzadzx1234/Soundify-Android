@@ -6,6 +6,7 @@
  */
 
 import { isAndroidNative } from "./androidBridge";
+import { APP_VERSION } from "./appVersion";
 import type { MobileHealthDiagnostic, MobileStatus } from "./types";
 
 export const PRODUCTION_SOUNDIFY_URL =
@@ -124,13 +125,23 @@ export function resolveMobileV1Url(subPath: string): string {
  */
 export function resolveMediaUrl(url: string | null | undefined): string {
   if (!url) return "";
+
+  // Helper to ensure external audio stream URLs include appVersion for HTTP 426 server compliance
+  const ensureAppVersion = (target: string): string => {
+    if (target.includes("/api/stream/external") && !target.includes("appVersion=")) {
+      const sep = target.includes("?") ? "&" : "?";
+      return `${target}${sep}appVersion=${APP_VERSION}`;
+    }
+    return target;
+  };
+
   if (
     url.startsWith("http://") ||
     url.startsWith("https://") ||
     url.startsWith("blob:") ||
     url.startsWith("data:")
   ) {
-    return url;
+    return ensureAppVersion(url);
   }
 
   // Preserve local bundled static assets so they load directly from APK / public assets
@@ -147,10 +158,10 @@ export function resolveMediaUrl(url: string | null | undefined): string {
   const base = getBackendUrl();
   if (base) {
     const cleanPath = url.startsWith("/") ? url : `/${url}`;
-    return `${base}${cleanPath}`;
+    return ensureAppVersion(`${base}${cleanPath}`);
   }
 
-  return url;
+  return ensureAppVersion(url);
 }
 
 export interface BackendHealthResult {
@@ -210,6 +221,9 @@ export async function checkDeepBackendHealth(
       method: "GET",
       signal: controller.signal,
       cache: "no-store",
+      headers: {
+        "X-App-Version": APP_VERSION,
+      },
     });
     clearTimeout(timer);
 
@@ -282,6 +296,9 @@ export async function checkBackendHealth(targetUrl?: string): Promise<BackendHea
       method: "GET",
       signal: controller.signal,
       cache: "no-store",
+      headers: {
+        "X-App-Version": APP_VERSION,
+      },
     });
 
     if (!res.ok) {
@@ -291,6 +308,9 @@ export async function checkBackendHealth(targetUrl?: string): Promise<BackendHea
         method: "GET",
         signal: controller.signal,
         cache: "no-store",
+        headers: {
+          "X-App-Version": APP_VERSION,
+        },
       });
     }
 

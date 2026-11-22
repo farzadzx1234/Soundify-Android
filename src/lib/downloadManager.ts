@@ -5,6 +5,11 @@ import { triggerHapticFeedback } from "./hapticFeedback";
 import { parseLrc } from "./lrc";
 import { isAndroidNative } from "./androidBridge";
 import { exportTrackToDeviceStorage } from "./mediaExport";
+import {
+  APP_VERSION,
+  MIN_SERVER_SUPPORTED_VERSION,
+  triggerAppUpdateRequired,
+} from "./appVersion";
 import { api, extractYouTubeIdClient, getApiToken, isExternalTrack, resolveMediaUrl } from "./api";
 import {
   clearAllDownloadedTracks,
@@ -373,7 +378,10 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
 
     const resolvedAudioUrl = resolveMediaUrl(rawAudioUrl);
     const token = getApiToken();
-    const headers: Record<string, string> = { Accept: "audio/*, */*" };
+    const headers: Record<string, string> = {
+      Accept: "audio/*, */*",
+      "X-App-Version": APP_VERSION,
+    };
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
@@ -385,6 +393,21 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     });
 
     if (!audioRes.ok) {
+      if (audioRes.status === 426) {
+        try {
+          const errData = (await audioRes.clone().json()) as { error?: string; errorFa?: string; errorEn?: string; code?: string; message?: string; minSupportedVersion?: string };
+          triggerAppUpdateRequired({
+            minSupportedVersion: errData?.minSupportedVersion || MIN_SERVER_SUPPORTED_VERSION,
+            message: errData?.message,
+            messageFa: errData?.errorFa || errData?.message,
+            messageEn: errData?.errorEn || errData?.message,
+          });
+        } catch {
+          triggerAppUpdateRequired({
+            minSupportedVersion: MIN_SERVER_SUPPORTED_VERSION,
+          });
+        }
+      }
       // If it's an external track (YouTube / SoundCloud / Spotify) and initial fetch failed, attempt refreshing the stream token
       const isExternal =
         isExternalTrack(track) ||

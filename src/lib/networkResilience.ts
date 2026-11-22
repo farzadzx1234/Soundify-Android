@@ -18,6 +18,7 @@ import {
   setServerConnectivityStatus,
   getServerConnectivityStatus,
 } from "./mobileBackend";
+import { APP_VERSION } from "./appVersion";
 
 export type ResilienceStatus = "online" | "degraded" | "offline";
 
@@ -268,6 +269,9 @@ class NetworkResilienceManager {
         const res = await fetch(url, {
           method: "GET",
           cache: "no-store",
+          headers: {
+            "X-App-Version": APP_VERSION,
+          },
           signal: controller.signal,
         });
         clearTimeout(timeoutId);

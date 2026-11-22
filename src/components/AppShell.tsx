@@ -48,6 +48,11 @@ const AuthDialog = dynamic(
   { ssr: false },
 );
 
+const AppUpdateDialog = dynamic(
+  () => import("./AppUpdateDialog").then((m) => m.AppUpdateDialog),
+  { ssr: false },
+);
+
 function LazyNowPlayingOverlay() {
   const { expanded } = usePlayer();
   if (!expanded) return null;
@@ -696,6 +701,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <LazyNowPlayingOverlay />
       <LazyAuthDialog />
       <DevicePickerPopover />
+      <AppUpdateDialog />
     </div>
   );
 }

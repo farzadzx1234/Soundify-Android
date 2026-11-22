@@ -50,29 +50,30 @@ const DB_NAME = "soundify_offline_db";
 const DB_VERSION = 1;
 const STORE_NAME = "downloaded_tracks";
 
-// Default storage limits: 250MB and 50 tracks
-export const DEFAULT_MAX_STORAGE_BYTES = 250 * 1024 * 1024;
-export const DEFAULT_MAX_TRACKS = 50;
+// Default storage limits: Unlimited by default (no artificial quotas)
+export const DEFAULT_MAX_STORAGE_BYTES = Number.MAX_SAFE_INTEGER;
+export const DEFAULT_MAX_TRACKS = Number.MAX_SAFE_INTEGER;
 
 const currentBudget: StorageBudgetConfig = {
   maxStorageBytes: DEFAULT_MAX_STORAGE_BYTES,
   maxTracks: DEFAULT_MAX_TRACKS,
 };
 
-function initStoredBudget(): void {
+export function initStoredBudget(): void {
   if (typeof window === "undefined") return;
   try {
+    // Purge legacy storage caps to ensure downloads are completely unlimited without artificial quotas
     const storedBytes = window.localStorage?.getItem("soundify_storage_budget_bytes");
-    if (storedBytes) {
-      const b = parseInt(storedBytes, 10);
-      if (b > 0) currentBudget.maxStorageBytes = b;
+    if (storedBytes && Number(storedBytes) < Number.MAX_SAFE_INTEGER) {
+      window.localStorage?.removeItem("soundify_storage_budget_bytes");
     }
     const storedTracks = window.localStorage?.getItem("soundify_storage_budget_tracks");
-    if (storedTracks) {
-      const t = parseInt(storedTracks, 10);
-      if (t > 0) currentBudget.maxTracks = t;
+    if (storedTracks && Number(storedTracks) < Number.MAX_SAFE_INTEGER) {
+      window.localStorage?.removeItem("soundify_storage_budget_tracks");
     }
   } catch {}
+  currentBudget.maxStorageBytes = DEFAULT_MAX_STORAGE_BYTES;
+  currentBudget.maxTracks = DEFAULT_MAX_TRACKS;
 }
 
 if (typeof window !== "undefined") {
@@ -233,7 +234,8 @@ export async function getStorageBudgetInfo(): Promise<StorageBudgetInfo> {
     cacheBytes = coverStats.totalBytes || 0;
   } catch {}
   const usageBytes = songsBytes + cacheBytes;
-  const usagePercent = currentBudget.maxStorageBytes > 0 ? Math.min(100, Math.round((usageBytes / currentBudget.maxStorageBytes) * 100)) : 0;
+  const isBudgetBounded = currentBudget.maxStorageBytes > 0 && currentBudget.maxStorageBytes < Number.MAX_SAFE_INTEGER;
+  const usagePercent = isBudgetBounded ? Math.min(100, Math.round((usageBytes / currentBudget.maxStorageBytes) * 100)) : 0;
 
   return {
     usageBytes,
@@ -257,6 +259,14 @@ export async function enforceStorageBudget(
   const allTracks = await getAllDownloadedTracks();
   const evictedTrackIds: string[] = [];
   let freedBytes = 0;
+
+  // If budget is unbounded / unlimited, do not evict any tracks
+  if (
+    currentBudget.maxStorageBytes >= Number.MAX_SAFE_INTEGER &&
+    currentBudget.maxTracks >= Number.MAX_SAFE_INTEGER
+  ) {
+    return { evictedTrackIds, freedBytes };
+  }
 
   const existingTrack = incomingTrackId ? allTracks.find((t) => t.trackId === incomingTrackId) : undefined;
   const existingSize = existingTrack ? (existingTrack.sizeBytes || existingTrack.audioBlob?.size || 0) : 0;

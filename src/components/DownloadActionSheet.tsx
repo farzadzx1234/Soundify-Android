@@ -7,7 +7,6 @@ import {
   HardDrivesIcon,
   PlayIcon,
   TrashIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -92,19 +91,19 @@ export function DownloadActionSheet({
       role="dialog"
       aria-modal="true"
       aria-labelledby="download-sheet-title"
-      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm transition-all duration-300"
+      className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md transition-opacity duration-200"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm sm:max-w-md bg-zinc-900/90 dark:bg-[#12131a]/95 text-white rounded-t-[28px] sm:rounded-3xl p-5 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/10 backdrop-blur-2xl transition-all duration-200 transform translate-y-0 active:scale-[0.99] space-y-4"
+        className="w-full max-w-sm sm:max-w-md bg-zinc-950/95 dark:bg-[#12131a]/98 text-white rounded-t-[32px] sm:rounded-3xl p-5 sm:p-6 pb-8 sm:pb-6 shadow-[0_25px_60px_rgba(0,0,0,0.85)] border-t border-x sm:border border-white/10 backdrop-blur-2xl space-y-4 sf-fade-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* iOS Drag Handle on Mobile */}
-        <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 sm:hidden" />
+        <div className="w-10 h-1.5 rounded-full bg-white/30 mx-auto -mt-1 mb-3 sm:hidden" />
 
-        {/* Track Info Header */}
-        <div className="flex items-center gap-3 pb-2 border-b border-white/10">
-          <div className="h-12 w-12 rounded-xl overflow-hidden bg-white/5 ring-1 ring-white/10 shrink-0">
+        {/* Track Info Header (Apple Music HIG Presentation) */}
+        <div className="flex items-center gap-3.5 pb-3.5 border-b border-white/[0.08]">
+          <div className="h-14 w-14 rounded-2xl overflow-hidden bg-white/5 ring-1 ring-white/15 shadow-md shrink-0">
             <OptimizedTrackImage
               src={track.coverUrl}
               trackId={track.id}
@@ -113,44 +112,34 @@ export function DownloadActionSheet({
             />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <CheckCircleIcon size={15} weight="fill" className="text-emerald-400 shrink-0" />
-              <span className="text-[11px] font-semibold text-emerald-400 tracking-wide uppercase">
-                {lang === "fa" ? "دانلود شده و آماده پخش آفلاین" : "Downloaded & Ready Offline"}
-              </span>
-            </div>
-            <h3 id="download-sheet-title" className="text-sm font-bold text-white truncate mt-0.5">
+            <h3 id="download-sheet-title" className="text-base sm:text-lg font-black text-white truncate leading-snug">
               {title}
             </h3>
-            <p className="text-xs text-white/60 truncate">{artist}</p>
+            <p className="text-xs text-white/65 truncate mt-0.5 font-medium">{artist}</p>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-[11px] font-bold text-emerald-400 mt-1.5">
+              <CheckCircleIcon size={13} weight="fill" className="shrink-0" />
+              <span>{lang === "fa" ? "دانلود شده • آماده پخش آفلاین" : "Downloaded • Ready Offline"}</span>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="بستن"
-            className="h-8 w-8 min-h-[32px] min-w-[32px] rounded-full bg-white/10 hover:bg-white/15 flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
-          >
-            <XIcon size={14} weight="bold" />
-          </button>
         </div>
 
         {/* Action Buttons Group (Apple HIG Grouped Style) */}
-        <div className="rounded-2xl bg-white/[0.06] border border-white/10 overflow-hidden divide-y divide-white/10 shadow-inner">
+        <div className="rounded-2xl bg-white/[0.05] border border-white/10 overflow-hidden divide-y divide-white/[0.08] shadow-inner backdrop-blur-xl">
           {/* Action 1: Play Offline */}
           <button
             type="button"
             onClick={handlePlay}
-            className="w-full flex items-center gap-3 px-4 py-3.5 text-start hover:bg-white/[0.08] active:bg-white/[0.12] transition-colors cursor-pointer active:scale-[0.99]"
+            className="w-full min-h-[60px] flex items-center gap-3.5 px-4 py-3.5 text-start hover:bg-white/[0.06] active:bg-white/[0.1] transition-all cursor-pointer group active:scale-[0.99]"
           >
-            <div className="h-8 w-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-              <PlayIcon size={16} weight="fill" />
+            <div className="h-10 w-10 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/20 shadow-sm group-hover:scale-105 transition-transform">
+              <PlayIcon size={18} weight="fill" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-white leading-tight">
+              <p className="text-sm font-bold text-white group-hover:text-emerald-300 transition-colors leading-tight">
                 {lang === "fa" ? "پخش آفلاین" : "Play Offline"}
               </p>
-              <p className="text-[11px] text-white/50">
-                {lang === "fa" ? "پخش مستقیم از فایل ذخیره شده در حافظه" : "Stream directly from local storage"}
+              <p className="text-xs text-white/50 leading-relaxed mt-0.5">
+                {lang === "fa" ? "پخش مستقیم از فایل ذخیره شده در حافظه" : "Stream directly from local offline storage"}
               </p>
             </div>
           </button>
@@ -159,17 +148,17 @@ export function DownloadActionSheet({
           <button
             type="button"
             onClick={handleExport}
-            className="w-full flex items-center gap-3 px-4 py-3.5 text-start hover:bg-white/[0.08] active:bg-white/[0.12] transition-colors cursor-pointer active:scale-[0.99]"
+            className="w-full min-h-[60px] flex items-center gap-3.5 px-4 py-3.5 text-start hover:bg-white/[0.06] active:bg-white/[0.1] transition-all cursor-pointer group active:scale-[0.99]"
           >
-            <div className="h-8 w-8 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
-              <HardDrivesIcon size={16} weight="bold" />
+            <div className="h-10 w-10 rounded-full bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/20 shadow-sm group-hover:scale-105 transition-transform">
+              <HardDrivesIcon size={18} weight="bold" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-white leading-tight">
+              <p className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors leading-tight">
                 {lang === "fa" ? "ذخیره در حافظه دستگاه" : "Save to Device Storage"}
               </p>
-              <p className="text-[11px] text-white/50">
-                {lang === "fa" ? "انتقال به پوشه موزیک گوشی جهت پخش در برنامه‌های دیگر" : "Export to public Music folder"}
+              <p className="text-xs text-white/50 leading-relaxed mt-0.5">
+                {lang === "fa" ? "انتقال به پوشه موزیک گوشی جهت پخش در برنامه‌های دیگر" : "Export to public Music folder for external apps"}
               </p>
             </div>
           </button>
@@ -178,16 +167,16 @@ export function DownloadActionSheet({
           <button
             type="button"
             onClick={handleDelete}
-            className="w-full flex items-center gap-3 px-4 py-3.5 text-start hover:bg-rose-500/10 active:bg-rose-500/20 text-rose-400 transition-colors cursor-pointer active:scale-[0.99]"
+            className="w-full min-h-[60px] flex items-center gap-3.5 px-4 py-3.5 text-start hover:bg-rose-500/10 active:bg-rose-500/20 text-rose-400 transition-all cursor-pointer group active:scale-[0.99]"
           >
-            <div className="h-8 w-8 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
-              <TrashIcon size={16} weight="bold" />
+            <div className="h-10 w-10 rounded-full bg-rose-500/15 text-rose-400 flex items-center justify-center shrink-0 border border-rose-500/20 shadow-sm group-hover:scale-105 transition-transform">
+              <TrashIcon size={18} weight="bold" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold leading-tight">
+              <p className="text-sm font-bold leading-tight group-hover:text-rose-300 transition-colors">
                 {lang === "fa" ? "حذف فایل دانلود شده" : "Delete Download"}
               </p>
-              <p className="text-[11px] text-rose-300/60">
+              <p className="text-xs text-rose-300/60 leading-relaxed mt-0.5">
                 {lang === "fa" ? "آزادسازی حافظه محلی و حذف از بخش دانلودها" : "Remove audio file from offline storage"}
               </p>
             </div>
@@ -198,7 +187,7 @@ export function DownloadActionSheet({
         <button
           type="button"
           onClick={onClose}
-          className="w-full min-h-[44px] py-3 rounded-2xl bg-white/[0.08] hover:bg-white/[0.14] active:bg-white/[0.18] text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98] inline-flex items-center justify-center text-center leading-none"
+          className="w-full min-h-[52px] py-3.5 rounded-2xl bg-white/[0.09] hover:bg-white/[0.14] active:bg-white/[0.18] text-white font-bold text-sm sm:text-base transition-all cursor-pointer active:scale-[0.98] inline-flex items-center justify-center text-center leading-none border border-white/10 shadow-md backdrop-blur-md"
         >
           {lang === "fa" ? "لغو" : "Cancel"}
         </button>

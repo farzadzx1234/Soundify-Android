@@ -108,4 +108,51 @@ describe("Apple HIG Design Review & Regression Test Suite", () => {
       expect(lightTokens.contrastOk).toBe(true);
     });
   });
+
+  describe("Apple Music HIG Library & Unlimited Storage Verification", () => {
+    it("guarantees default storage budget is unbounded for unlimited offline downloads", async () => {
+      const { DEFAULT_MAX_STORAGE_BYTES, DEFAULT_MAX_TRACKS, getStorageBudget } = await import(
+        "@/lib/offlineAudioStorage"
+      );
+      expect(DEFAULT_MAX_STORAGE_BYTES).toBe(Number.MAX_SAFE_INTEGER);
+      expect(DEFAULT_MAX_TRACKS).toBe(Number.MAX_SAFE_INTEGER);
+      const current = getStorageBudget();
+      expect(current.maxStorageBytes).toBe(Number.MAX_SAFE_INTEGER);
+      expect(current.maxTracks).toBe(Number.MAX_SAFE_INTEGER);
+    });
+
+    it("purges legacy artificial storage quotas from localStorage during initialization", async () => {
+      const { initStoredBudget, getStorageBudget } = await import("@/lib/offlineAudioStorage");
+
+      // Simulate legacy user who had 250MB limit saved in localStorage
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("soundify_storage_budget_bytes", "262144000");
+        window.localStorage.setItem("soundify_storage_budget_tracks", "50");
+
+        initStoredBudget();
+
+        expect(window.localStorage.getItem("soundify_storage_budget_bytes")).toBeNull();
+        expect(window.localStorage.getItem("soundify_storage_budget_tracks")).toBeNull();
+
+        const budget = getStorageBudget();
+        expect(budget.maxStorageBytes).toBe(Number.MAX_SAFE_INTEGER);
+        expect(budget.maxTracks).toBe(Number.MAX_SAFE_INTEGER);
+      }
+    });
+
+    it("verifies enforceStorageBudget does not evict tracks when storage is unlimited", async () => {
+      const { enforceStorageBudget } = await import("@/lib/offlineAudioStorage");
+      const result = await enforceStorageBudget(1024 * 1024 * 500); // 500MB track
+      expect(result.evictedTrackIds).toEqual([]);
+      expect(result.freedBytes).toBe(0);
+    });
+
+    it("verifies getStorageBudgetInfo calculates zero usagePercent when storage is unbounded", async () => {
+      const { getStorageBudgetInfo } = await import("@/lib/offlineAudioStorage");
+      const info = await getStorageBudgetInfo();
+      expect(info.maxStorageBytes).toBe(Number.MAX_SAFE_INTEGER);
+      expect(info.maxTracks).toBe(Number.MAX_SAFE_INTEGER);
+      expect(info.usagePercent).toBe(0);
+    });
+  });
 });

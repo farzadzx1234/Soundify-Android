@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowClockwiseIcon,
   CloudCheckIcon,
@@ -25,7 +26,6 @@ import { usePlayer } from "@/context/PlayerContext";
 import { useTheme, type ThemeChoice } from "@/context/ThemeContext";
 import { Button, GlassSegmented, Switch } from "@/components/GlassControls";
 import { useDownloadedTracks } from "@/lib/downloadManager";
-import { setStorageBudget } from "@/lib/offlineAudioStorage";
 import { APP_BUILD_NUMBER, APP_CHANNEL, APP_VERSION } from "@/lib/appVersion";
 import { isAndroidNative } from "@/lib/androidBridge";
 
@@ -84,7 +84,6 @@ export default function SettingsPage() {
     storageBudgetInfo,
     clearAll: clearAllOfflineTracks,
     clearCache: clearOfflineAudioCache,
-    refresh: refreshStorage,
   } = useDownloadedTracks();
   const [offlineCacheCleared, setOfflineCacheCleared] = useState(false);
   const [confirmClearOfflineCache, setConfirmClearOfflineCache] = useState(false);
@@ -97,32 +96,30 @@ export default function SettingsPage() {
     return `${Math.round(bytes / (10.24 * 1024 * 1024)) / 100} GB`;
   };
 
-  const handleSelectBudget = (bytes: number) => {
-    setStorageBudget({ maxStorageBytes: bytes });
-    void refreshStorage();
-  };
-
-  const handleClearOfflineCache = () => {
-    if (!confirmClearOfflineCache) {
-      setConfirmClearOfflineCache(true);
-      setTimeout(() => setConfirmClearOfflineCache(false), 4000);
-      return;
-    }
+  const handleConfirmClearOfflineCache = () => {
     setConfirmClearOfflineCache(false);
     clearOfflineAudioCache();
     setOfflineCacheCleared(true);
     setTimeout(() => setOfflineCacheCleared(false), 2500);
   };
 
-  const handleDeleteAllDownloads = async () => {
-    if (!confirmDeleteAllDownloads) {
-      setConfirmDeleteAllDownloads(true);
-      setTimeout(() => setConfirmDeleteAllDownloads(false), 4000);
-      return;
-    }
+  const handleConfirmDeleteAllDownloads = async () => {
     setConfirmDeleteAllDownloads(false);
     await clearAllOfflineTracks();
   };
+
+  // Escape key handler for confirmation modals
+  useEffect(() => {
+    if (!confirmClearOfflineCache && !confirmDeleteAllDownloads) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setConfirmClearOfflineCache(false);
+        setConfirmDeleteAllDownloads(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmClearOfflineCache, confirmDeleteAllDownloads]);
 
   // Profile edit
   const [editDisplayName, setEditDisplayName] = useState(user?.displayName || "");
@@ -413,106 +410,159 @@ export default function SettingsPage() {
           {t("storageMeter")}
         </span>
         <div className="rounded-3xl sf-content-card border border-white/[0.08] shadow-sm divide-y divide-black/[0.04] dark:divide-white/[0.06] overflow-hidden">
-          {/* Storage Meter & Visual Usage Bar */}
+          {/* Storage Meter & Visual Usage Display */}
           <div className="p-4 sm:px-5 space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-white shadow-sm shrink-0">
-                  <HardDriveIcon size={18} weight="bold" aria-hidden="true" />
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-sm shrink-0">
+                  <HardDriveIcon size={20} weight="bold" aria-hidden="true" />
                 </span>
-                <div>
-                  <span className="block font-semibold text-sm">{t("storageUsed")}</span>
-                  <span className="block text-xs text-[var(--sf-muted)]">
-                    {formatSize(storageBudgetInfo.usageBytes)} {t("storageUsedOf")} {formatSize(storageBudgetInfo.maxStorageBytes)} ({storageBudgetInfo.usagePercent}%) • {downloadedTracks.length} {t("tracksCount")}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--sf-muted)] mt-1">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">{t("storageUsed")}</span>
+                    <span className="font-mono tabular-nums font-bold text-sm text-[var(--sf-text)]">
+                      {formatSize(storageBudgetInfo.usageBytes)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-[var(--sf-muted)] mt-0.5">
+                    <span>{downloadedTracks.length} {t("tracksCount")}</span>
+                    <span>•</span>
                     <span>{t("downloadedSongsSize")}: <strong className="text-[var(--sf-text)] font-semibold">{formatSize(storageBudgetInfo.songsBytes)}</strong></span>
                     <span>•</span>
                     <span>{t("cacheSize")}: <strong className="text-[var(--sf-muted)] font-semibold">{formatSize(storageBudgetInfo.cacheBytes)}</strong></span>
                   </div>
                 </div>
               </div>
-              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                {storageBudgetInfo.usagePercent}%
+              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
+                {lang === "fa" ? "دانلود نامحدود" : "Unlimited"}
               </span>
-            </div>
-
-            <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-2.5 rounded-full overflow-hidden p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  storageBudgetInfo.usagePercent > 90
-                    ? "bg-gradient-to-r from-amber-500 to-rose-500"
-                    : "bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500"
-                }`}
-                style={{
-                  width: `${Math.min(100, Math.max(storageBudgetInfo.usageBytes > 0 ? 3 : 0, storageBudgetInfo.usagePercent))}%`,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Storage Quota Switcher */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:px-5">
-            <div>
-              <span className="block font-semibold text-sm">{t("storageQuota")}</span>
-              <span className="block text-xs text-[var(--sf-muted)]">{t("storageQuotaDesc")}</span>
-            </div>
-            <div className="shrink-0">
-              <GlassSegmented
-                aria-label={t("storageQuota")}
-                value={String(storageBudgetInfo.maxStorageBytes)}
-                onValueChange={(val) => handleSelectBudget(Number(val))}
-                items={[
-                  { value: String(250 * 1024 * 1024), label: t("quota250MB") },
-                  { value: String(500 * 1024 * 1024), label: t("quota500MB") },
-                  { value: String(1024 * 1024 * 1024), label: t("quota1GB") },
-                  { value: String(2 * 1024 * 1024 * 1024), label: t("quota2GB") },
-                ]}
-              />
             </div>
           </div>
 
           {/* Clear Offline Cache */}
           <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
-            <div>
+            <div className="min-w-0 flex-1">
               <span className="block font-semibold text-sm">{t("clearOfflineCacheTitle")}</span>
               <span className="block text-xs text-[var(--sf-muted)]">{t("clearOfflineCacheDesc")}</span>
             </div>
             <Button
               type="button"
-              variant={confirmClearOfflineCache ? "filled" : "glass"}
-              destructive={confirmClearOfflineCache}
-              onClick={handleClearOfflineCache}
+              variant="glass"
+              onClick={() => setConfirmClearOfflineCache(true)}
               className="text-xs font-semibold shrink-0"
             >
-              {confirmClearOfflineCache
-                ? t("confirmClearCache")
-                : offlineCacheCleared
-                  ? t("clearOfflineCacheDone")
-                  : t("clearOfflineCacheTitle")}
+              {offlineCacheCleared ? t("clearOfflineCacheDone") : (lang === "fa" ? "پاک‌سازی" : "Clear")}
             </Button>
           </div>
 
           {/* Delete All Downloads */}
           <div className="flex items-center justify-between gap-3 p-4 sm:px-5">
-            <div>
+            <div className="min-w-0 flex-1">
               <span className="block font-semibold text-sm text-rose-500">{t("deleteAllDownloadsTitle")}</span>
               <span className="block text-xs text-[var(--sf-muted)]">{t("deleteAllDownloadsDesc")}</span>
             </div>
             <Button
               type="button"
-              variant={confirmDeleteAllDownloads ? "filled" : "ghost"}
-              destructive={confirmDeleteAllDownloads}
-              onClick={() => void handleDeleteAllDownloads()}
+              variant="ghost"
+              destructive
+              onClick={() => setConfirmDeleteAllDownloads(true)}
               disabled={downloadedTracks.length === 0}
               icon={<TrashIcon size={16} aria-hidden="true" />}
               className="text-xs font-semibold shrink-0"
             >
-              {confirmDeleteAllDownloads ? t("confirmClearDownloads") : t("clearAllDownloads")}
+              {lang === "fa" ? "حذف همه" : "Delete All"}
             </Button>
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal: Clear Offline Cache */}
+      {typeof document !== "undefined" && confirmClearOfflineCache && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="clear-cache-dialog-title"
+          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md sf-fade-up"
+          onClick={() => setConfirmClearOfflineCache(false)}
+        >
+          <div
+            className="w-full max-w-sm sm:max-w-md bg-zinc-900/95 dark:bg-[#12131a]/98 text-white rounded-t-[32px] sm:rounded-3xl p-6 shadow-2xl border border-white/10 backdrop-blur-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-10 h-1.5 rounded-full bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
+            <div className="text-center space-y-2 pt-1">
+              <div className="h-12 w-12 rounded-2xl bg-amber-500/15 text-amber-400 mx-auto flex items-center justify-center mb-1 ring-1 ring-amber-500/20">
+                <TrashIcon size={24} weight="bold" />
+              </div>
+              <h3 id="clear-cache-dialog-title" className="text-base font-bold text-white">{t("clearOfflineCacheTitle")}</h3>
+              <p className="text-xs text-white/70 leading-relaxed px-2">
+                {t("confirmClearCache")}
+              </p>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={handleConfirmClearOfflineCache}
+                className="w-full min-h-[50px] rounded-2xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 font-bold text-sm transition-all cursor-pointer shadow-sm active:scale-[0.98]"
+              >
+                {lang === "fa" ? "پاک‌سازی حافظه موقت" : "Clear Cache"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmClearOfflineCache(false)}
+                className="w-full min-h-[50px] rounded-2xl bg-white/10 hover:bg-white/15 active:bg-white/20 text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98]"
+              >
+                {lang === "fa" ? "لغو" : "Cancel"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Confirmation Modal: Delete All Downloads */}
+      {typeof document !== "undefined" && confirmDeleteAllDownloads && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-all-dialog-title"
+          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md sf-fade-up"
+          onClick={() => setConfirmDeleteAllDownloads(false)}
+        >
+          <div
+            className="w-full max-w-sm sm:max-w-md bg-zinc-900/95 dark:bg-[#12131a]/98 text-white rounded-t-[32px] sm:rounded-3xl p-6 shadow-2xl border border-white/10 backdrop-blur-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-10 h-1.5 rounded-full bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
+            <div className="text-center space-y-2 pt-1">
+              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-400 mx-auto flex items-center justify-center mb-1 ring-1 ring-rose-500/20">
+                <TrashIcon size={24} weight="bold" />
+              </div>
+              <h3 id="delete-all-dialog-title" className="text-base font-bold text-rose-400">{t("deleteAllDownloadsTitle")}</h3>
+              <p className="text-xs text-white/70 leading-relaxed px-2">
+                {t("confirmClearDownloads")}
+              </p>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={() => void handleConfirmDeleteAllDownloads()}
+                className="w-full min-h-[50px] rounded-2xl bg-rose-500 hover:bg-rose-600 active:bg-rose-700 text-white font-bold text-sm transition-all cursor-pointer shadow-sm active:scale-[0.98]"
+              >
+                {lang === "fa" ? "حذف دائمی تمام آهنگ‌ها" : "Delete All Tracks"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteAllDownloads(false)}
+                className="w-full min-h-[50px] rounded-2xl bg-white/10 hover:bg-white/15 active:bg-white/20 text-white font-semibold text-sm transition-all cursor-pointer active:scale-[0.98]"
+              >
+                {lang === "fa" ? "لغو" : "Cancel"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Group 4: Account */}
       <div className="space-y-2">

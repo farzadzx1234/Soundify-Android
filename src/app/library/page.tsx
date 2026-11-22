@@ -9,6 +9,7 @@ import {
   CheckCircleIcon,
   CheckSquareIcon,
   CircleNotchIcon,
+  ClockCounterClockwiseIcon,
   DotsThreeVerticalIcon,
   HeartIcon,
   HardDriveIcon,
@@ -18,6 +19,7 @@ import {
   PlayIcon,
   PlaylistIcon,
   PlusIcon,
+  RepeatIcon,
   ShuffleIcon,
   SquareIcon,
   SquaresFourIcon,
@@ -32,7 +34,7 @@ import { usePlayer } from "@/context/PlayerContext";
 import { useDownloadedTracks, useActiveDownloads } from "@/lib/downloadManager";
 import { exportTrackToDeviceStorage, getExportedTrackIds } from "@/lib/mediaExport";
 import { formatDuration } from "@/lib/lrc";
-import { Button, Glass, GlassSegmented, Input } from "@/components/GlassControls";
+import { Button, Glass, Input } from "@/components/GlassControls";
 import { DownloadActionSheet } from "@/components/DownloadActionSheet";
 import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
@@ -64,10 +66,7 @@ export default function LibraryPage() {
   const {
     downloadedTracks,
     totalSizeBytes,
-    storageBudgetInfo,
-    clearAll,
     batchDeleteTracks,
-    clearCache,
   } = useDownloadedTracks();
   const activeDownloads = useActiveDownloads();
 
@@ -79,10 +78,7 @@ export default function LibraryPage() {
   const [newPlaylistTitle, setNewPlaylistTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [actionErr, setActionErr] = useState("");
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [confirmClearCache, setConfirmClearCache] = useState(false);
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
-  const [cacheClearedNotice, setCacheClearedNotice] = useState(false);
 
   // Downloaded tab local search, view mode, device export & batch selection
   const [downloadSearchQuery, setDownloadSearchQuery] = useState("");
@@ -146,29 +142,7 @@ export default function LibraryPage() {
     }
   };
 
-  const handleClearAllDownloads = async () => {
-    if (!confirmClear) {
-      setConfirmClear(true);
-      setTimeout(() => setConfirmClear(false), 4000);
-      return;
-    }
-    setConfirmClear(false);
-    setSelectedTrackIds(new Set());
-    setSelectMode(false);
-    await clearAll();
-  };
 
-  const handleClearCache = () => {
-    if (!confirmClearCache) {
-      setConfirmClearCache(true);
-      setTimeout(() => setConfirmClearCache(false), 4000);
-      return;
-    }
-    setConfirmClearCache(false);
-    clearCache();
-    setCacheClearedNotice(true);
-    setTimeout(() => setCacheClearedNotice(false), 3000);
-  };
 
   const handleToggleSelectTrack = (trackId: string) => {
     setSelectedTrackIds((prev) => {
@@ -384,24 +358,78 @@ export default function LibraryPage() {
           )}
         </div>
 
-        {/* Apple Segmented Switcher with Downloaded tab */}
-        <div className="pt-1">
-          <GlassSegmented
-            aria-label="Library sections"
-            value={tab}
-            onValueChange={(v) => {
-              setTab(v as LibraryTab);
-              setSelectMode(false);
-              setSelectedTrackIds(new Set());
-            }}
-            items={[
-              { value: "downloaded", label: `${t("downloadedTracksTab")} (${formatNum(downloadedTracks.length)})` },
-              { value: "liked", label: `${t("likedTracksTab")} (${formatNum(likedTracks.length)})` },
-              { value: "reposts", label: `${t("repostsTab")} (${formatNum(repostedTracks.length)})` },
-              { value: "playlists", label: `${t("playlistsTab")} (${formatNum(playlists.length)})` },
-              { value: "history", label: t("historyTab") },
-            ]}
-          />
+        {/* Apple Music HIG Pill Tabs Strip */}
+        <div className="pt-1 overflow-x-auto no-scrollbar scroll-smooth" role="tablist" aria-label={t("libraryTitle")}>
+          <div className="flex items-center gap-2 min-w-max pb-1">
+            {[
+              {
+                id: "downloaded" as const,
+                label: t("downloadedTracksTab"),
+                count: downloadedTracks.length,
+                icon: <ArrowCircleDownIcon size={17} weight="bold" />,
+              },
+              {
+                id: "liked" as const,
+                label: t("likedTracksTab"),
+                count: likedTracks.length,
+                icon: <HeartIcon size={17} weight="bold" />,
+              },
+              {
+                id: "playlists" as const,
+                label: t("playlistsTab"),
+                count: playlists.length,
+                icon: <PlaylistIcon size={17} weight="bold" />,
+              },
+              {
+                id: "reposts" as const,
+                label: t("repostsTab"),
+                count: repostedTracks.length,
+                icon: <RepeatIcon size={17} weight="bold" />,
+              },
+              {
+                id: "history" as const,
+                label: t("historyTab"),
+                count: historyTracks.length,
+                icon: <ClockCounterClockwiseIcon size={17} weight="bold" />,
+              },
+            ].map((tabItem) => {
+              const isActive = tab === tabItem.id;
+              return (
+                <button
+                  key={tabItem.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => {
+                    setTab(tabItem.id);
+                    setSelectMode(false);
+                    setSelectedTrackIds(new Set());
+                  }}
+                  className={`min-h-[44px] px-4 py-2 rounded-2xl flex items-center gap-2 text-xs sm:text-sm font-bold transition-all cursor-pointer select-none active:scale-95 ${
+                    isActive
+                      ? "bg-indigo-600 text-white shadow-md ring-1 ring-indigo-400/40"
+                      : "bg-white/[0.05] hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-white/[0.06]"
+                  }`}
+                >
+                  <span className={isActive ? "text-white" : "text-indigo-400"}>
+                    {tabItem.icon}
+                  </span>
+                  <span>{tabItem.label}</span>
+                  {tabItem.count !== undefined && tabItem.count > 0 && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono tabular-nums ${
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-white/[0.08] text-[var(--sf-muted)]"
+                      }`}
+                    >
+                      {formatNum(tabItem.count)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </Glass>
 
@@ -476,95 +504,25 @@ export default function LibraryPage() {
             </Glass>
           )}
 
-          {/* Enhanced Storage Meter Card */}
-          <Glass className="rounded-3xl p-4 sm:p-6 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shrink-0 border border-emerald-500/20 shadow-sm">
-                  <HardDriveIcon size={22} weight="bold" aria-hidden="true" />
-                </span>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-sm sm:text-base">{t("storageMeter")}</span>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                      <CheckCircleIcon size={12} weight="fill" aria-hidden="true" />
-                      <span>{t("offlineMode")}</span>
-                    </span>
-                  </div>
-                  <p className="text-xs text-[var(--sf-muted)] truncate mt-0.5">
-                    {formatStorageSize(storageBudgetInfo.usageBytes, t, formatNum)} {t("storageUsedOf")} {formatStorageSize(storageBudgetInfo.maxStorageBytes, t, formatNum)} ({formatNum(storageBudgetInfo.usagePercent)}%) • {formatNum(downloadedTracks.length)} / {formatNum(storageBudgetInfo.maxTracks)} {t("tracksCount")}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--sf-muted)] mt-1">
-                    <span>{t("downloadedSongsSize")}: <strong className="text-[var(--sf-text)] font-semibold">{formatStorageSize(storageBudgetInfo.songsBytes, t, formatNum)}</strong></span>
-                    <span>•</span>
-                    <span>{t("cacheSize")}: <strong className="text-[var(--sf-muted)] font-semibold">{formatStorageSize(storageBudgetInfo.cacheBytes, t, formatNum)}</strong></span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Storage Actions */}
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  type="button"
-                  variant={confirmClearCache ? "filled" : "glass"}
-                  destructive={confirmClearCache}
-                  onClick={handleClearCache}
-                  className="text-xs font-semibold"
-                  title={t("clearOfflineCacheDesc")}
-                >
-                  {confirmClearCache
-                    ? t("confirmClearCache")
-                    : cacheClearedNotice
-                      ? t("clearOfflineCacheDone")
-                      : t("clearOfflineCacheTitle")}
-                </Button>
-                {downloadedTracks.length > 0 && (
-                  <Button
-                    type="button"
-                    variant={confirmClear ? "filled" : "ghost"}
-                    destructive={confirmClear}
-                    onClick={() => void handleClearAllDownloads()}
-                    icon={<TrashIcon size={16} aria-hidden="true" />}
-                    className="text-xs shrink-0"
-                  >
-                    {confirmClear ? t("confirmClearDownloads") : t("clearAllDownloads")}
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {/* Apple-style Gradient Usage Progress Bar */}
-            <div className="space-y-1.5 pt-1">
-              <div className="w-full bg-black/[0.06] dark:bg-white/[0.08] h-3 rounded-full overflow-hidden p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    storageBudgetInfo.usagePercent > 90
-                      ? "bg-gradient-to-r from-amber-500 via-rose-500 to-red-500"
-                      : "bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500"
-                  }`}
-                  style={{
-                    width: `${Math.min(100, Math.max(totalSizeBytes > 0 ? 3 : 0, storageBudgetInfo.usagePercent))}%`,
-                  }}
-                />
-              </div>
-              <div className="flex justify-between items-center text-[10px] text-[var(--sf-muted)] px-1 font-mono tabular-nums">
-                <span>0 MB</span>
-                <span>{formatStorageSize(storageBudgetInfo.maxStorageBytes, t, formatNum)}</span>
-              </div>
-            </div>
-          </Glass>
-
           {/* Search Filter, View Toggle, Export All & Multi-Select Batch Actions Bar */}
           {downloadedTracks.length > 0 && (
             <Glass className="rounded-3xl p-3 sm:p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-md">
-                <Input
-                  aria-label={t("searchDownloadedPlaceholder")}
-                  placeholder={t("searchDownloadedPlaceholder")}
-                  value={downloadSearchQuery}
-                  onValueChange={setDownloadSearchQuery}
-                  icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
-                />
+              <div className="flex items-center gap-2.5 flex-1 max-w-lg">
+                <div className="relative flex-1">
+                  <Input
+                    aria-label={t("searchDownloadedPlaceholder")}
+                    placeholder={t("searchDownloadedPlaceholder")}
+                    value={downloadSearchQuery}
+                    onValueChange={setDownloadSearchQuery}
+                    icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+                  />
+                </div>
+                <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white/[0.04] border border-white/[0.06] text-xs font-semibold text-[var(--sf-muted)] shrink-0">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                  <span>{formatNum(filteredDownloadedTracks.length)} {t("tracksCount")}</span>
+                  <span>•</span>
+                  <span className="font-mono tabular-nums text-[var(--sf-text)] font-bold">{formatStorageSize(totalSizeBytes, t, formatNum)}</span>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 self-end md:self-auto shrink-0">

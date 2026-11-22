@@ -23,6 +23,43 @@ import java.io.File;
 
 public class MainActivity extends BridgeActivity {
 
+    private int mLastBottomInsetDp = 48;
+    private int mLastTopInsetDp = 28;
+
+    private void updateWebViewInsets() {
+        try {
+            WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+            if (wv != null) {
+                String script = String.format(
+                    "document.documentElement.style.setProperty('--sab', '%dpx');" +
+                    "document.documentElement.style.setProperty('--sat', '%dpx');",
+                    mLastBottomInsetDp, mLastTopInsetDp
+                );
+                wv.post(() -> wv.evaluateJavascript(script, null));
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        try {
+            ViewCompat.requestApplyInsets(getWindow().getDecorView());
+        } catch (Exception ignored) {}
+        updateWebViewInsets();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            try {
+                ViewCompat.requestApplyInsets(getWindow().getDecorView());
+            } catch (Exception ignored) {}
+            updateWebViewInsets();
+        }
+    }
+
     private static void deleteRecursively(File target) {
         if (target == null || !target.exists()) return;
         if (target.isDirectory()) {
@@ -165,6 +202,7 @@ public class MainActivity extends BridgeActivity {
                     if (bestMode != null) {
                         WindowManager.LayoutParams lp = getWindow().getAttributes();
                         lp.preferredDisplayModeId = bestMode.getModeId();
+                        lp.preferredRefreshRate = maxRate;
                         getWindow().setAttributes(lp);
                     }
                 }
@@ -200,19 +238,12 @@ public class MainActivity extends BridgeActivity {
                 float density = getResources().getDisplayMetrics().density;
                 int bottomDp = density > 0 ? Math.round(systemBars.bottom / density) : 0;
                 int topDp = density > 0 ? Math.round(systemBars.top / density) : 0;
-                int safeBottom = Math.max(bottomDp, 0);
-
-                WebView wv = getBridge() != null ? getBridge().getWebView() : null;
-                if (wv != null) {
-                    String script = String.format(
-                        "document.documentElement.style.setProperty('--sab', '%dpx');" +
-                        "document.documentElement.style.setProperty('--sat', '%dpx');",
-                        safeBottom, topDp
-                    );
-                    wv.post(() -> wv.evaluateJavascript(script, null));
-                }
+                mLastBottomInsetDp = Math.max(bottomDp, 0);
+                mLastTopInsetDp = Math.max(topDp, 0);
+                updateWebViewInsets();
                 return insets;
             });
+            ViewCompat.requestApplyInsets(getWindow().getDecorView());
         } catch (Exception ignored) {
             // Non-fatal
         }

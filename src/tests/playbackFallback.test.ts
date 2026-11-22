@@ -80,4 +80,12 @@ describe("Playback Fallback & Stream Error Resilience", () => {
     const canonical = extractCanonicalExternalUrl(proxyUrl);
     expect(canonical).toBe("https://soundcloud.com/putak/helia");
   });
+
+  it("extracts clean query for Shayan Yo - Manam Baladam to enable automatic multi-source fallback", () => {
+    const { title, artist } = extractCleanTitleAndArtist("Manam Baladam", "Shayan Yo");
+    expect(title).toBe("Manam Baladam");
+    expect(artist).toBe("Shayan Yo");
+    const q = `${artist} ${title}`;
+    expect(q).toBe("Shayan Yo Manam Baladam");
+  });
 });

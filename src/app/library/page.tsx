@@ -496,7 +496,7 @@ export default function LibraryPage() {
                       <span className="font-bold truncate max-w-[220px] sm:max-w-md">
                         {dl.track ? pickText(dl.track.title, dl.track.titleFa) : dl.trackId}
                       </span>
-                      <span className="font-mono tabular-nums font-black text-indigo-500" dir="ltr">
+                      <span className="tabular-nums font-black text-indigo-500" dir="ltr">
                         {dl.progress}%
                       </span>
                     </div>

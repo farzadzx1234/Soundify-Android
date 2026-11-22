@@ -420,7 +420,7 @@ export default function SettingsPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm">{t("storageUsed")}</span>
-                    <span className="font-mono tabular-nums font-bold text-sm text-[var(--sf-text)]">
+                    <span className="tabular-nums font-bold text-sm text-[var(--sf-text)]">
                       {formatSize(storageBudgetInfo.usageBytes)}
                     </span>
                   </div>
@@ -569,7 +569,7 @@ export default function SettingsPage() {
         <span className="text-xs font-bold uppercase tracking-wider text-[var(--sf-muted)] px-3">
           {t("settingsAccountGroup")}
         </span>
-        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-white/[0.06]">
+        <div className="rounded-3xl sf-content-card border border-black/[0.06] dark:border-white/[0.08] shadow-sm divide-y divide-black/[0.05] dark:divide-white/[0.08] overflow-hidden">
           {user ? (
             <>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:px-5">
@@ -582,14 +582,14 @@ export default function SettingsPage() {
                   </span>
                   <div>
                     <div className="flex items-center gap-2">
-                      <p className="font-extrabold text-base">{user.displayName}</p>
+                      <bdi className="font-extrabold text-base">{user.displayName}</bdi>
                       {user.role === "admin" && (
                         <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-bold text-violet-600 dark:text-violet-300">
                           Admin
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-[var(--sf-muted)]">@{user.username} • {user.email}</p>
+                    <p className="text-xs text-[var(--sf-muted)] mt-0.5" dir="ltr">@{user.username} • {user.email}</p>
                   </div>
                 </div>
                 <Button
@@ -609,13 +609,13 @@ export default function SettingsPage() {
                   {lang === "fa" ? "ویرایش مشخصات کاربری" : "Edit Profile Details"}
                 </span>
                 <form onSubmit={(e) => void handleSaveProfile(e)} className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <input
                       type="text"
                       value={editDisplayName}
                       onChange={(e) => setEditDisplayName(e.target.value)}
                       placeholder={lang === "fa" ? "نام نمایشی (انگلیسی)" : "Display Name"}
-                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
                       required
                     />
                     <input
@@ -623,12 +623,12 @@ export default function SettingsPage() {
                       value={editDisplayNameFa}
                       onChange={(e) => setEditDisplayNameFa(e.target.value)}
                       placeholder={lang === "fa" ? "نام نمایشی (فارسی)" : "Persian Display Name"}
-                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     {profileFeedback && (
-                      <span className="text-xs font-medium text-emerald-400">{profileFeedback}</span>
+                      <span className="text-xs font-medium text-emerald-500 dark:text-emerald-400">{profileFeedback}</span>
                     )}
                     <Button
                       type="submit"
@@ -654,13 +654,13 @@ export default function SettingsPage() {
                   {lang === "fa" ? "تغییر رمز عبور" : "Change Password"}
                 </span>
                 <form onSubmit={(e) => void handleChangePassword(e)} className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <input
                       type="password"
                       value={currentPwd}
                       onChange={(e) => setCurrentPwd(e.target.value)}
                       placeholder={lang === "fa" ? "رمز عبور فعلی" : "Current Password"}
-                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
                       required
                     />
                     <input
@@ -668,13 +668,13 @@ export default function SettingsPage() {
                       value={newPwd}
                       onChange={(e) => setNewPwd(e.target.value)}
                       placeholder={lang === "fa" ? "رمز عبور جدید (حداقل ۶ نویسه)" : "New Password (min 6 chars)"}
-                      className="rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                      className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
                       required
                     />
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     {pwdFeedback && (
-                      <span className="text-xs font-medium text-indigo-400">{pwdFeedback}</span>
+                      <span className="text-xs font-medium text-indigo-500 dark:text-indigo-400">{pwdFeedback}</span>
                     )}
                     <Button
                       type="submit"

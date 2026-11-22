@@ -16,9 +16,13 @@ export function AndroidInitializer() {
   useEffect(() => {
     installLogSanitizer();
     if (typeof document !== "undefined" && isAndroidNative()) {
-      const current = document.documentElement.style.getPropertyValue("--sab");
-      if (!current || current === "0px") {
+      const currentSab = document.documentElement.style.getPropertyValue("--sab");
+      if (!currentSab || currentSab === "0px") {
         document.documentElement.style.setProperty("--sab", "48px");
+      }
+      const currentSat = document.documentElement.style.getPropertyValue("--sat");
+      if (!currentSat || currentSat === "0px") {
+        document.documentElement.style.setProperty("--sat", "28px");
       }
     }
     const cancel = runAfterInitialPaint(() => {

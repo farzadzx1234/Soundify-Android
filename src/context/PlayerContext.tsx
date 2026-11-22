@@ -2825,14 +2825,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                       return;
                     } catch {}
                   }
-                  isSettingSourceRef.current = false;
-                  setIsPlaying(false);
-                  isPlayingRef.current = false;
-                  broadcastLeaderState();
                 }
-              } else {
-                // Multi-candidate resilient fallback across SoundCloud and YouTube
-                const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
+              }
+
+              // Multi-candidate resilient fallback across SoundCloud and YouTube (runs if refresh returned no url OR if playing refreshed url failed)
+              const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(curr.title, curr.artistName);
                 const fallbackQuery = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
                 if (fallbackQuery) {
                   const fallbackCandidates: Array<{
@@ -2929,7 +2926,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 broadcastLeaderState();
                 noticeTypeRef.current = null;
                 setOfflineNotice(null);
-              }
             })
             .catch(() => {
               setIsPlaying(false);

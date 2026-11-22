@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">#070810</item>
+        <item name="colorPrimary">#6366f1</item>
+        <item name="colorPrimaryDark">#4f46e5</item>
+        <item name="colorAccent">#6366f1</item>
+        <item name="colorControlActivated">#6366f1</item>
+        <item name="android:colorAccent">#6366f1</item>
+        <item name="android:colorControlActivated">#6366f1</item>
+        <item name="android:textSelectHandleWindowStyle">@style/SoundifyTextSelectHandleWindow</item>
+        <item name="android:textSelectHandle">@drawable/ic_text_select_handle_middle</item>
+        <item name="android:textSelectHandleLeft">@drawable/ic_text_select_handle_left</item>
+        <item name="android:textSelectHandleRight">@drawable/ic_text_select_handle_right</item>
+        <item name="popupWindowStyle">@style/SoundifyPopupWindowStyle</item>
+        <item name="android:popupWindowStyle">@style/SoundifyPopupWindowStyle</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+</resources>

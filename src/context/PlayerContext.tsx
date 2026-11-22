@@ -1062,12 +1062,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       // Fast path: if user taps Pause on the currently playing track card / detail hero button,
       // pause immediately without requiring online checks or re-buffering.
+      // NOTE: Only toggle pause if the audio is actively playing with audible progress!
+      // Tapping a track while it is connecting/buffering must NEVER cancel the in-flight request!
       if (isUiToggleCall && currentTrackRef.current?.id === normalizedTrack.id) {
         const currentAudio = getSingletonAudio();
-        const isCurrentlyActive = Boolean(
-          (currentAudio && !currentAudio.paused) || isPlayingRef.current || isRetryingPlayRef.current,
+        const isCurrentlyPlayingAudible = Boolean(
+          currentAudio && !currentAudio.paused && isPlayingRef.current && currentAudio.currentTime > 0,
         );
-        if (isCurrentlyActive) {
+        if (isCurrentlyPlayingAudible) {
           if (shouldActAsRemoteController()) {
             remotePlayStateLockUntilRef.current = Date.now() + 2500;
             setIsPlaying(false);
@@ -1091,6 +1093,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
           setIsPlaying(false);
           isPlayingRef.current = false;
+          setIsBuffering(false);
+          isBufferingRef.current = false;
           broadcastLeaderState();
           broadcastCurrentState();
           return;
@@ -1182,7 +1186,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         };
         audioSource = resolveMediaUrl(resolvedAudio);
         externalTracksCache.set(trackToPlay.id, trackToPlay);
-        void prebufferTrack(trackToPlay);
         setQueue((prevQueue) => {
           const nextQ = prevQueue.map((t) => (t.id === trackToPlay.id ? trackToPlay : t));
           queueRef.current = nextQ;

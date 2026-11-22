@@ -47,6 +47,9 @@ describe("Library, Action Sheet Dismiss, FastStart & Thermal Performance Audit",
       expect(code).toContain("handleDismissWithPhysics");
       expect(code).toContain("aria-label=");
       expect(code).toContain("بستن منوی ادیت آهنگ");
+
+      // Verify no flickering sf-fade-up on drag release
+      expect(code).not.toContain("sf-fade-up");
     });
   });
 
@@ -85,6 +88,7 @@ describe("Library, Action Sheet Dismiss, FastStart & Thermal Performance Audit",
 
       // Non-blocking parallel aux resolution with strict timeout
       expect(code).toContain("Promise.allSettled");
+      expect(code).toContain("Promise.race");
       expect(code).toContain("AbortController");
       expect(code).toContain("autoFetchLyrics");
     });
@@ -96,8 +100,12 @@ describe("Library, Action Sheet Dismiss, FastStart & Thermal Performance Audit",
       // Fast retry delays [0, 800, 1800] instead of sluggish multi-second waits
       expect(code).toContain("0, 800, 1800");
 
-      // Pre-buffering track before play
+      // Pre-buffering track for queue items
       expect(code).toContain("prebufferTrack");
+
+      // Fix 10-taps bug: does NOT pause if audio is connecting or buffering
+      expect(code).toContain("isCurrentlyPlayingAudible");
+      expect(code).toContain("currentAudio.currentTime > 0");
 
       // Preserves URL and proxy socket without cache-busting _rt on initial attempts
       expect(code).toContain("audio.error ?");
@@ -152,6 +160,16 @@ describe("Library, Action Sheet Dismiss, FastStart & Thermal Performance Audit",
       expect(code).toContain("subscribeToAppState");
     });
 
+    it("verifies WaveformScrubber and AmbientBackdrop pause in background", () => {
+      const scrubberPath = path.resolve(__dirname, "../components/WaveformScrubber.tsx");
+      const scrubberCode = fs.readFileSync(scrubberPath, "utf8");
+      expect(scrubberCode).toContain("isAppInForeground()");
+
+      const backdropPath = path.resolve(__dirname, "../components/AmbientBackdrop.tsx");
+      const backdropCode = fs.readFileSync(backdropPath, "utf8");
+      expect(backdropCode).toContain("subscribeToAppState");
+    });
+
     it("verifies MainActivity.java disables offscreen pre-raster and hooks pause/resume lifecycle", () => {
       const mainActivityPath = path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/MainActivity.java");
       const code = fs.readFileSync(mainActivityPath, "utf8");
@@ -165,13 +183,15 @@ describe("Library, Action Sheet Dismiss, FastStart & Thermal Performance Audit",
       expect(code).toContain("window.__soundifySetBackground(false)");
     });
 
-    it("verifies globals.css pauses animations and hides heavy stages when app is in background", () => {
+    it("verifies globals.css pauses animations, removes backdrop-filter in background and on mobile", () => {
       const cssPath = path.resolve(__dirname, "../app/globals.css");
       const code = fs.readFileSync(cssPath, "utf8");
 
       expect(code).toContain('html[data-app-state="background"] .sf-ambient-stage');
       expect(code).toContain('html[data-app-state="background"] *');
       expect(code).toContain("animation-play-state: paused !important;");
+      expect(code).toContain("backdrop-filter: none !important;");
+      expect(code).toContain("blur(12px) saturate(130%) !important;");
     });
   });
 });

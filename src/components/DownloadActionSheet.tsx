@@ -60,7 +60,7 @@ export function DownloadActionSheet({
       setIsClosing(false);
       setDragY(0);
       onClose();
-    }, 200);
+    }, 220);
   }, [isClosing, onClose]);
 
   // Escape key handler
@@ -112,6 +112,7 @@ export function DownloadActionSheet({
     onClose();
   };
 
+  // Touch gesture handlers for the top drag area (grabber + header)
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
@@ -176,27 +177,23 @@ export function DownloadActionSheet({
       onClick={handleDismissWithPhysics}
     >
       <div
-        className={`w-full max-w-sm sm:max-w-md bg-white/95 dark:bg-[#12131a]/98 text-[var(--sf-text)] rounded-t-[32px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.85)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 backdrop-blur-2xl space-y-4 ${
+        className={`w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#12131a]/98 text-[var(--sf-text)] rounded-t-[32px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.85)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 backdrop-blur-xl space-y-4 ${
           isClosing
-            ? "transition-transform duration-200 ease-in translate-y-full"
+            ? "transition-transform duration-220 ease-in translate-y-full"
             : isDragging
             ? "transition-none"
-            : "transition-transform duration-300 cubic-bezier(0.32, 0.72, 0, 1) sf-fade-up"
+            : "transition-transform duration-300 ease-out"
         }`}
         style={
           !isClosing
             ? {
-                transform: dragY !== 0 ? `translate3d(0, ${dragY}px, 0)` : undefined,
+                transform: dragY !== 0 ? `translate3d(0, ${dragY}px, 0)` : "translate3d(0, 0, 0)",
               }
             : undefined
         }
         onClick={(e) => e.stopPropagation()}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchCancel}
       >
-        {/* iOS Drag Handle & Tap-to-Dismiss Zone (Touch Target ≥44px for Apple HIG Accessibility) */}
+        {/* Apple HIG Drag Handle Zone (Touch Target ≥44px, dedicated gesture target) */}
         <div
           role="button"
           tabIndex={0}
@@ -211,13 +208,23 @@ export function DownloadActionSheet({
               handleDismissWithPhysics();
             }
           }}
-          className="w-full py-2.5 -mt-3 mb-1 flex items-center justify-center cursor-pointer select-none group touch-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchCancel}
+          className="w-full py-3 -mt-3 mb-1 flex items-center justify-center cursor-pointer select-none group touch-none"
         >
           <div className="w-12 h-1.5 rounded-full bg-black/25 dark:bg-white/35 group-hover:bg-black/45 dark:group-hover:bg-white/60 group-active:scale-95 transition-all shadow-sm" />
         </div>
 
-        {/* Track Info Header (Apple Music HIG Presentation) */}
-        <div className="flex items-center gap-3.5 pb-3.5 border-b border-black/[0.06] dark:border-white/[0.08]">
+        {/* Track Info Header (Apple Music HIG Presentation, also pullable) */}
+        <div
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchCancel}
+          className="flex items-center gap-3.5 pb-3.5 border-b border-black/[0.06] dark:border-white/[0.08] touch-none select-none"
+        >
           <div className="h-14 w-14 rounded-2xl overflow-hidden bg-black/5 dark:bg-white/5 ring-1 ring-black/10 dark:ring-white/15 shadow-md shrink-0">
             <OptimizedTrackImage
               src={track.coverUrl}

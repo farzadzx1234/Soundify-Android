@@ -580,7 +580,11 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       } catch {}
     })();
 
-    await Promise.allSettled([coverFetchPromise, lyricsFetchPromise, licenseFetchPromise]);
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2500));
+    await Promise.race([
+      Promise.allSettled([coverFetchPromise, lyricsFetchPromise, licenseFetchPromise]),
+      timeoutPromise,
+    ]);
     clearTimeout(auxTimer);
 
     const savingSession = activeDownloads.get(trackId);

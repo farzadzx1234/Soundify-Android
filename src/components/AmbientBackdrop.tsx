@@ -2,22 +2,31 @@
 
 import React, { useEffect, useState } from "react";
 import { usePlayer } from "@/context/PlayerContext";
+import { isAppInForeground, subscribeToAppState } from "@/lib/androidBridge";
 
 export function AmbientBackdrop() {
   const { currentTrack, expanded } = usePlayer();
   const accent = currentTrack?.accentColor ?? "#6366f1";
-  const [hidden, setHidden] = useState(false);
+  const [paused, setPaused] = useState(() => !isAppInForeground());
 
   useEffect(() => {
-    const onVisibilityChange = () => setHidden(document.hidden);
+    const onVisibilityChange = () => {
+      setPaused(document.hidden || !isAppInForeground());
+    };
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    const unsub = subscribeToAppState((inFg) => {
+      setPaused(!inFg || document.hidden);
+    });
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      unsub();
+    };
   }, []);
 
   return (
     <div
       aria-hidden="true"
-      data-paused={hidden || expanded ? "true" : "false"}
+      data-paused={paused || expanded ? "true" : "false"}
       className="sf-ambient-stage pointer-events-none fixed inset-0 -z-10 overflow-hidden contain-strict bg-[#f5f6fa] dark:bg-[#070810] transition-colors duration-700"
     >
       {/* Deep dark Spotify/Apple Music backdrop with subtle, delicate ambient accents (10-15% opacity max) */}

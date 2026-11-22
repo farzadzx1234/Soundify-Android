@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { formatDuration } from "@/lib/lrc";
 import { computeWaveformBarCount, downsamplePeaks } from "@/lib/waveform";
+import { isAppInForeground } from "@/lib/androidBridge";
 import type { TrackComment } from "@/lib/types";
 
 interface WaveformScrubberProps {
@@ -81,6 +82,9 @@ export function WaveformScrubber({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (typeof document !== "undefined" && (document.hidden || !isAppInForeground())) {
+      return;
+    }
 
     const dpr = Math.min(2, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1);
     const targetPxW = Math.max(120, Math.round(canvasCssSize.w * dpr));

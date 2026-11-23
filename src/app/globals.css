@@ -80,6 +80,9 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     0 16px 40px rgba(0, 0, 0, 0.6);
 
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
   --sf-text-light: #0f172a;
   --sf-text-dark: #f8fafc;
   --sf-muted-light: #526075;
@@ -671,26 +674,21 @@ dialog.sf-device-picker-dialog::backdrop {
   box-shadow: var(--sf-card-shadow);
   contain: layout style paint;
   transition:
-    transform 0.22s cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 0.18s ease-out;
+    background-color 0.2s ease-out,
+    border-color 0.2s ease-out,
+    box-shadow 0.22s var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .sf-content-card:hover,
   .sf-glass-card:hover {
-    transform: translate3d(0, -2.5px, 0) scale3d(1.01, 1.01, 1);
     background: var(--sf-card-hover);
     border: var(--sf-card-hover-border);
     box-shadow: var(--sf-card-shadow-hover);
   }
 }
 
-.sf-content-card:active,
-.sf-glass-card:active {
-  transform: translate3d(0, 0, 0) scale3d(0.975, 0.975, 1);
-}
-
-/* Native GPU Compositor Press Micro-interaction (Apple HIG Tactile Feel) */
+/* Native GPU Compositor Press Micro-interaction — strictly for compact pressable buttons/tiles */
 .sf-press {
   transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
@@ -700,8 +698,49 @@ dialog.sf-device-picker-dialog::backdrop {
 }
 
 .sf-press:active:not(:disabled) {
-  transform: scale3d(0.96, 0.96, 1);
-  opacity: 0.9;
+  transform: scale3d(0.975, 0.975, 1);
+  opacity: 0.92;
+}
+
+/* Calm row feedback (Settings rows, list items) — zero vertical jump or scale shrink */
+.sf-row-press {
+  transition: background-color 140ms ease-out;
+}
+
+.sf-row-press:active:not(:disabled) {
+  background-color: rgba(15, 23, 42, 0.045);
+}
+
+:root[data-resolved-theme="dark"] .sf-row-press:active:not(:disabled),
+:root[data-theme="dark"] .sf-row-press:active:not(:disabled),
+.dark .sf-row-press:active:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Smooth GPU accordion collapse for Settings disclosure panels */
+.sf-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 220ms var(--ease-out),
+    opacity 180ms ease-out;
+}
+
+.sf-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.sf-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Modal centered pop transition (Apple HIG / Emil Design) */
+.sf-modal-pop {
+  animation: sf-modal-pop 200ms var(--ease-out) both;
+  backface-visibility: hidden;
 }
 
 /* Tactile Apple VisionOS / iOS Liquid Glass Action Button */
@@ -710,18 +749,12 @@ dialog.sf-device-picker-dialog::backdrop {
   transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
   backface-visibility: hidden;
   transition:
-    transform 0.18s cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 0.16s ease-out;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .sf-btn:hover:not(:disabled) {
-    transform: translate3d(0, -1px, 0) scale3d(1.02, 1.02, 1);
-  }
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 0.14s ease-out;
 }
 
 .sf-btn:active:not(:disabled) {
-  transform: translate3d(0, 0, 0) scale3d(0.95, 0.95, 1);
+  transform: scale3d(0.96, 0.96, 1);
   opacity: 0.9;
 }
 
@@ -1170,9 +1203,8 @@ dialog.sf-now-playing-dialog::backdrop {
   }
 
   .sf-page-enter {
-    animation: sf-page-enter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: sf-page-enter 0.18s var(--ease-out) both;
     backface-visibility: hidden;
-    will-change: transform, opacity;
   }
 
   .sf-tab-slide-next {
@@ -1284,11 +1316,20 @@ dialog.sf-now-playing-dialog::backdrop {
 @keyframes sf-page-enter {
   from {
     opacity: 0;
-    transform: translate3d(0, 8px, 0) scale3d(0.992, 0.992, 1);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes sf-modal-pop {
+  from {
+    opacity: 0;
+    transform: scale3d(0.95, 0.95, 1);
+  }
+  to {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
   }
 }
 

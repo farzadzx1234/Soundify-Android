@@ -1,3 +1,4 @@
+import { clusterTracksByArtist, extractTrueArtist } from "./artistResolver";
 import type { Track } from "./types";
 
 const LISTENING_PROFILE_KEY = "soundify_listening_profile_v1";
@@ -8,12 +9,14 @@ export interface TrackListenStat {
   titleFa?: string;
   artistName: string;
   artistNameFa?: string;
+  canonicalArtistKey?: string;
   genre?: string;
   mood?: string;
   coverUrl?: string;
   accentColor?: string;
   plays: number;
   lastPlayedAt: number;
+  trackSnapshot?: Track;
 }
 
 export interface ListeningProfile {
@@ -35,6 +38,18 @@ export interface PersonalizedMix {
   accentColor: string;
   coverUrls: string[];
   tracks: Track[];
+}
+
+const cachedMixesById = new Map<string, PersonalizedMix>();
+
+export function registerGeneratedMixes(mixes: PersonalizedMix[]): void {
+  for (const mix of mixes) {
+    cachedMixesById.set(mix.id, mix);
+  }
+}
+
+export function getCachedPersonalizedMix(id: string): PersonalizedMix | null {
+  return cachedMixesById.get(id) ?? null;
 }
 
 function createEmptyProfile(): ListeningProfile {
@@ -68,11 +83,18 @@ export function getListeningProfile(): ListeningProfile {
 export function saveListeningProfile(profile: ListeningProfile): void {
   if (typeof window === "undefined") return;
   try {
-    // Keep most recent 120 tracks to keep localStorage tiny and fast
+    // Keep most recent 120 tracks and snapshots on most recent 60 tracks
     const entries = Object.entries(profile.tracks);
-    if (entries.length > 120) {
+    if (entries.length > 60) {
       entries.sort((a, b) => (b[1].lastPlayedAt || 0) - (a[1].lastPlayedAt || 0));
-      profile.tracks = Object.fromEntries(entries.slice(0, 120));
+      for (let i = 60; i < entries.length; i++) {
+        entries[i][1] = { ...entries[i][1], trackSnapshot: undefined };
+      }
+      if (entries.length > 120) {
+        profile.tracks = Object.fromEntries(entries.slice(0, 120));
+      } else {
+        profile.tracks = Object.fromEntries(entries);
+      }
     }
     window.localStorage.setItem(LISTENING_PROFILE_KEY, JSON.stringify(profile));
   } catch {}
@@ -87,33 +109,43 @@ export function clearListeningProfile(): void {
 
 /**
  * Records a user playback event (>=3s listened) into the local taste graph
- * so Spotify-style personalized mixes reflect real listening behavior.
+ * using cross-platform artist resolution so Spotify/YouTube/SoundCloud plays
+ * unify cleanly under the same artist identity.
  */
 export function recordListeningEvent(track: Track | null | undefined): ListeningProfile {
   const profile = getListeningProfile();
   if (!track || !track.id) return profile;
 
+  const artistInfo = extractTrueArtist(track);
   const existing = profile.tracks[track.id];
+
+  // Store a compact snapshot without massive base64 or waveforms
+  const compactSnapshot: Track = {
+    ...track,
+    waveform: [],
+  };
+
   profile.tracks[track.id] = {
     trackId: track.id,
     title: track.title || existing?.title || "Track",
     titleFa: track.titleFa || existing?.titleFa,
-    artistName: track.artistName || existing?.artistName || "Artist",
-    artistNameFa: track.artistNameFa || existing?.artistNameFa,
+    artistName: artistInfo.displayName || track.artistName || existing?.artistName || "Artist",
+    artistNameFa: artistInfo.displayNameFa || track.artistNameFa || existing?.artistNameFa,
+    canonicalArtistKey: artistInfo.canonicalKey,
     genre: track.genre || existing?.genre,
     mood: track.mood || existing?.mood,
-    coverUrl:
-      track.coverUrl && !track.coverUrl.startsWith("blob:")
-        ? track.coverUrl
-        : existing?.coverUrl,
+    coverUrl: track.coverUrl && !track.coverUrl.startsWith("blob:") ? track.coverUrl : existing?.coverUrl,
     accentColor: track.accentColor || existing?.accentColor,
     plays: (existing?.plays || 0) + 1,
     lastPlayedAt: Date.now(),
+    trackSnapshot: compactSnapshot,
   };
 
-  const artistKey = (track.artistName || "").trim().toLowerCase();
-  if (artistKey) {
-    profile.artists[artistKey] = (profile.artists[artistKey] || 0) + 1;
+  const artistBucket = artistInfo.canonicalKey && artistInfo.canonicalKey !== "unknown"
+    ? artistInfo.canonicalKey
+    : (track.artistName || "").trim().toLowerCase();
+  if (artistBucket) {
+    profile.artists[artistBucket] = (profile.artists[artistBucket] || 0) + 1;
   }
 
   const genreKey = (track.genre || "").trim().toLowerCase();
@@ -146,8 +178,9 @@ function formatArtistSubtitle(tracks: Track[], lang: "fa" | "en"): string {
   const names: string[] = [];
   const seen = new Set<string>();
   for (const t of tracks) {
-    const label = (lang === "fa" ? t.artistNameFa || t.artistName : t.artistName || t.artistNameFa || "").trim();
-    const key = label.toLowerCase();
+    const info = extractTrueArtist(t);
+    const label = (lang === "fa" ? info.displayNameFa || info.displayName : info.displayName || info.displayNameFa || "").trim();
+    const key = info.canonicalKey || label.toLowerCase();
     if (label && !seen.has(key)) {
       seen.add(key);
       names.push(label);
@@ -164,18 +197,28 @@ function formatArtistSubtitle(tracks: Track[], lang: "fa" | "en"): string {
 }
 
 /**
- * Generates up to 3 Spotify-style personalized playlists derived from actual
- * listening history, liked tracks, downloaded tracks, and catalog similarity.
+ * Generates up to 4 Spotify-style personalized playlists derived from actual
+ * listening history, cross-platform artist clustering (YouTube/SoundCloud/Spotify),
+ * liked tracks, downloaded tracks, and catalog similarity.
  */
 export function buildPersonalizedMixes(
   catalogTracks: Track[],
   downloadedTracks: Track[],
   likedTracks: Track[],
-  lang: "fa" | "en" = "fa",
+  _lang: "fa" | "en" = "fa",
   profileOverride?: ListeningProfile,
 ): PersonalizedMix[] {
   const profile = profileOverride ?? getListeningProfile();
-  const pool = dedupeTracks([...likedTracks, ...downloadedTracks, ...catalogTracks]);
+  const listenedSnapshots: Track[] = Object.values(profile.tracks)
+    .map((stat) => stat.trackSnapshot)
+    .filter((tr): tr is Track => Boolean(tr && tr.id));
+
+  const pool = dedupeTracks([
+    ...likedTracks,
+    ...downloadedTracks,
+    ...listenedSnapshots,
+    ...catalogTracks,
+  ]);
   if (pool.length === 0) return [];
 
   const poolMap = new Map<string, Track>();
@@ -188,19 +231,16 @@ export function buildPersonalizedMixes(
     (a, b) => b.plays - a.plays || b.lastPlayedAt - a.lastPlayedAt,
   );
 
-  // 1. On Repeat Mix — most replayed & liked tracks
+  // 1. On Repeat Mix — most replayed, liked & downloaded tracks
   const repeatCandidates: Track[] = [];
   for (const stat of listenedStats) {
     const matched = poolMap.get(stat.trackId);
     if (matched) repeatCandidates.push(matched);
   }
-  for (const lt of likedTracks) {
-    repeatCandidates.push(lt);
-  }
-  for (const dt of downloadedTracks) {
-    repeatCandidates.push(dt);
-  }
-  const onRepeatTracks = dedupeTracks(repeatCandidates).slice(0, 15);
+  for (const lt of likedTracks) repeatCandidates.push(lt);
+  for (const dt of downloadedTracks) repeatCandidates.push(dt);
+
+  const onRepeatTracks = dedupeTracks(repeatCandidates).slice(0, 20);
   if (onRepeatTracks.length > 0) {
     mixes.push({
       id: "mix-on-repeat",
@@ -216,19 +256,56 @@ export function buildPersonalizedMixes(
     });
   }
 
-  // Determine top artists, genres, and moods
-  const topArtist = Object.entries(profile.artists).sort((a, b) => b[1] - a[1])[0]?.[0];
+  // 2. Smart Cross-Platform Artist Mixes (unites YouTube / SoundCloud / Spotify / Local)
+  const artistClusters = clusterTracksByArtist(pool);
+  const scoredClusters = artistClusters
+    .map((cluster) => {
+      let weight = 0;
+      for (const tr of cluster.tracks) {
+        const stat = profile.tracks[tr.id];
+        if (stat) weight += stat.plays * 4;
+        if (tr.likedByMe) weight += 5;
+        if (downloadedTracks.some((d) => d.id === tr.id)) weight += 3;
+      }
+      weight += profile.artists[cluster.key] || 0;
+      return { cluster, weight };
+    })
+    .filter((entry) => entry.weight > 0 && entry.cluster.tracks.length >= 1)
+    .sort((a, b) => b.weight - a.weight || b.cluster.tracks.length - a.cluster.tracks.length);
+
+  for (const { cluster } of scoredClusters.slice(0, 2)) {
+    const artistTitleEn = cluster.displayName;
+    const artistTitleFa = cluster.displayNameFa || cluster.displayName;
+    const safeSlug = encodeURIComponent(cluster.key).replace(/%/g, "_");
+    const tracksForArtist = cluster.tracks.slice(0, 25);
+
+    mixes.push({
+      id: `mix-artist-${safeSlug}`,
+      title: `${artistTitleEn} Mix`,
+      titleFa: `میکس اختصاصی ${artistTitleFa}`,
+      subtitle: `Cross-platform picks for ${artistTitleEn}`,
+      subtitleFa: `گلچین تمام آثار ${artistTitleFa} از دانلودها و پخش‌های شما`,
+      badge: "Artist Mix",
+      badgeFa: "میکس خواننده",
+      accentColor: tracksForArtist[0]?.accentColor || "#8b5cf6",
+      coverUrls: tracksForArtist.slice(0, 4).map((t) => t.coverUrl).filter(Boolean),
+      tracks: tracksForArtist,
+    });
+  }
+
+  // Determine top genre & mood
   const topGenre = Object.entries(profile.genres).sort((a, b) => b[1] - a[1])[0]?.[0];
   const topMood = Object.entries(profile.moods).sort((a, b) => b[1] - a[1])[0]?.[0];
 
-  // 2. Daily Mix 1 — affinity-scored blend by favorite artist + genre
+  // 3. Daily Mix 1 — affinity-scored blend uniting favorite cross-platform artists & genres
   const dailyScored = [...pool]
     .map((tr) => {
       let score = 0;
-      const a = (tr.artistName || "").trim().toLowerCase();
+      const info = extractTrueArtist(tr);
+      const aKey = info.canonicalKey;
       const g = (tr.genre || "").trim().toLowerCase();
       const m = (tr.mood || "").trim().toLowerCase();
-      score += (profile.artists[a] || 0) * 5;
+      score += (profile.artists[aKey] || 0) * 5;
       score += (profile.genres[g] || 0) * 3;
       score += (profile.moods[m] || 0) * 2;
       if (profile.tracks[tr.id]) score += 3;
@@ -239,27 +316,14 @@ export function buildPersonalizedMixes(
     .sort((x, y) => y.score - x.score)
     .map((x) => x.tr);
 
-  const dailyTracks = dedupeTracks(dailyScored).slice(0, 15);
+  const dailyTracks = dedupeTracks(dailyScored).slice(0, 20);
   if (dailyTracks.length > 0) {
-    const artistHeadline = topArtist
-      ? pool.find((t) => (t.artistName || "").trim().toLowerCase() === topArtist)
-      : undefined;
-    const displayArtist = artistHeadline
-      ? lang === "fa"
-        ? artistHeadline.artistNameFa || artistHeadline.artistName
-        : artistHeadline.artistName
-      : undefined;
-
     mixes.push({
       id: "mix-daily-1",
       title: "Daily Mix 1",
       titleFa: "میکس روزانه ۱",
-      subtitle: displayArtist
-        ? `${displayArtist} & similar picks`
-        : formatArtistSubtitle(dailyTracks, "en"),
-      subtitleFa: displayArtist
-        ? `با محوریت ${displayArtist} و آثار هم‌سبک`
-        : formatArtistSubtitle(dailyTracks, "fa"),
+      subtitle: formatArtistSubtitle(dailyTracks, "en"),
+      subtitleFa: formatArtistSubtitle(dailyTracks, "fa"),
       badge: "Daily Mix",
       badgeFa: "میکس روزانه",
       accentColor: dailyTracks[0].accentColor || "#ec4899",
@@ -268,8 +332,8 @@ export function buildPersonalizedMixes(
     });
   }
 
-  // 3. Mood / Genre Discovery Mix — tracks matching dominant mood/genre the user hasn't overplayed
-  if (pool.length >= 4) {
+  // 4. Discovery Mix if fewer than 4 mixes so far
+  if (mixes.length < 4 && pool.length >= 4) {
     const moodCandidates = pool.filter((tr) => {
       const m = (tr.mood || "").trim().toLowerCase();
       const g = (tr.genre || "").trim().toLowerCase();
@@ -280,7 +344,7 @@ export function buildPersonalizedMixes(
       ...moodCandidates,
       ...pool.filter((tr) => !onRepeatTracks.some((r) => r.id === tr.id)),
       ...pool,
-    ]).slice(0, 15);
+    ]).slice(0, 20);
 
     if (discoveryTracks.length > 0) {
       mixes.push({
@@ -298,5 +362,7 @@ export function buildPersonalizedMixes(
     }
   }
 
-  return mixes.slice(0, 3);
+  const finalMixes = mixes.slice(0, 4);
+  registerGeneratedMixes(finalMixes);
+  return finalMixes;
 }

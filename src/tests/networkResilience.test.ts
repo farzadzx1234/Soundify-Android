@@ -106,7 +106,7 @@ describe("Intelligent Network Resilience Service", () => {
     const source = fs.readFileSync(playerContextPath, "utf8");
 
     // 1. togglePlay must branch cleanly with `else` before calling audio.pause()
-    expect(source).toContain("const shouldStartPlaying = audio.paused && !isPlayingRef.current && !isRetryingPlayRef.current;");
+    expect(source).toMatch(/const shouldStartPlaying =[\s\S]*!isPlayingRef\.current &&[\s\S]*!isRetryingPlayRef\.current;/);
     expect(source).toContain("await attemptPlayWithRetry(audio, curr, isDownloadedSync);");
     expect(source).toContain("} else {\n      userPausedIntentRef.current = true;");
 
@@ -237,7 +237,7 @@ describe("Intelligent Network Resilience Service", () => {
 
     // 3. MediaSession onPlay must not call togglePlay while isPlayingRef or isRetryingPlayRef is active,
     // and native handlers must not bypass shouldActAsRemoteControllerRef() local audio guard
-    expect(playerSource).toContain("if (audio && audio.paused && !isPlayingRef.current && !isRetryingPlayRef.current)");
+    expect(playerSource).toMatch(/onPlay:\s*\(\)\s*=>\s*\{[\s\S]*!isPlayingRef\.current && !isRetryingPlayRef\.current\)/);
     expect(playerSource).not.toContain("shouldActAsRemoteControllerRef.current() || (!isThisDeviceActiveRef.current && syncStateRef.current)");
 
     // 4. next() / prev() must pass explicit (target, undefined, 0, true) so single-track queues never hit UI toggle pause

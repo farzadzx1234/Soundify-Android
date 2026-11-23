@@ -224,35 +224,37 @@ export default function HomePage() {
                 <span>{pickText("Made For You", "ساخته‌شده اختصاصی برای شما")}</span>
               </h2>
               <span className="text-[11px] font-semibold text-[var(--sf-muted)]">
-                {pickText("Based on your plays", "بر اساس سلیقه شنیداری شما")}
+                {pickText("Auto Artist & Daily Mixes", "میکس‌های هوشمند و خواننده")}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
               {personalizedMixes.map((mix) => {
                 const isMixPlaying =
                   isPlaying && currentTrack && mix.tracks.some((tr) => tr.id === currentTrack.id);
                 return (
-                  <button
+                  <div
                     key={mix.id}
-                    type="button"
-                    onClick={() => {
-                      if (mix.tracks.length === 0) return;
-                      void triggerHapticFeedback("playPause");
-                      playTrack(mix.tracks[0], mix.tracks);
-                    }}
-                    className="group sf-press sf-content-card text-start rounded-2xl p-2 sm:p-3 flex flex-col gap-2 cursor-pointer transition-transform"
+                    className="group sf-content-card rounded-2xl p-2 sm:p-3 flex flex-col gap-2"
                   >
                     <div className="relative aspect-square w-full overflow-hidden rounded-xl shadow-md bg-black/20">
-                      <PlaylistMosaic coverUrls={mix.coverUrls} className="h-full w-full rounded-xl" lazy />
+                      <Link href={getPlaylistDetailHref(mix.id)} className="block h-full w-full">
+                        <PlaylistMosaic coverUrls={mix.coverUrls} className="h-full w-full rounded-xl" lazy />
+                      </Link>
                       <span
-                        className="absolute top-2 start-2 rounded-full bg-black/72 border border-white/15 px-2 py-0.5 text-[10px] font-bold text-white"
+                        className="pointer-events-none absolute top-2 start-2 rounded-full bg-black/72 border border-white/15 px-2 py-0.5 text-[10px] font-bold text-white"
                       >
                         {lang === "fa" ? mix.badgeFa : mix.badge}
                       </span>
-                      <span
-                        aria-hidden="true"
-                        className="absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full text-slate-950 shadow-[0_6px_16px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-105"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (mix.tracks.length === 0) return;
+                          void triggerHapticFeedback("playPause");
+                          playTrack(mix.tracks[0], mix.tracks);
+                        }}
+                        aria-label={`${t("playNow")}: ${lang === "fa" ? mix.titleFa : mix.title}`}
+                        className="sf-press absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full text-slate-950 shadow-[0_6px_16px_rgba(0,0,0,0.45)] cursor-pointer"
                         style={{ backgroundColor: isMixPlaying ? "#10b981" : "#ffffff" }}
                       >
                         {isMixPlaying ? (
@@ -260,9 +262,9 @@ export default function HomePage() {
                         ) : (
                           <PlayIcon size={16} weight="fill" className="translate-x-[0.5px]" />
                         )}
-                      </span>
+                      </button>
                     </div>
-                    <div className="min-w-0 space-y-0.5 px-0.5 w-full">
+                    <Link href={getPlaylistDetailHref(mix.id)} className="min-w-0 space-y-0.5 px-0.5 w-full block">
                       <h3 className="font-bold text-[13px] sm:text-sm truncate text-slate-950 dark:text-white">
                         {lang === "fa" ? mix.titleFa : mix.title}
                       </h3>
@@ -272,8 +274,8 @@ export default function HomePage() {
                       <span className="inline-block text-[10.5px] font-semibold text-emerald-600 dark:text-emerald-400 pt-0.5 tabular-nums">
                         {formatNum(mix.tracks.length)} {t("tracksCount")}
                       </span>
-                    </div>
-                  </button>
+                    </Link>
+                  </div>
                 );
               })}
             </div>
@@ -292,12 +294,12 @@ export default function HomePage() {
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5 sm:gap-4">
               {playlists.slice(0, 4).map((pl) => (
-                <Link
-                  key={pl.id}
-                  href={getPlaylistDetailHref(pl.id)}
-                  onClick={() => void triggerHapticFeedback("tap")}
-                  className="group sf-content-card rounded-2xl p-2.5 sm:p-3.5 flex flex-col gap-2.5 active:scale-[0.98] transition-transform"
-                >
+                  <Link
+                    key={pl.id}
+                    href={getPlaylistDetailHref(pl.id)}
+                    onClick={() => void triggerHapticFeedback("tap")}
+                    className="group sf-content-card rounded-2xl p-2.5 sm:p-3.5 flex flex-col gap-2.5"
+                  >
                   <div className="relative aspect-square w-full overflow-hidden rounded-xl shadow-md bg-black/20">
                     <PlaylistMosaic coverUrls={pl.coverUrls} className="h-full w-full rounded-xl" lazy />
                     <span

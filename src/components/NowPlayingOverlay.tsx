@@ -13,6 +13,7 @@ import {
   CircleNotchIcon,
   FadersIcon,
   HeartIcon,
+  ListPlusIcon,
   MagnifyingGlassIcon,
   PauseIcon,
   PlayIcon,
@@ -43,6 +44,7 @@ import { SpectrumVisualizer } from "./SpectrumVisualizer";
 import { WaveformScrubber } from "./WaveformScrubber";
 import { DownloadButton } from "./DownloadButton";
 import { OptimizedTrackImage } from "./OptimizedTrackImage";
+import { openPlaylistPicker } from "./PlaylistPickerSheet";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import {
   calculateDampedDrag,
@@ -1777,6 +1779,16 @@ export function NowPlayingOverlay() {
 
                     <button
                       type="button"
+                      onClick={() => openPlaylistPicker(currentTrack)}
+                      aria-label={t("addToPlaylist")}
+                      title={t("addToPlaylist")}
+                      className="sf-1c-pill inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-white/[0.16] text-white transition-colors cursor-pointer active:scale-95"
+                    >
+                      <ListPlusIcon size={19} weight="bold" aria-hidden="true" />
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => void handleShare()}
                       aria-label={copiedShare ? t("copiedLink") : t("share")}
                       title={copiedShare ? t("copiedLink") : t("share")}
@@ -1844,6 +1856,16 @@ export function NowPlayingOverlay() {
                       variant="glass"
                       className="sf-1c-pill text-white hover:bg-white/[0.16] border border-white/10 active:scale-95"
                     />
+
+                    <button
+                      type="button"
+                      onClick={() => openPlaylistPicker(currentTrack)}
+                      aria-label={t("addToPlaylist")}
+                      title={t("addToPlaylist")}
+                      className="sf-1c-pill inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full hover:bg-white/[0.16] text-white transition-colors cursor-pointer"
+                    >
+                      <ListPlusIcon size={17} weight="bold" aria-hidden="true" />
+                    </button>
 
                     <button
                       type="button"

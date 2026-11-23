@@ -6,6 +6,7 @@ import {
   extractCanonicalExternalUrl,
   extractYouTubeIdClient,
   externalTracksCache,
+  getApiToken,
   getApiTokenAsync,
   isExternalTrack,
   normalizeTrack,
@@ -51,6 +52,17 @@ import {
   blobUrlToJpegDataUrl,
 } from "@/lib/androidMediaSession";
 import { recordListeningEvent } from "@/lib/listeningPersonalization";
+import {
+  isNativeAudioAvailable,
+  nativeAudioPause,
+  nativeAudioPlay,
+  nativeAudioPlayStream,
+  nativeAudioSeek,
+  nativeAudioSetPlaybackRate,
+  nativeAudioSetVolume,
+  nativeAudioStop,
+  subscribeNativeAudioState,
+} from "@/lib/nativeAudioBridge";
 import { assertNever, isRecord, parseRemoteCommand } from "@/lib/typeGuards";
 import { WarningCircleIcon, XIcon } from "@phosphor-icons/react";
 import type { DeviceInfo, LyricLine, Track } from "@/lib/types";
@@ -305,6 +317,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const lastSavedStateTimeRef = useRef<number>(0);
   const refreshAttemptsRef = useRef<Record<string, number>>({});
   const streamFallbackAttemptsRef = useRef<Record<string, boolean>>({});
+  const nativeAudioActiveRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -609,6 +622,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (isThisDeviceActiveRef.current) return false;
     const audio = getSingletonAudio();
     if (audio && !audio.paused) return false;
+    if (nativeAudioActiveRef.current && isPlayingRef.current) return false;
     const activeId = activeDeviceIdRef.current;
     if (!activeId || activeId === deviceId) return false;
     if (syncStateRef.current === null) return false;
@@ -787,6 +801,48 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     void triggerImmediateNetworkProbe();
   }, [lang]);
 
+  const startNativeStreamForTrack = useCallback(
+    async (targetTrack: Track, streamSource: string, startSec = 0) => {
+      const audio = getSingletonAudio();
+      if (audio && !audio.paused) {
+        isSettingSourceRef.current = true;
+        try {
+          audio.pause();
+        } catch {}
+        isSettingSourceRef.current = false;
+      }
+      nativeAudioActiveRef.current = true;
+
+      const resolvedCover =
+        targetTrack.coverUrl && !targetTrack.coverUrl.startsWith("blob:")
+          ? resolveMediaUrl(targetTrack.coverUrl)
+          : originalCoverUrlsRef.current[targetTrack.id]
+            ? resolveMediaUrl(originalCoverUrlsRef.current[targetTrack.id])
+            : "";
+      let artworkUrl = resolvedCover;
+      try {
+        if (resolvedCover) {
+          artworkUrl = new URL(resolvedCover, window.location.origin).toString();
+        }
+      } catch {}
+
+      await nativeAudioPlayStream({
+        url: streamSource,
+        authToken: getApiToken() || "",
+        startSec: startSec > 0 ? startSec : 0,
+        playbackRate: playbackRateRef.current || 1,
+        volume: mutedRef.current ? 0 : volumeRef.current,
+        title: targetTrack.title,
+        artist: targetTrack.artistName,
+        album: targetTrack.album,
+        coverUrl: artworkUrl,
+        duration: targetTrack.durationSec || durationRef.current || 0,
+        trackId: targetTrack.id,
+      });
+    },
+    [],
+  );
+
   const attemptPlayWithRetry = useCallback(
     async (
       audio: HTMLAudioElement,
@@ -806,10 +862,35 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const desiredPos =
         typeof targetStartSec === "number" && targetStartSec > 0
           ? targetStartSec
-          : audio.currentTime > 0
-            ? audio.currentTime
-            : currentTimeRef.current;
+          : nativeAudioActiveRef.current
+            ? currentTimeRef.current
+            : audio.currentTime > 0
+              ? audio.currentTime
+              : currentTimeRef.current;
       preservePlaybackIntent(track.id, desiredPos, true);
+
+      // Fast path on Android: route remote HTTP streams directly through Media3 ExoPlayer
+      // instead of WebView's HTML5 <audio> element for rapid startup and rock-solid buffering.
+      const candidateStreamUrl = baseAudioSource || resolveMediaUrl(track.audioUrl);
+      if (
+        isNativeAudioAvailable() &&
+        !isDownloaded &&
+        candidateStreamUrl &&
+        (candidateStreamUrl.startsWith("http://") || candidateStreamUrl.startsWith("https://"))
+      ) {
+        try {
+          isRetryingPlayRef.current = false;
+          isSettingSourceRef.current = false;
+          await startNativeStreamForTrack(track, candidateStreamUrl, desiredPos);
+          return true;
+        } catch {
+          nativeAudioActiveRef.current = false;
+          // Fall through cleanly to HTML5 <audio> if native bridge rejected
+        }
+      } else if (nativeAudioActiveRef.current) {
+        nativeAudioActiveRef.current = false;
+        void nativeAudioStop();
+      }
 
       const isExternalTrackItem = isExternalTrack(track);
 
@@ -1065,7 +1146,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       return false;
     },
-    [broadcastLeaderState, broadcastLocalState, lang, notifyServerConnectivityIssue],
+    [broadcastLeaderState, broadcastLocalState, lang, notifyServerConnectivityIssue, startNativeStreamForTrack],
   );
 
   const playTrack = useCallback(
@@ -1083,7 +1164,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (isUiToggleCall && currentTrackRef.current?.id === normalizedTrack.id) {
         const currentAudio = getSingletonAudio();
         const isCurrentlyPlayingAudible = Boolean(
-          currentAudio && !currentAudio.paused && isPlayingRef.current && currentAudio.currentTime > 0,
+          isPlayingRef.current &&
+            (nativeAudioActiveRef.current
+              ? currentTimeRef.current > 0 || !isBufferingRef.current
+              : currentAudio && !currentAudio.paused && currentAudio.currentTime > 0),
         );
         if (isCurrentlyPlayingAudible) {
           if (shouldActAsRemoteController()) {
@@ -1104,6 +1188,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           isSettingSourceRef.current = false;
           isRetryingPlayRef.current = false;
           clearPreservedPlaybackIntent();
+          if (nativeAudioActiveRef.current) {
+            void nativeAudioPause();
+          }
           if (currentAudio && !currentAudio.paused) {
             currentAudio.pause();
           }
@@ -1259,16 +1346,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       };
 
+      const willUseNativeStream =
+        isNativeAudioAvailable() &&
+        !isDownloaded &&
+        Boolean(audioSource) &&
+        (audioSource.startsWith("http://") || audioSource.startsWith("https://"));
+
       if (currentTrackRef.current?.id === track.id) {
-        const absSrc = getResolvedSourceUrl(audioSource);
-        if (audio.src !== absSrc && audio.src !== audioSource) {
-          const prevTime = audio.currentTime;
-          isSettingSourceRef.current = true;
-          audio.src = audioSource;
-          if (startSec > 0) {
-            try { audio.currentTime = startSec; } catch {}
-          } else if (prevTime > 0) {
-            try { audio.currentTime = prevTime; } catch {}
+        if (!willUseNativeStream) {
+          const absSrc = getResolvedSourceUrl(audioSource);
+          if (audio.src !== absSrc && audio.src !== audioSource) {
+            const prevTime = audio.currentTime;
+            isSettingSourceRef.current = true;
+            audio.src = audioSource;
+            if (startSec > 0) {
+              try { audio.currentTime = startSec; } catch {}
+            } else if (prevTime > 0) {
+              try { audio.currentTime = prevTime; } catch {}
+            }
           }
         }
         if (trackToPlay.coverUrl !== currentTrackRef.current.coverUrl) {
@@ -1283,22 +1378,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           if (audioCtxRef.current?.state === "suspended") {
             void audioCtxRef.current.resume();
           }
-          if (audio.paused || audio.readyState < 2 || isBufferingRef.current || Boolean(audio.error)) {
+          const needsAttempt = nativeAudioActiveRef.current
+            ? !isPlayingRef.current || isBufferingRef.current
+            : audio.paused || audio.readyState < 2 || isBufferingRef.current || Boolean(audio.error);
+          if (needsAttempt) {
             await attemptPlayWithRetry(audio, trackToPlay, isDownloaded, audioSource, startSec);
           } else if (typeof startTime === "number" && startTime >= 0) {
-            try {
-              audio.currentTime = startSec;
-              currentTimeRef.current = startSec;
-              setCurrentTime(startSec);
-            } catch {}
+            if (nativeAudioActiveRef.current) {
+              void nativeAudioSeek(startSec);
+            } else {
+              try {
+                audio.currentTime = startSec;
+              } catch {}
+            }
+            currentTimeRef.current = startSec;
+            setCurrentTime(startSec);
           }
-        } else if (!audio.paused) {
+        } else if (!audio.paused || nativeAudioActiveRef.current) {
           userPausedIntentRef.current = true;
           playRequestIdRef.current += 1;
           clearPreservedPlaybackIntent();
           isSettingSourceRef.current = false;
           isRetryingPlayRef.current = false;
-          audio.pause();
+          if (nativeAudioActiveRef.current) {
+            void nativeAudioPause();
+          }
+          if (!audio.paused) {
+            audio.pause();
+          }
           setIsPlaying(false);
           isPlayingRef.current = false;
           setIsBuffering(false);
@@ -1327,10 +1434,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setDuration(track.durationSec || 0);
 
       const targetAbsSrc = getResolvedSourceUrl(audioSource);
-      if (audio.src !== targetAbsSrc && audio.src !== audioSource) {
+      if (!willUseNativeStream) {
+        if (audio.src !== targetAbsSrc && audio.src !== audioSource) {
+          isSettingSourceRef.current = true;
+          audio.src = audioSource;
+          try { audio.load(); } catch {}
+        }
+      } else if (!audio.paused) {
         isSettingSourceRef.current = true;
-        audio.src = audioSource;
-        try { audio.load(); } catch {}
+        try { audio.pause(); } catch {}
+        isSettingSourceRef.current = false;
       }
       setCurrentlyPlayingTrackId(trackToPlay.id);
       recordPlaybackSessionStep(audio);
@@ -1394,8 +1507,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (!curr || q.length === 0) return;
       const audio = getSingletonAudio();
       if (fromEnded && repeat === "one" && audio) {
-        audio.currentTime = 0;
-        void audio.play();
+        if (nativeAudioActiveRef.current) {
+          void nativeAudioSeek(0);
+          void nativeAudioPlay();
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+        } else {
+          audio.currentTime = 0;
+          void audio.play();
+        }
         broadcastLeaderState();
         return;
       }
@@ -1460,8 +1580,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const curr = currentTrackRef.current;
     const q = queueRef.current;
     if (!curr || q.length === 0) return;
-    if (audio && audio.currentTime > 3) {
-      audio.currentTime = 0;
+    const currPos = nativeAudioActiveRef.current ? currentTimeRef.current : (audio ? audio.currentTime : 0);
+    if (currPos > 3) {
+      if (nativeAudioActiveRef.current) {
+        void nativeAudioSeek(0);
+      } else if (audio) {
+        audio.currentTime = 0;
+      }
       currentTimeRef.current = 0;
       setCurrentTime(0);
       broadcastLeaderState();
@@ -1539,7 +1664,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isDownloadedSync = await isTrackDownloaded(curr.id);
     }
 
-    const shouldStartPlaying = audio.paused && !isPlayingRef.current && !isRetryingPlayRef.current;
+    const shouldStartPlaying =
+      (nativeAudioActiveRef.current ? !isPlayingRef.current : audio.paused) &&
+      !isPlayingRef.current &&
+      !isRetryingPlayRef.current;
     if (shouldStartPlaying) {
       if (curr.source === "spotify" && (!curr.pageUrl || !curr.pageUrl.includes("youtube"))) {
         try {
@@ -1586,6 +1714,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           currentTrackRef.current = enriched;
           setCurrentTrack(enriched);
         }
+      } else if (nativeAudioActiveRef.current) {
+        setCurrentlyPlayingTrackId(curr.id);
       } else {
         setCurrentlyPlayingTrackId(curr.id);
         const targetUrl = resolveMediaUrl(curr.audioUrl);
@@ -1596,7 +1726,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      ensureAudioPrepared(curr);
+      if (!nativeAudioActiveRef.current) {
+        ensureAudioPrepared(curr);
+      }
       if (lyricsRef.current.length === 0) {
         void loadLyricsForTrack(curr.id, false);
       }
@@ -1612,20 +1744,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           track: curr,
           trackId: curr.id,
           isPlaying: true,
-          currentTime: audio.currentTime,
-          duration: audio.duration || durationRef.current || curr.durationSec || 0,
+          currentTime: nativeAudioActiveRef.current ? currentTimeRef.current : audio.currentTime,
+          duration: (nativeAudioActiveRef.current ? durationRef.current : audio.duration) || durationRef.current || curr.durationSec || 0,
           volume: volumeRef.current,
           repeat: repeatRef.current,
           shuffle: shuffleRef.current,
         });
       }
-      await attemptPlayWithRetry(audio, curr, isDownloadedSync);
+      if (nativeAudioActiveRef.current && !isDownloadedSync) {
+        userPausedIntentRef.current = false;
+        setIsPlaying(true);
+        isPlayingRef.current = true;
+        await nativeAudioPlay();
+      } else {
+        await attemptPlayWithRetry(audio, curr, isDownloadedSync);
+      }
     } else {
       userPausedIntentRef.current = true;
       playRequestIdRef.current += 1;
       isSettingSourceRef.current = false;
       isRetryingPlayRef.current = false;
       clearPreservedPlaybackIntent();
+      if (nativeAudioActiveRef.current) {
+        void nativeAudioPause();
+      }
       audio.pause();
       setIsPlaying(false);
       isPlayingRef.current = false;
@@ -1659,18 +1801,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const audio = getSingletonAudio();
       if (!audio || !Number.isFinite(seconds)) return;
       const curr = currentTrackRef.current;
-      if (curr) {
+      if (curr && !nativeAudioActiveRef.current) {
         ensureAudioPrepared(curr, seconds);
       }
-      const clamped = Math.max(0, Math.min(audio.duration || durationRef.current || 0, seconds));
-      audio.currentTime = clamped;
+      const effectiveDur = (nativeAudioActiveRef.current ? durationRef.current : audio.duration) || durationRef.current || seconds;
+      const clamped = Math.max(0, Math.min(effectiveDur, seconds));
+      if (nativeAudioActiveRef.current) {
+        void nativeAudioSeek(clamped);
+      } else {
+        audio.currentTime = clamped;
+      }
       currentTimeRef.current = clamped;
       setCurrentTime(clamped);
       void updateAndroidPlaybackState({
         isPlaying: isPlayingRef.current,
         position: clamped,
-        duration: audio.duration || durationRef.current || 0,
-        playbackRate: audio.playbackRate || 1,
+        duration: effectiveDur,
+        playbackRate: audio.playbackRate || playbackRateRef.current || 1,
       });
       broadcastCurrentState();
       if (isLeaderRef.current && channelRef.current) {
@@ -1712,6 +1859,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (audio) {
         audio.volume = clamped;
       }
+      if (nativeAudioActiveRef.current) {
+        void nativeAudioSetVolume(clamped);
+      }
       broadcastLeaderState();
       broadcastCurrentState();
     },
@@ -1739,6 +1889,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const audio = getSingletonAudio();
     if (audio) {
       audio.volume = nextMuted ? 0 : volumeRef.current;
+    }
+    if (nativeAudioActiveRef.current) {
+      void nativeAudioSetVolume(nextMuted ? 0 : volumeRef.current);
     }
     broadcastLeaderState();
   }, [broadcastLeaderState, getTabId, sendRemoteCommand, shouldActAsRemoteController]);
@@ -1799,6 +1952,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       const audio = getSingletonAudio();
       if (audio) audio.playbackRate = rate;
+      if (nativeAudioActiveRef.current) {
+        void nativeAudioSetPlaybackRate(rate);
+      }
       broadcastLeaderState();
     },
     [broadcastLeaderState, getTabId],
@@ -2563,11 +2719,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             updateTrackInQueue(fallbackTrack);
             externalTracksCache.set(curr.id, fallbackTrack);
             const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-            isSettingSourceRef.current = true;
-            audio.src = fbSource;
-            try { audio.load(); } catch {}
-            await audio.play();
-            isSettingSourceRef.current = false;
+            if (
+              isNativeAudioAvailable() &&
+              fbSource &&
+              (fbSource.startsWith("http://") || fbSource.startsWith("https://"))
+            ) {
+              await startNativeStreamForTrack(fallbackTrack, fbSource, 0);
+            } else {
+              isSettingSourceRef.current = true;
+              audio.src = fbSource;
+              try { audio.load(); } catch {}
+              await audio.play();
+              isSettingSourceRef.current = false;
+            }
             setIsPlaying(true);
             isPlayingRef.current = true;
             setIsBuffering(false);
@@ -2580,7 +2744,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {}
     },
-    [broadcastCurrentState, broadcastLeaderState, updateTrackInQueue],
+    [broadcastCurrentState, broadcastLeaderState, startNativeStreamForTrack, updateTrackInQueue],
   );
 
   // Setup persistent singleton <audio> element events
@@ -3236,9 +3400,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         const audio = getSingletonAudio();
+        const isPausedNow = nativeAudioActiveRef.current
+          ? !isPlayingRef.current
+          : Boolean(audio && audio.paused);
         // Never call togglePlay() if playback is already active or retrying/buffering,
         // otherwise togglePlay() would enter its pause branch and kill playback.
-        if (audio && audio.paused && !isPlayingRef.current && !isRetryingPlayRef.current) {
+        if (isPausedNow && !isPlayingRef.current && !isRetryingPlayRef.current) {
           void (handlersRef.current?.togglePlay?.() ?? mediaActionsRef.current.togglePlay());
         }
       },
@@ -3261,6 +3428,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isSettingSourceRef.current = false;
         isRetryingPlayRef.current = false;
         clearPreservedPlaybackIntent();
+        if (nativeAudioActiveRef.current) {
+          void nativeAudioPause();
+        }
         if (audio && !audio.paused) {
           audio.pause();
         }
@@ -3327,6 +3497,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isSettingSourceRef.current = false;
         isRetryingPlayRef.current = false;
         clearPreservedPlaybackIntent();
+        if (nativeAudioActiveRef.current) {
+          nativeAudioActiveRef.current = false;
+          void nativeAudioStop();
+        }
         if (audio && !audio.paused) {
           audio.pause();
         }
@@ -3342,6 +3516,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isSettingSourceRef.current = false;
         isRetryingPlayRef.current = false;
         clearPreservedPlaybackIntent();
+        if (nativeAudioActiveRef.current) {
+          void nativeAudioPause();
+        }
         if (audio && !audio.paused) {
           audio.pause();
         }
@@ -3351,13 +3528,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         mediaActionsRef.current.broadcastCurrentState();
       },
       onVolumeDuck: (duck) => {
+        const targetVol = duck ? Math.max(0, volumeRef.current * 0.25) : mutedRef.current ? 0 : volumeRef.current;
         const audio = getSingletonAudio();
         if (audio) {
-          if (duck) {
-            audio.volume = Math.max(0, volumeRef.current * 0.25);
-          } else {
-            audio.volume = mutedRef.current ? 0 : volumeRef.current;
-          }
+          audio.volume = targetVol;
+        }
+        if (nativeAudioActiveRef.current) {
+          void nativeAudioSetVolume(targetVol);
         }
       },
     });
@@ -3366,6 +3543,94 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       cleanup();
     };
   }, []);
+
+  // Subscribe to Native Android ExoPlayer state events
+  useEffect(() => {
+    if (!isNativeAudioAvailable()) return;
+    const unsub = subscribeNativeAudioState((state) => {
+      if (!nativeAudioActiveRef.current) return;
+      if (state.trackId && currentTrackRef.current && currentTrackRef.current.id !== state.trackId) {
+        return;
+      }
+      const curr = currentTrackRef.current;
+
+      if (typeof state.duration === "number" && Number.isFinite(state.duration) && state.duration > 0) {
+        durationRef.current = state.duration;
+        setDuration(state.duration);
+      }
+      if (typeof state.position === "number" && Number.isFinite(state.position) && state.position >= 0) {
+        currentTimeRef.current = state.position;
+        const inForeground = isAppInForeground() && (typeof document === "undefined" || !document.hidden);
+        if (inForeground) {
+          setCurrentTime(state.position);
+        }
+        if (Math.abs(state.position - lastSavedStateTimeRef.current) >= 5) {
+          lastSavedStateTimeRef.current = state.position;
+          savePlayerState(state.position);
+        }
+        if (curr && state.position >= 3 && recordedPlayForIdRef.current !== curr.id) {
+          recordedPlayForIdRef.current = curr.id;
+          recordListeningEvent(curr);
+          void api
+            .recordPlay(curr.id)
+            .then((res) => {
+              setCurrentTrack((prev) =>
+                prev?.id === curr.id ? { ...prev, playsCount: res.playsCount } : prev,
+              );
+            })
+            .catch(() => {});
+        }
+      }
+
+      if (state.event === "buffering") {
+        if (!userPausedIntentRef.current) {
+          setIsBuffering(true);
+          isBufferingRef.current = true;
+        }
+      } else if (state.event === "ready") {
+        setIsBuffering(false);
+        isBufferingRef.current = false;
+        reportNetworkSuccess();
+        setOfflineNotice(null);
+        if (typeof state.isPlaying === "boolean") {
+          setIsPlaying(state.isPlaying);
+          isPlayingRef.current = state.isPlaying;
+        }
+      } else if (state.event === "state") {
+        if (typeof state.isBuffering === "boolean") {
+          setIsBuffering(state.isBuffering);
+          isBufferingRef.current = state.isBuffering;
+        }
+        if (typeof state.isPlaying === "boolean") {
+          setIsPlaying(state.isPlaying);
+          isPlayingRef.current = state.isPlaying;
+        }
+      } else if (state.event === "ended") {
+        setIsBuffering(false);
+        isBufferingRef.current = false;
+        handlersRef.current.next(true);
+      } else if (state.event === "error") {
+        setIsBuffering(false);
+        isBufferingRef.current = false;
+        if (curr && isExternalTrack(curr) && !streamFallbackAttemptsRef.current[curr.id]) {
+          streamFallbackAttemptsRef.current[curr.id] = true;
+          void triggerExternalFallback(curr);
+        } else {
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          if (curr && isExternalTrack(curr)) {
+            noticeTypeRef.current = "stream";
+            setOfflineNotice(
+              lang === "fa"
+                ? "این قطعه در حال حاضر قابل پخش نیست"
+                : "This track is currently unavailable for playback",
+            );
+          }
+        }
+      }
+    });
+    return unsub;
+  }, [lang, savePlayerState, triggerExternalFallback]);
 
   // Synchronize Metadata whenever currentTrack changes
   useEffect(() => {

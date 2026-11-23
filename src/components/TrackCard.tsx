@@ -15,6 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { DownloadButton } from "@/components/DownloadButton";
 import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
+import { openPlaylistPicker } from "@/components/PlaylistPickerSheet";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { api, getTrackDetailHref, getTrackShareUrl } from "@/lib/api";
 import { formatDuration } from "@/lib/lrc";
@@ -115,6 +116,12 @@ export const TrackCard = memo(function TrackCard({
   };
 
   const menuItems = [
+    {
+      label: t("addToPlaylist"),
+      icon: <PlusCircleIcon size={16} aria-hidden="true" />,
+      onSelect: () => openPlaylistPicker(activeTrack),
+    },
+    ...(editablePlaylists.length > 0 ? (["separator"] as const) : []),
     ...editablePlaylists.map((pl) => ({
       label: `${t("addToPlaylist")}: ${pickText(pl.title, pl.titleFa)}`,
       icon: <PlusCircleIcon size={16} aria-hidden="true" />,
@@ -125,7 +132,7 @@ export const TrackCard = memo(function TrackCard({
           .catch(() => showToast(t("actionFailed")));
       },
     })),
-    ...(editablePlaylists.length > 0 ? (["separator"] as const) : []),
+    "separator" as const,
     {
       label: t("share"),
       icon: <ShareNetworkIcon size={16} aria-hidden="true" />,

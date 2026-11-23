@@ -6,6 +6,7 @@ import {
   CircleNotchIcon,
   CloudArrowDownIcon,
   HeartIcon,
+  ListPlusIcon,
   PauseIcon,
   PlayIcon,
   SoundcloudLogoIcon,
@@ -14,6 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { DownloadButton } from "@/components/DownloadButton";
 import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
+import { openPlaylistPicker } from "@/components/PlaylistPickerSheet";
 import { formatDuration } from "@/lib/lrc";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -157,7 +159,7 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
 
   return (
     <article
-      className={`sf-press group relative flex items-center gap-3 rounded-2xl p-2.5 sm:p-3 transition-[transform,background-color,border-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+      className={`group relative flex items-center gap-3 rounded-2xl p-2.5 sm:p-3 transition-[background-color,border-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         isCurrent
           ? "bg-indigo-500/[0.08] dark:bg-white/[0.08] border border-indigo-500/35 dark:border-white/20 shadow-sm"
           : "bg-white/70 dark:bg-white/[0.04] hover:bg-white/90 dark:hover:bg-white/[0.07] border border-black/[0.06] dark:border-white/[0.07]"
@@ -255,6 +257,16 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
         </button>
 
         <DownloadButton track={track} size="sm" variant="glass" />
+
+        <button
+          type="button"
+          onClick={() => openPlaylistPicker(track)}
+          title={t("addToPlaylist")}
+          aria-label={t("addToPlaylist")}
+          className="sf-press inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full text-slate-400 dark:text-slate-400 hover:text-indigo-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors cursor-pointer text-center leading-none"
+        >
+          <ListPlusIcon size={18} weight="bold" aria-hidden="true" />
+        </button>
 
         {user?.role === "admin" && (
           <button

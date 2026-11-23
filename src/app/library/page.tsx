@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   ArrowCircleDownIcon,
   ArrowLineDownIcon,
+  BookmarkSimpleIcon,
   CheckCircleIcon,
   CheckSquareIcon,
   CircleNotchIcon,
@@ -12,6 +13,7 @@ import {
   HeartIcon,
   HardDriveIcon,
   ListDashesIcon,
+  ListPlusIcon,
   MagnifyingGlassIcon,
   MicrophoneStageIcon,
   PlayIcon,
@@ -32,6 +34,14 @@ import { usePlayer } from "@/context/PlayerContext";
 import { useDownloadedTracks, useActiveDownloads } from "@/lib/downloadManager";
 import { exportTrackToDeviceStorage, getExportedTrackIds } from "@/lib/mediaExport";
 import { buildPersonalizedMixes } from "@/lib/listeningPersonalization";
+import {
+  createCustomPlaylist,
+  customRecordToPlaylist,
+  deleteCustomPlaylist,
+  savePersonalizedMixAsCustomPlaylist,
+  useCustomPlaylists,
+} from "@/lib/customPlaylists";
+import { openPlaylistPicker } from "@/components/PlaylistPickerSheet";
 import { formatDuration } from "@/lib/lrc";
 import { Button, Glass, Input } from "@/components/GlassControls";
 import { PlaylistMosaic } from "@/components/PlaylistMosaic";
@@ -74,8 +84,13 @@ export default function LibraryPage() {
   const [repostedTracks, setRepostedTracks] = useState<Track[]>([]);
   const [historyTracks, setHistoryTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const customPlaylists = useCustomPlaylists();
   const [newPlaylistTitle, setNewPlaylistTitle] = useState("");
+  const [newPlaylistDesc, setNewPlaylistDesc] = useState("");
+  const [newPlaylistAccent, setNewPlaylistAccent] = useState("#6366f1");
+  const [createPlaylistOpen, setCreatePlaylistOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [playlistPendingDelete, setPlaylistPendingDelete] = useState<{ id: string; title: string; isCustom: boolean } | null>(null);
   const [actionErr, setActionErr] = useState("");
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
 
@@ -113,17 +128,27 @@ export default function LibraryPage() {
 
   const handleCreatePlaylist = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) {
-      openAuthDialog();
-      return;
-    }
-    if (!newPlaylistTitle.trim()) return;
+    const title = newPlaylistTitle.trim();
+    if (!title) return;
     setCreating(true);
     setActionErr("");
     try {
-      const res = await api.createPlaylist({ title: newPlaylistTitle.trim() });
-      setPlaylists((prev) => [res.playlist, ...prev]);
+      createCustomPlaylist({
+        title,
+        description: newPlaylistDesc.trim(),
+        accentColor: newPlaylistAccent,
+      });
       setNewPlaylistTitle("");
+      setNewPlaylistDesc("");
+      setCreatePlaylistOpen(false);
+      setExportToast({
+        message: pickText(
+          `Created playlist "${title}"`,
+          `پلی‌لیست اختصاصی «${title}» ساخته شد.`,
+        ),
+        type: "success",
+      });
+      setTimeout(() => setExportToast(null), 3000);
     } catch (err) {
       setActionErr(err instanceof Error ? err.message : t("actionFailed"));
     } finally {
@@ -131,11 +156,18 @@ export default function LibraryPage() {
     }
   };
 
-  const handleDeletePlaylist = async (playlistId: string) => {
+  const handleConfirmDeletePlaylist = async () => {
+    if (!playlistPendingDelete) return;
+    const { id, isCustom } = playlistPendingDelete;
+    setPlaylistPendingDelete(null);
     setActionErr("");
+    if (isCustom) {
+      deleteCustomPlaylist(id);
+      return;
+    }
     try {
-      await api.deletePlaylist(playlistId);
-      setPlaylists((prev) => prev.filter((pl) => pl.id !== playlistId));
+      await api.deletePlaylist(id);
+      setPlaylists((prev) => prev.filter((pl) => pl.id !== id));
     } catch (err) {
       setActionErr(err instanceof Error ? err.message : t("actionFailed"));
     }
@@ -326,7 +358,7 @@ export default function LibraryPage() {
     }
   };
 
-  const isGuestTabLocked = !user && tab !== "downloaded";
+  const isGuestTabLocked = !user && tab !== "downloaded" && tab !== "playlists";
 
   const handleRefresh = async () => {
     try {
@@ -409,7 +441,7 @@ export default function LibraryPage() {
                 {
                   id: "playlists" as const,
                   label: t("playlistsTab"),
-                  count: playlists.length,
+                  count: customPlaylists.length + playlists.length,
                   icon: <PlaylistIcon size={15} weight="bold" />,
                 },
                 {
@@ -819,7 +851,7 @@ export default function LibraryPage() {
                     <div
                       key={record.trackId}
                       onClick={() => handlePlayDownloadedTrack(record.track)}
-                      className={`group flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 sm:py-3 transition-colors cursor-pointer select-none active:scale-[0.99] ${
+                      className={`sf-row-press group flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 sm:py-3 cursor-pointer select-none ${
                         isCurrent
                           ? "bg-indigo-500/[0.08] dark:bg-indigo-500/[0.12]"
                           : "hover:bg-black/[0.025] dark:hover:bg-white/[0.035]"
@@ -904,8 +936,20 @@ export default function LibraryPage() {
                         </div>
                       </div>
 
-                      {/* Trailing: Direct Delete Button (Opens Confirmation Dialog) */}
-                      <div className="flex items-center shrink-0">
+                      {/* Trailing: Add to Playlist & Direct Delete */}
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPlaylistPicker(record.track);
+                          }}
+                          aria-label={`${t("addToPlaylist")} ${trackTitle}`}
+                          title={t("addToPlaylist")}
+                          className="sf-press h-10 w-10 min-h-[40px] min-w-[40px] rounded-full flex items-center justify-center text-[var(--sf-muted)] hover:text-indigo-500 hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                        >
+                          <ListPlusIcon size={18} weight="bold" aria-hidden="true" />
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -913,9 +957,9 @@ export default function LibraryPage() {
                             setTrackPendingDelete(record.track);
                           }}
                           aria-label={`${pickText("Remove download", "حذف دانلود")} ${trackTitle}`}
-                          className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-full flex items-center justify-center text-rose-500/80 hover:text-rose-500 hover:bg-rose-500/10 active:scale-95 transition-all cursor-pointer"
+                          className="sf-press h-10 w-10 min-h-[40px] min-w-[40px] rounded-full flex items-center justify-center text-rose-500/80 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
                         >
-                          <TrashIcon size={19} weight="bold" aria-hidden="true" />
+                          <TrashIcon size={18} weight="bold" aria-hidden="true" />
                         </button>
                       </div>
                     </div>
@@ -933,102 +977,244 @@ export default function LibraryPage() {
             )}
           </div>
         ) : tab === "playlists" ? (
-        /* Playlists Section */
+        /* Playlists Section (Spotify-style Custom Playlists + Smart Artist Mixes) */
         <div className="space-y-6">
-          {personalizedMixes.length > 0 && (
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm sm:text-base font-extrabold text-[var(--sf-text)]">
-                  {pickText("Made For You", "ساخته‌شده اختصاصی برای شما")}
-                </h2>
-                <span className="text-[11px] font-medium text-[var(--sf-muted)]">
-                  {pickText("Auto Mixes", "میکس هوشمند")}
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {personalizedMixes.map((mix) => (
-                  <button
-                    key={mix.id}
-                    type="button"
-                    onClick={() => mix.tracks.length > 0 && playTrack(mix.tracks[0], mix.tracks)}
-                    className="sf-press sf-content-card text-start rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer border border-black/[0.05] dark:border-white/[0.08]"
-                  >
-                    <PlaylistMosaic coverUrls={mix.coverUrls} className="h-16 w-16 rounded-xl shrink-0 shadow" lazy />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-emerald-500">
-                        {lang === "fa" ? mix.badgeFa : mix.badge}
-                      </span>
-                      <h3 className="font-bold text-sm truncate text-[var(--sf-text)]">
-                        {lang === "fa" ? mix.titleFa : mix.title}
-                      </h3>
-                      <p className="text-[11px] text-[var(--sf-muted)] truncate">
-                        {formatNum(mix.tracks.length)} {t("tracksCount")}
-                      </p>
-                    </div>
-                    <span className="h-9 w-9 rounded-full bg-indigo-500 text-white flex items-center justify-center shrink-0">
-                      <PlayIcon size={15} weight="fill" />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
+          {/* Header + Create Custom Playlist CTA */}
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base sm:text-lg font-extrabold text-[var(--sf-text)]">
+              {pickText("Your Playlists", "پلی‌لیست‌های اختصاصی شما")}
+            </h2>
+            <Button
+              type="button"
+              variant="filled"
+              onClick={() => setCreatePlaylistOpen((prev) => !prev)}
+              icon={<PlusIcon size={17} weight="bold" aria-hidden="true" />}
+              className="!min-h-[40px] !px-4 text-xs font-bold"
+            >
+              {pickText("New Playlist", "پلی‌لیست جدید")}
+            </Button>
+          </div>
 
-          <Glass className="rounded-3xl p-4 sm:p-5">
-            <form onSubmit={handleCreatePlaylist} className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1">
-                <Input
-                  aria-label={t("createPlaylist")}
-                  placeholder={t("playlistTitlePlaceholder")}
-                  value={newPlaylistTitle}
-                  onValueChange={setNewPlaylistTitle}
-                />
+          <div className="sf-collapse" data-open={createPlaylistOpen ? "true" : "false"}>
+            <div className="sf-collapse-inner">
+              <Glass className="rounded-3xl p-4 sm:p-5 space-y-3 mb-2">
+                <form onSubmit={(e) => void handleCreatePlaylist(e)} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Input
+                      aria-label={t("createPlaylist")}
+                      placeholder={pickText("Playlist name (e.g. Workout Mix)", "نام پلی‌لیست (مثلاً میکس باشگاه)")}
+                      value={newPlaylistTitle}
+                      onValueChange={setNewPlaylistTitle}
+                    />
+                    <Input
+                      aria-label={pickText("Playlist description", "توضیحات پلی‌لیست")}
+                      placeholder={pickText("Optional description...", "توضیح کوتاه (اختیاری)")}
+                      value={newPlaylistDesc}
+                      onValueChange={setNewPlaylistDesc}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-[var(--sf-muted)]">
+                        {pickText("Color:", "رنگ:")}
+                      </span>
+                      {["#6366f1", "#8b5cf6", "#ec4899", "#10b981", "#f59e0b", "#0ea5e9"].map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setNewPlaylistAccent(c)}
+                          aria-label={`Select playlist accent ${c}`}
+                          className={`h-6 w-6 rounded-full cursor-pointer transition-transform ${
+                            newPlaylistAccent === c ? "scale-110 ring-2 ring-[var(--sf-text)] ring-offset-2 ring-offset-transparent" : "opacity-75 hover:opacity-100"
+                          }`}
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setCreatePlaylistOpen(false)}
+                        className="!min-h-[38px] text-xs"
+                      >
+                        {pickText("Cancel", "لغو")}
+                      </Button>
+                      <Button
+                        type="submit"
+                        variant="filled"
+                        disabled={creating || !newPlaylistTitle.trim()}
+                        icon={<PlusIcon size={16} aria-hidden="true" />}
+                        className="!min-h-[38px] !px-5 text-xs font-bold"
+                      >
+                        {t("create")}
+                      </Button>
+                    </div>
+                  </div>
+                </form>
+              </Glass>
+            </div>
+          </div>
+
+          {customPlaylists.length === 0 && playlists.length === 0 ? (
+            <Glass className="rounded-3xl p-8 sm:p-10 text-center space-y-3">
+              <PlaylistIcon size={44} weight="duotone" className="mx-auto text-indigo-500/80" aria-hidden="true" />
+              <div className="space-y-1">
+                <p className="text-base font-bold text-[var(--sf-text)]">
+                  {pickText("Create your first Spotify-style playlist", "اولین پلی‌لیست اختصاصی خود را بسازید")}
+                </p>
+                <p className="text-xs text-[var(--sf-muted)] max-w-md mx-auto">
+                  {pickText(
+                    "Mix YouTube, SoundCloud, Spotify, and downloaded tracks together — online or offline.",
+                    "آهنگ‌های یوتیوب، ساندکلود، اسپاتیفای و فایل‌های دانلودشده خود را در پلی‌لیست‌های دلخواهتان جمع کنید.",
+                  )}
+                </p>
               </div>
               <Button
-                type="submit"
+                type="button"
                 variant="filled"
-                disabled={creating}
-                icon={<PlusIcon size={18} aria-hidden="true" />}
+                onClick={() => setCreatePlaylistOpen(true)}
+                icon={<PlusIcon size={17} weight="bold" aria-hidden="true" />}
               >
-                {t("create")}
+                {pickText("Create Playlist", "ساخت پلی‌لیست")}
               </Button>
-            </form>
-          </Glass>
-
-          {playlists.length === 0 ? (
-            <Glass className="rounded-3xl p-12 text-center space-y-3 opacity-80">
-              <PlaylistIcon size={44} weight="duotone" className="mx-auto text-[var(--sf-muted)]" aria-hidden="true" />
-              <p className="text-base font-bold">{t("emptyLibrary")}</p>
             </Glass>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+              {customPlaylists.map((rec) => {
+                const pl = customRecordToPlaylist(rec);
+                return (
+                  <div
+                    key={pl.id}
+                    className="group sf-content-card rounded-3xl p-3.5 flex items-center justify-between gap-3"
+                  >
+                    <Link href={getPlaylistDetailHref(pl.id)} className="flex items-center gap-3.5 min-w-0 flex-1">
+                      <PlaylistMosaic coverUrls={pl.coverUrls} className="h-18 w-18 rounded-2xl shadow-md shrink-0" lazy />
+                      <div className="min-w-0">
+                        <span className="inline-block text-[10px] font-bold text-indigo-500 dark:text-indigo-400">
+                          {pickText("Custom Playlist", "پلی‌لیست شخصی")}
+                        </span>
+                        <h3 className="font-extrabold text-sm sm:text-base truncate group-hover:text-indigo-500 transition-colors">
+                          {pickText(pl.title, pl.titleFa)}
+                        </h3>
+                        <p className="text-xs text-[var(--sf-muted)] tabular-nums">
+                          {formatNum(pl.trackCount)} {t("tracksCount")}
+                        </p>
+                      </div>
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setPlaylistPendingDelete({ id: pl.id, title: pl.title, isCustom: true })}
+                      aria-label={`${t("deletePlaylist")}: ${pl.title}`}
+                      className="sf-press inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full text-rose-500 hover:bg-rose-500/15 cursor-pointer shrink-0 transition-colors"
+                    >
+                      <TrashIcon size={17} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
+
               {playlists.map((pl) => (
                 <div
                   key={pl.id}
-                  className="group sf-content-card rounded-3xl p-4 flex items-center justify-between gap-3 transition-all duration-300 hover:shadow-xl hover:scale-[1.01]"
+                  className="group sf-content-card rounded-3xl p-3.5 flex items-center justify-between gap-3"
                 >
-                  <Link href={getPlaylistDetailHref(pl.id)} className="flex items-center gap-4 min-w-0 flex-1">
-                    <PlaylistMosaic coverUrls={pl.coverUrls} className="h-20 w-20 rounded-2xl shadow-md" lazy />
+                  <Link href={getPlaylistDetailHref(pl.id)} className="flex items-center gap-3.5 min-w-0 flex-1">
+                    <PlaylistMosaic coverUrls={pl.coverUrls} className="h-18 w-18 rounded-2xl shadow-md shrink-0" lazy />
                     <div className="min-w-0">
-                      <h2 className="font-extrabold text-base truncate group-hover:text-indigo-500 transition-colors">
+                      <h3 className="font-extrabold text-sm sm:text-base truncate group-hover:text-indigo-500 transition-colors">
                         {pickText(pl.title, pl.titleFa)}
-                      </h2>
-                      <p className="text-xs opacity-75">
+                      </h3>
+                      <p className="text-xs text-[var(--sf-muted)] tabular-nums">
                         {formatNum(pl.trackCount)} {t("tracksCount")}
                       </p>
                     </div>
                   </Link>
                   <button
                     type="button"
-                    onClick={() => void handleDeletePlaylist(pl.id)}
+                    onClick={() =>
+                      setPlaylistPendingDelete({
+                        id: pl.id,
+                        title: pickText(pl.title, pl.titleFa),
+                        isCustom: false,
+                      })
+                    }
                     aria-label={`${t("deletePlaylist")}: ${pickText(pl.title, pl.titleFa)}`}
-                    className="inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full text-rose-500 hover:bg-rose-500/15 cursor-pointer shrink-0 transition-colors"
+                    className="sf-press inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full text-rose-500 hover:bg-rose-500/15 cursor-pointer shrink-0 transition-colors"
                   >
                     <TrashIcon size={17} aria-hidden="true" />
                   </button>
                 </div>
               ))}
             </div>
+          )}
+
+          {personalizedMixes.length > 0 && (
+            <section className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm sm:text-base font-extrabold text-[var(--sf-text)]">
+                  {pickText("Made For You & Artist Mixes", "میکس‌های هوشمند و اختصاصی خواننده‌ها")}
+                </h2>
+                <span className="text-[11px] font-medium text-[var(--sf-muted)]">
+                  {pickText("Auto Mix", "ساخت خودکار")}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {personalizedMixes.map((mix) => (
+                  <div
+                    key={mix.id}
+                    className="sf-content-card rounded-2xl p-3 flex items-center justify-between gap-3 border border-black/[0.05] dark:border-white/[0.08]"
+                  >
+                    <Link
+                      href={getPlaylistDetailHref(mix.id)}
+                      className="flex items-center gap-3 min-w-0 flex-1"
+                    >
+                      <PlaylistMosaic coverUrls={mix.coverUrls} className="h-14 w-14 rounded-xl shrink-0 shadow" lazy />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-bold text-emerald-500">
+                          {lang === "fa" ? mix.badgeFa : mix.badge}
+                        </span>
+                        <h3 className="font-bold text-sm truncate text-[var(--sf-text)]">
+                          {lang === "fa" ? mix.titleFa : mix.title}
+                        </h3>
+                        <p className="text-[11px] text-[var(--sf-muted)] truncate">
+                          {formatNum(mix.tracks.length)} {t("tracksCount")}
+                        </p>
+                      </div>
+                    </Link>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const saved = savePersonalizedMixAsCustomPlaylist(mix, lang);
+                          setExportToast({
+                            message: pickText(
+                              `Saved "${saved.title}" to My Playlists`,
+                              `پلی‌لیست «${saved.title}» در پلی‌لیست‌های شما ذخیره شد.`,
+                            ),
+                            type: "success",
+                          });
+                          setTimeout(() => setExportToast(null), 3000);
+                        }}
+                        title={pickText("Save to My Playlists", "ذخیره در پلی‌لیست‌های من")}
+                        aria-label={pickText("Save mix to playlists", "ذخیره میکس در پلی‌لیست‌ها")}
+                        className="sf-press h-9 w-9 rounded-full bg-black/[0.05] dark:bg-white/[0.08] text-[var(--sf-text)] hover:text-indigo-500 flex items-center justify-center cursor-pointer"
+                      >
+                        <BookmarkSimpleIcon size={16} weight="bold" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => mix.tracks.length > 0 && playTrack(mix.tracks[0], mix.tracks)}
+                        aria-label={`${t("playNow")}: ${lang === "fa" ? mix.titleFa : mix.title}`}
+                        className="sf-press h-9 w-9 rounded-full bg-indigo-500 text-white flex items-center justify-center cursor-pointer"
+                      >
+                        <PlayIcon size={15} weight="fill" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
         </div>
       ) : activeTracks.length === 0 ? (
@@ -1064,6 +1250,54 @@ export default function LibraryPage() {
           <span>{exportToast.message}</span>
         </div>
       )}
+      {/* Direct Remove Playlist Confirmation Dialog */}
+      {playlistPendingDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-remove-playlist-title"
+          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
+          onClick={() => setPlaylistPendingDelete(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="sf-sheet-up sm:sf-modal-pop w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.45)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+          >
+            <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/25 mx-auto -mt-1 sm:hidden" />
+            <div className="text-center space-y-2 pt-1">
+              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center ring-1 ring-rose-500/25">
+                <TrashIcon size={24} weight="bold" aria-hidden="true" />
+              </div>
+              <h3 id="confirm-remove-playlist-title" className="text-base font-bold text-[var(--sf-text)]">
+                {pickText("Delete Playlist?", "حذف پلی‌لیست؟")}
+              </h3>
+              <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
+                {pickText(
+                  `"${playlistPendingDelete.title}" will be permanently removed from your playlists.`,
+                  `پلی‌لیست «${playlistPendingDelete.title}» از لیست پلی‌لیست‌های شما حذف می‌شود.`,
+                )}
+              </p>
+            </div>
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={() => void handleConfirmDeletePlaylist()}
+                className="sf-press w-full min-h-[48px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm cursor-pointer shadow-sm"
+              >
+                {pickText("Yes, Delete", "بله، حذف شود")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlaylistPendingDelete(null)}
+                className="sf-press w-full min-h-[48px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
+              >
+                {pickText("Cancel", "لغو")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Direct Remove Download Confirmation Dialog */}
       {trackPendingDelete && (
         <div

@@ -26,6 +26,7 @@ import { Button, Glass, SearchField } from "./GlassControls";
 import { InstallPwaButton } from "./InstallPwaButton";
 import { PlayerDock } from "./PlayerDock";
 import { DevicePickerPopover } from "./DevicePickerPopover";
+import { PlaylistPickerSheet } from "./PlaylistPickerSheet";
 import { checkBackendHealth } from "@/lib/api";
 import {
   getServerConnectivityStatus,
@@ -702,6 +703,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <LazyNowPlayingOverlay />
       <LazyAuthDialog />
       <DevicePickerPopover />
+      <PlaylistPickerSheet />
       <AppUpdateDialog />
       <AppLaunchSplash />
     </div>

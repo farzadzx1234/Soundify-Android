@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore 
 import { createPortal } from "react-dom";
 import {
   ArrowClockwiseIcon,
+  BroomIcon,
   CaretLeftIcon,
   CloudCheckIcon,
   DeviceMobileIcon,
@@ -31,8 +32,22 @@ import { Button, GlassSegmented, Switch } from "@/components/GlassControls";
 import { useDownloadedTracks } from "@/lib/downloadManager";
 import { APP_BUILD_NUMBER, APP_CHANNEL, APP_VERSION } from "@/lib/appVersion";
 import { isAndroidNative } from "@/lib/androidBridge";
+import { isNativeAudioAvailable } from "@/lib/nativeAudioBridge";
 
 const LOCAL_PREF_EVENT = "soundify-local-pref-change";
+
+const AVATAR_SWATCHES = [
+  "#6366f1",
+  "#8b5cf6",
+  "#ec4899",
+  "#f43f5e",
+  "#f97316",
+  "#eab308",
+  "#10b981",
+  "#14b8a6",
+  "#0ea5e9",
+  "#3b82f6",
+];
 
 function useLocalStorageBool(key: string, defaultValue = true): [boolean, (next: boolean) => void] {
   const value = useSyncExternalStore(
@@ -79,7 +94,6 @@ export default function SettingsPage() {
 
   const [highQuality, handleToggleHighQuality] = useLocalStorageBool("soundify_hq", true);
   const [offlineCache, handleToggleOfflineCache] = useLocalStorageBool("soundify_offline_cache", true);
-  const [cacheCleared, setCacheCleared] = useState(false);
 
   // Storage management controls
   const {
@@ -88,11 +102,11 @@ export default function SettingsPage() {
     clearAll: clearAllOfflineTracks,
     clearCache: clearOfflineAudioCache,
   } = useDownloadedTracks();
-  const [offlineCacheCleared, setOfflineCacheCleared] = useState(false);
-  const [confirmClearOfflineCache, setConfirmClearOfflineCache] = useState(false);
+  const [allCacheCleared, setAllCacheCleared] = useState(false);
+  const [confirmClearAllCache, setConfirmClearAllCache] = useState(false);
   const [confirmDeleteAllDownloads, setConfirmDeleteAllDownloads] = useState(false);
 
-  // Collapsible account disclosure panels (Apple Settings progressive disclosure)
+  // Collapsible disclosure panels (smooth GPU accordion)
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [changePwdOpen, setChangePwdOpen] = useState(false);
 
@@ -103,11 +117,16 @@ export default function SettingsPage() {
     return `${Math.round(bytes / (10.24 * 1024 * 1024)) / 100} GB`;
   };
 
-  const handleConfirmClearOfflineCache = () => {
-    setConfirmClearOfflineCache(false);
+  const handleConfirmClearAllCaches = () => {
+    setConfirmClearAllCache(false);
     clearOfflineAudioCache();
-    setOfflineCacheCleared(true);
-    setTimeout(() => setOfflineCacheCleared(false), 2500);
+    if (typeof window !== "undefined" && "caches" in window) {
+      caches.keys().then((names) => {
+        names.forEach((name) => caches.delete(name));
+      }).catch(() => {});
+    }
+    setAllCacheCleared(true);
+    setTimeout(() => setAllCacheCleared(false), 2600);
   };
 
   const handleConfirmDeleteAllDownloads = async () => {
@@ -115,22 +134,31 @@ export default function SettingsPage() {
     await clearAllOfflineTracks();
   };
 
-  // Escape key handler for confirmation modals
   useEffect(() => {
-    if (!confirmClearOfflineCache && !confirmDeleteAllDownloads) return;
+    if (!confirmClearAllCache && !confirmDeleteAllDownloads) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setConfirmClearOfflineCache(false);
+        setConfirmClearAllCache(false);
         setConfirmDeleteAllDownloads(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmClearOfflineCache, confirmDeleteAllDownloads]);
+  }, [confirmClearAllCache, confirmDeleteAllDownloads]);
 
-  // Profile edit
+  // Profile edit (synced from user without effect cascade)
+  const [syncedUser, setSyncedUser] = useState(user);
   const [editDisplayName, setEditDisplayName] = useState(user?.displayName || "");
   const [editDisplayNameFa, setEditDisplayNameFa] = useState(user?.displayNameFa || "");
+  const [editAvatarColor, setEditAvatarColor] = useState(user?.avatarColor || "#6366f1");
+  if (user !== syncedUser) {
+    setSyncedUser(user);
+    if (user) {
+      setEditDisplayName(user.displayName || "");
+      setEditDisplayNameFa(user.displayNameFa || "");
+      setEditAvatarColor(user.avatarColor || "#6366f1");
+    }
+  }
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileFeedback, setProfileFeedback] = useState<string | null>(null);
 
@@ -208,22 +236,16 @@ export default function SettingsPage() {
     );
   }, [adminUsers, adminSearchQuery]);
 
-  const handleClearCache = () => {
-    if (typeof window !== "undefined" && "caches" in window) {
-      caches.keys().then((names) => {
-        names.forEach((name) => caches.delete(name));
-      });
-    }
-    setCacheCleared(true);
-    setTimeout(() => setCacheCleared(false), 2500);
-  };
-
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileSaving(true);
     setProfileFeedback(null);
     try {
-      await updateProfile({ displayName: editDisplayName, displayNameFa: editDisplayNameFa });
+      await updateProfile({
+        displayName: editDisplayName,
+        displayNameFa: editDisplayNameFa,
+        avatarColor: editAvatarColor,
+      });
       setProfileFeedback(lang === "fa" ? "تغییرات حساب ذخیره شد." : "Profile updated successfully.");
     } catch (err) {
       setProfileFeedback(err instanceof Error ? err.message : "Error updating profile");
@@ -251,7 +273,7 @@ export default function SettingsPage() {
   };
 
   const cardGroupClass =
-    "rounded-[22px] bg-white/95 dark:bg-[#14161f] border border-black/[0.06] dark:border-white/[0.07] shadow-[0_2px_12px_rgba(15,23,42,0.04)] dark:shadow-none divide-y divide-black/[0.05] dark:divide-white/[0.06] overflow-hidden";
+    "rounded-[24px] bg-white/90 dark:bg-white/[0.04] border border-black/[0.07] dark:border-white/[0.08] shadow-[0_4px_20px_rgba(15,23,42,0.04)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.28)] divide-y divide-black/[0.05] dark:divide-white/[0.06] overflow-hidden";
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-24 sm:pb-16">
@@ -262,12 +284,12 @@ export default function SettingsPage() {
         </h1>
         <p className="text-xs sm:text-sm text-[var(--sf-muted)]">
           {lang === "fa"
-            ? "ظاهر برنامه، تنظیمات صدا، فایل‌های آفلاین و حساب کاربری"
-            : "Appearance, audio preferences, offline storage, and account"}
+            ? "ظاهر برنامه، کیفیت صدا، حافظه آفلاین و حساب کاربری"
+            : "Appearance, audio playback, offline files, and your account"}
         </p>
       </header>
 
-      {/* Group 0: Apple ID Style Account Hero */}
+      {/* Group 0: Account Card */}
       <section aria-label={t("settingsAccountGroup")} className="space-y-2">
         <div className={cardGroupClass}>
           {user ? (
@@ -275,8 +297,8 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between gap-3 p-4">
                 <div className="flex items-center gap-3.5 min-w-0">
                   <span
-                    className="h-13 w-13 rounded-full flex items-center justify-center font-black text-lg text-white shadow-sm ring-1 ring-black/10 dark:ring-white/15 shrink-0"
-                    style={{ backgroundColor: user.avatarColor || "#6366f1" }}
+                    className="h-14 w-14 rounded-full flex items-center justify-center font-black text-lg text-white shadow-sm ring-1 ring-black/10 dark:ring-white/15 shrink-0 transition-colors"
+                    style={{ backgroundColor: editAvatarColor || user.avatarColor || "#6366f1" }}
                   >
                     {user.displayName.slice(0, 1).toUpperCase()}
                   </span>
@@ -309,20 +331,20 @@ export default function SettingsPage() {
                 </Button>
               </div>
 
-              {/* Disclosure 1: Edit Profile */}
+              {/* Disclosure 1: Edit Profile & Avatar Color */}
               <div>
                 <button
                   type="button"
                   onClick={() => setEditProfileOpen((prev) => !prev)}
                   aria-expanded={editProfileOpen}
-                  className="sf-press w-full flex items-center justify-between gap-3 px-4 py-3.5 min-h-[50px] text-start hover:bg-black/[0.02] dark:hover:bg-white/[0.03] cursor-pointer"
+                  className="sf-row-press w-full flex items-center justify-between gap-3 px-4 py-3.5 min-h-[54px] text-start hover:bg-black/[0.02] dark:hover:bg-white/[0.03] cursor-pointer"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-indigo-500 text-white shrink-0">
-                      <PencilSimpleIcon size={16} weight="bold" aria-hidden="true" />
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/12 text-indigo-600 dark:text-indigo-400 border border-indigo-500/15 shrink-0">
+                      <PencilSimpleIcon size={17} weight="bold" aria-hidden="true" />
                     </span>
                     <span className="text-sm font-semibold text-[var(--sf-text)]">
-                      {lang === "fa" ? "ویرایش نام و مشخصات" : "Edit Profile Name"}
+                      {lang === "fa" ? "ویرایش مشخصات و رنگ پروفایل" : "Edit Profile & Avatar Color"}
                     </span>
                   </div>
                   <CaretLeftIcon
@@ -335,48 +357,78 @@ export default function SettingsPage() {
                   />
                 </button>
 
-                {editProfileOpen && (
-                  <form onSubmit={(e) => void handleSaveProfile(e)} className="px-4 pb-4 pt-1 space-y-2.5 bg-black/[0.015] dark:bg-white/[0.02]">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      <input
-                        type="text"
-                        value={editDisplayName}
-                        onChange={(e) => setEditDisplayName(e.target.value)}
-                        placeholder={lang === "fa" ? "نام نمایشی (انگلیسی)" : "Display Name"}
-                        className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
-                        required
-                      />
-                      <input
-                        type="text"
-                        value={editDisplayNameFa}
-                        onChange={(e) => setEditDisplayNameFa(e.target.value)}
-                        placeholder={lang === "fa" ? "نام نمایشی (فارسی)" : "Persian Display Name"}
-                        className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      {profileFeedback ? (
-                        <span className="text-xs font-medium text-emerald-500">{profileFeedback}</span>
-                      ) : (
-                        <span />
-                      )}
-                      <Button
-                        type="submit"
-                        variant="filled"
-                        disabled={profileSaving}
-                        className="!min-h-[38px] !px-4 text-xs font-bold"
-                      >
-                        {profileSaving
-                          ? lang === "fa"
-                            ? "در حال ذخیره..."
-                            : "Saving..."
-                          : lang === "fa"
-                            ? "ذخیره تغییرات"
-                            : "Save Changes"}
-                      </Button>
-                    </div>
-                  </form>
-                )}
+                <div className="sf-collapse" data-open={editProfileOpen ? "true" : "false"}>
+                  <div className="sf-collapse-inner">
+                    <form
+                      onSubmit={(e) => void handleSaveProfile(e)}
+                      className="px-4 pb-4 pt-2 space-y-3 bg-black/[0.015] dark:bg-white/[0.02] border-t border-black/[0.04] dark:border-white/[0.05]"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <input
+                          type="text"
+                          value={editDisplayName}
+                          onChange={(e) => setEditDisplayName(e.target.value)}
+                          placeholder={lang === "fa" ? "نام نمایشی (انگلیسی)" : "Display Name"}
+                          className="w-full rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                          required
+                        />
+                        <input
+                          type="text"
+                          value={editDisplayNameFa}
+                          onChange={(e) => setEditDisplayNameFa(e.target.value)}
+                          placeholder={lang === "fa" ? "نام نمایشی (فارسی)" : "Persian Display Name"}
+                          className="w-full rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <span className="block text-[11px] font-semibold text-[var(--sf-muted)]">
+                          {lang === "fa" ? "رنگ آواتار" : "Avatar Color"}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {AVATAR_SWATCHES.map((swatch) => (
+                            <button
+                              key={swatch}
+                              type="button"
+                              onClick={() => setEditAvatarColor(swatch)}
+                              aria-label={`Select avatar color ${swatch}`}
+                              className={`h-7 w-7 rounded-full transition-transform cursor-pointer ${
+                                editAvatarColor === swatch
+                                  ? "scale-110 ring-[1.5px] ring-white/90 ring-offset-[1.5px] ring-offset-slate-900 dark:ring-offset-[#0b0d16] shadow-sm"
+                                  : "opacity-80 hover:opacity-100"
+                              }`}
+                              style={{ backgroundColor: swatch }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        {profileFeedback ? (
+                          <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                            {profileFeedback}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+                        <Button
+                          type="submit"
+                          variant="filled"
+                          disabled={profileSaving}
+                          className="!min-h-[38px] !px-4 text-xs font-bold"
+                        >
+                          {profileSaving
+                            ? lang === "fa"
+                              ? "در حال ذخیره..."
+                              : "Saving..."
+                            : lang === "fa"
+                              ? "ذخیره تغییرات"
+                              : "Save Changes"}
+                        </Button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
               </div>
 
               {/* Disclosure 2: Change Password */}
@@ -385,11 +437,11 @@ export default function SettingsPage() {
                   type="button"
                   onClick={() => setChangePwdOpen((prev) => !prev)}
                   aria-expanded={changePwdOpen}
-                  className="sf-press w-full flex items-center justify-between gap-3 px-4 py-3.5 min-h-[50px] text-start hover:bg-black/[0.02] dark:hover:bg-white/[0.03] cursor-pointer"
+                  className="sf-row-press w-full flex items-center justify-between gap-3 px-4 py-3.5 min-h-[54px] text-start hover:bg-black/[0.02] dark:hover:bg-white/[0.03] cursor-pointer"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-amber-500 text-white shrink-0">
-                      <KeyIcon size={16} weight="bold" aria-hidden="true" />
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/12 text-amber-600 dark:text-amber-400 border border-amber-500/15 shrink-0">
+                      <KeyIcon size={17} weight="bold" aria-hidden="true" />
                     </span>
                     <span className="text-sm font-semibold text-[var(--sf-text)]">
                       {lang === "fa" ? "تغییر رمز عبور" : "Change Password"}
@@ -405,49 +457,56 @@ export default function SettingsPage() {
                   />
                 </button>
 
-                {changePwdOpen && (
-                  <form onSubmit={(e) => void handleChangePassword(e)} className="px-4 pb-4 pt-1 space-y-2.5 bg-black/[0.015] dark:bg-white/[0.02]">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      <input
-                        type="password"
-                        value={currentPwd}
-                        onChange={(e) => setCurrentPwd(e.target.value)}
-                        placeholder={lang === "fa" ? "رمز عبور فعلی" : "Current Password"}
-                        className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
-                        required
-                      />
-                      <input
-                        type="password"
-                        value={newPwd}
-                        onChange={(e) => setNewPwd(e.target.value)}
-                        placeholder={lang === "fa" ? "رمز عبور جدید (حداقل ۶ نویسه)" : "New Password (min 6 chars)"}
-                        className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      {pwdFeedback ? (
-                        <span className="text-xs font-medium text-indigo-500 dark:text-indigo-400">{pwdFeedback}</span>
-                      ) : (
-                        <span />
-                      )}
-                      <Button
-                        type="submit"
-                        variant="glass"
-                        disabled={pwdSaving || !currentPwd || !newPwd}
-                        className="!min-h-[38px] !px-4 text-xs font-bold"
-                      >
-                        {pwdSaving
-                          ? lang === "fa"
-                            ? "در حال تغییر..."
-                            : "Changing..."
-                          : lang === "fa"
-                            ? "ثبت رمز جدید"
-                            : "Update Password"}
-                      </Button>
-                    </div>
-                  </form>
-                )}
+                <div className="sf-collapse" data-open={changePwdOpen ? "true" : "false"}>
+                  <div className="sf-collapse-inner">
+                    <form
+                      onSubmit={(e) => void handleChangePassword(e)}
+                      className="px-4 pb-4 pt-2 space-y-2.5 bg-black/[0.015] dark:bg-white/[0.02] border-t border-black/[0.04] dark:border-white/[0.05]"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <input
+                          type="password"
+                          value={currentPwd}
+                          onChange={(e) => setCurrentPwd(e.target.value)}
+                          placeholder={lang === "fa" ? "رمز عبور فعلی" : "Current Password"}
+                          className="w-full rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                          required
+                        />
+                        <input
+                          type="password"
+                          value={newPwd}
+                          onChange={(e) => setNewPwd(e.target.value)}
+                          placeholder={lang === "fa" ? "رمز عبور جدید (حداقل ۶ نویسه)" : "New Password (min 6 chars)"}
+                          className="w-full rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] placeholder:text-[var(--sf-muted)]/60 px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                          required
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        {pwdFeedback ? (
+                          <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                            {pwdFeedback}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+                        <Button
+                          type="submit"
+                          variant="glass"
+                          disabled={pwdSaving || !currentPwd || !newPwd}
+                          className="!min-h-[38px] !px-4 text-xs font-bold"
+                        >
+                          {pwdSaving
+                            ? lang === "fa"
+                              ? "در حال تغییر..."
+                              : "Changing..."
+                            : lang === "fa"
+                              ? "ثبت رمز جدید"
+                              : "Update Password"}
+                        </Button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
               </div>
             </>
           ) : (
@@ -480,10 +539,10 @@ export default function SettingsPage() {
           {t("settingsGeneralGroup")}
         </h2>
         <div className={cardGroupClass}>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3.5">
+          <div className="p-4 space-y-3">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#007AFF] text-white shrink-0">
-                <GlobeIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500/12 text-sky-600 dark:text-sky-400 border border-sky-500/15 shrink-0">
+                <GlobeIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">{t("languageLabel")}</span>
@@ -493,7 +552,7 @@ export default function SettingsPage() {
             <GlassSegmented
               aria-label={t("languageLabel")}
               size="sm"
-              className="self-end sm:self-auto shrink-0"
+              fullWidth
               value={lang}
               onValueChange={(v) => setLang(v as Lang)}
               items={[
@@ -503,10 +562,10 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3.5">
+          <div className="p-4 space-y-3">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#5856D6] text-white shrink-0">
-                <PaintBrushIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/12 text-violet-600 dark:text-violet-400 border border-violet-500/15 shrink-0">
+                <PaintBrushIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">{t("themeLabel")}</span>
@@ -516,7 +575,7 @@ export default function SettingsPage() {
             <GlassSegmented
               aria-label={t("themeLabel")}
               size="sm"
-              className="self-end sm:self-auto shrink-0"
+              fullWidth
               value={choice}
               onValueChange={(v) => setChoice(v as ThemeChoice)}
               items={[
@@ -535,10 +594,10 @@ export default function SettingsPage() {
           {t("settingsPlaybackGroup")}
         </h2>
         <div className={cardGroupClass}>
-          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[58px]">
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[60px]">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#34C759] text-white shrink-0">
-                <SparkleIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 border border-emerald-500/15 shrink-0">
+                <SparkleIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">{t("highQualityAudio")}</span>
@@ -552,10 +611,10 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[58px]">
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[60px]">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#FF2D55] text-white shrink-0">
-                <WaveformIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/12 text-rose-600 dark:text-rose-400 border border-rose-500/15 shrink-0">
+                <WaveformIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">{t("visualizerLabel")}</span>
@@ -569,17 +628,17 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[58px]">
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[60px]">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#00C7BE] text-white shrink-0">
-                <CloudCheckIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-500/12 text-cyan-600 dark:text-cyan-400 border border-cyan-500/15 shrink-0">
+                <CloudCheckIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">{t("offlineCacheTitle")}</span>
                 <span className="block text-xs text-[var(--sf-muted)]">
                   {lang === "fa"
                     ? "نگهداری موقت آهنگ‌ها برای پخش فوری در دفعات بعدی"
-                    : "Keep recent tracks cached locally for instant playback"}
+                    : "Keep recent tracks cached locally for instant replay"}
                 </span>
               </div>
             </div>
@@ -600,12 +659,12 @@ export default function SettingsPage() {
         <div className={cardGroupClass}>
           <div className="flex items-center justify-between gap-3 px-4 py-4">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shrink-0">
-                <HardDriveIcon size={19} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 border border-emerald-500/15 shrink-0">
+                <HardDriveIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold text-sm">{t("storageUsed")}</span>
+                  <span className="font-semibold text-sm text-[var(--sf-text)]">{t("storageUsed")}</span>
                   <span className="tabular-nums font-extrabold text-sm text-[var(--sf-text)]" dir="ltr">
                     {formatSize(storageBudgetInfo.usageBytes)}
                   </span>
@@ -616,14 +675,14 @@ export default function SettingsPage() {
               </div>
             </div>
             <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 shrink-0">
-              {lang === "fa" ? "دانلود نامحدود" : "Unlimited"}
+              {lang === "fa" ? "نامحدود" : "Unlimited"}
             </span>
           </div>
 
           <div className="flex items-center justify-between gap-3 px-4 py-3.5">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-indigo-500/15 text-indigo-500 shrink-0">
-                <FolderSimpleIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/12 text-indigo-600 dark:text-indigo-400 border border-indigo-500/15 shrink-0">
+                <FolderSimpleIcon size={18} weight="bold" aria-hidden="true" />
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">
@@ -631,8 +690,8 @@ export default function SettingsPage() {
                 </span>
                 <span className="block text-xs text-[var(--sf-muted)]">
                   {lang === "fa"
-                    ? "آهنگ‌ها در پوشه Music/Soundify ذخیره می‌شوند و با پاک کردن برنامه هم نمی‌روند"
-                    : "Saved in Music/Soundify so tracks survive uninstalling the app"}
+                    ? "فایل‌ها در Music/Soundify می‌مانند و با حذف برنامه هم پاک نمی‌شوند"
+                    : "Saved in Music/Soundify so tracks survive app uninstalls"}
                 </span>
               </div>
             </div>
@@ -641,40 +700,43 @@ export default function SettingsPage() {
             </span>
           </div>
 
-          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[56px]">
-            <div className="min-w-0">
-              <span className="block font-semibold text-sm">{t("clearOfflineCacheTitle")}</span>
-              <span className="block text-xs text-[var(--sf-muted)]">{t("clearOfflineCacheDesc")}</span>
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[60px]">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/12 text-amber-600 dark:text-amber-400 border border-amber-500/15 shrink-0">
+                <BroomIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <span className="block font-semibold text-sm text-[var(--sf-text)]">
+                  {lang === "fa" ? "پاک‌سازی کش و حافظه موقت" : "Clear Cache & Temporary Memory"}
+                </span>
+                <span className="block text-xs text-[var(--sf-muted)]">
+                  {lang === "fa"
+                    ? "آزادسازی حافظه موقت بدون حذف آهنگ‌های دانلودشده"
+                    : "Frees temporary buffers without touching downloaded songs"}
+                </span>
+              </div>
             </div>
             <Button
               type="button"
               variant="glass"
-              onClick={() => setConfirmClearOfflineCache(true)}
+              onClick={() => setConfirmClearAllCache(true)}
               className="!min-h-[36px] !px-3.5 text-xs font-semibold shrink-0"
             >
-              {offlineCacheCleared ? t("clearOfflineCacheDone") : (lang === "fa" ? "پاک‌سازی" : "Clear")}
+              {allCacheCleared ? t("clearCacheDone") : (lang === "fa" ? "پاک‌سازی" : "Clear")}
             </Button>
           </div>
 
-          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[56px]">
-            <div className="min-w-0">
-              <span className="block font-semibold text-sm">{t("clearCacheTitle")}</span>
-              <span className="block text-xs text-[var(--sf-muted)]">{t("clearCacheDesc")}</span>
-            </div>
-            <Button
-              type="button"
-              variant="glass"
-              onClick={handleClearCache}
-              className="!min-h-[36px] !px-3.5 text-xs font-semibold shrink-0"
-            >
-              {cacheCleared ? t("clearCacheDone") : t("clearCacheBtn")}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[56px]">
-            <div className="min-w-0">
-              <span className="block font-semibold text-sm text-rose-500">{t("deleteAllDownloadsTitle")}</span>
-              <span className="block text-xs text-[var(--sf-muted)]">{t("deleteAllDownloadsDesc")}</span>
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[60px]">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/12 text-rose-600 dark:text-rose-400 border border-rose-500/15 shrink-0">
+                <TrashIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <span className="block font-semibold text-sm text-rose-600 dark:text-rose-400">
+                  {t("deleteAllDownloadsTitle")}
+                </span>
+                <span className="block text-xs text-[var(--sf-muted)]">{t("deleteAllDownloadsDesc")}</span>
+              </div>
             </div>
             <Button
               type="button"
@@ -682,7 +744,6 @@ export default function SettingsPage() {
               destructive
               onClick={() => setConfirmDeleteAllDownloads(true)}
               disabled={downloadedTracks.length === 0}
-              icon={<TrashIcon size={15} aria-hidden="true" />}
               className="!min-h-[36px] !px-3 text-xs font-semibold shrink-0"
             >
               {lang === "fa" ? "حذف همه" : "Delete All"}
@@ -710,13 +771,13 @@ export default function SettingsPage() {
             </Button>
           </div>
 
-          <div className="rounded-[22px] bg-white/95 dark:bg-[#14161f] border border-black/[0.06] dark:border-white/[0.07] p-4 space-y-3.5">
+          <div className={`${cardGroupClass} p-4 space-y-3.5 !divide-y-0`}>
             <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/12 text-indigo-500 shrink-0">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/12 text-indigo-600 dark:text-indigo-400 border border-indigo-500/15 shrink-0">
                 <GlobeHemisphereWestIcon size={20} weight="duotone" aria-hidden="true" />
               </span>
               <div className="min-w-0">
-                <p className="font-bold text-sm">
+                <p className="font-bold text-sm text-[var(--sf-text)]">
                   {lang === "fa" ? "مجوز جستجو در شبکه‌های جهانی" : "External Music Access Control"}
                 </p>
                 <p className="text-xs text-[var(--sf-muted)] mt-0.5">
@@ -732,7 +793,7 @@ export default function SettingsPage() {
               value={adminSearchQuery}
               onChange={(e) => setAdminSearchQuery(e.target.value)}
               placeholder={lang === "fa" ? "جستجوی کاربر..." : "Search user..."}
-              className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+              className="w-full rounded-xl bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/10 text-[var(--sf-text)] px-3.5 py-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
             />
 
             {adminActionFeedback && (
@@ -764,7 +825,7 @@ export default function SettingsPage() {
                         </span>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs truncate">{u.displayName || u.username}</span>
+                            <span className="font-bold text-xs truncate text-[var(--sf-text)]">{u.displayName || u.username}</span>
                             {u.role === "admin" && (
                               <span className="rounded-full bg-indigo-500/15 px-1.5 text-[9px] font-bold text-indigo-500">
                                 Admin
@@ -811,10 +872,10 @@ export default function SettingsPage() {
         <div className={cardGroupClass}>
           <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[54px]">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#8E8E93] text-white shrink-0">
-                <InfoIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-500/12 text-slate-600 dark:text-slate-300 border border-slate-500/15 shrink-0">
+                <InfoIcon size={18} weight="bold" aria-hidden="true" />
               </span>
-              <span className="font-semibold text-sm truncate">
+              <span className="font-semibold text-sm truncate text-[var(--sf-text)]">
                 {lang === "fa" ? "نسخه برنامه" : "Version"}
               </span>
             </div>
@@ -825,15 +886,21 @@ export default function SettingsPage() {
 
           <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[54px]">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#34C759] text-white shrink-0">
-                <DeviceMobileIcon size={17} weight="bold" aria-hidden="true" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 border border-emerald-500/15 shrink-0">
+                <DeviceMobileIcon size={18} weight="bold" aria-hidden="true" />
               </span>
-              <span className="font-semibold text-sm truncate">
-                {lang === "fa" ? "پلتفرم" : "Platform"}
+              <span className="font-semibold text-sm truncate text-[var(--sf-text)]">
+                {lang === "fa" ? "موتور پخش" : "Playback Engine"}
               </span>
             </div>
-            <span dir="ltr" className="text-sm font-medium text-[var(--sf-muted)] shrink-0">
-              {isAndroidNative() ? `${APP_CHANNEL} App` : "Web"}
+            <span dir="ltr" className="text-xs font-semibold text-[var(--sf-muted)] shrink-0">
+              {isNativeAudioAvailable()
+                ? lang === "fa"
+                  ? "پخش بومی اندروید (ExoPlayer)"
+                  : "Android Native (ExoPlayer)"
+                : isAndroidNative()
+                  ? `${APP_CHANNEL} App`
+                  : "Web"}
             </span>
           </div>
         </div>
@@ -843,25 +910,27 @@ export default function SettingsPage() {
         </p>
       </section>
 
-      {/* Confirmation Modal: Clear Offline Cache */}
-      {typeof document !== "undefined" && confirmClearOfflineCache && createPortal(
+      {/* Confirmation Modal: Clear All Cache */}
+      {typeof document !== "undefined" && confirmClearAllCache && createPortal(
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="clear-cache-dialog-title"
           className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
-          onClick={() => setConfirmClearOfflineCache(false)}
+          onClick={() => setConfirmClearAllCache(false)}
         >
           <div
-            className="sf-sheet-up w-full max-w-sm sm:max-w-md bg-white/95 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+            className="sf-sheet-up sm:sf-modal-pop w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#12141e]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
             <div className="text-center space-y-2 pt-1">
               <div className="h-12 w-12 rounded-2xl bg-amber-500/15 text-amber-500 mx-auto flex items-center justify-center mb-1 ring-1 ring-amber-500/25">
-                <TrashIcon size={24} weight="bold" />
+                <BroomIcon size={24} weight="bold" />
               </div>
-              <h3 id="clear-cache-dialog-title" className="text-base font-bold text-[var(--sf-text)]">{t("clearOfflineCacheTitle")}</h3>
+              <h3 id="clear-cache-dialog-title" className="text-base font-bold text-[var(--sf-text)]">
+                {lang === "fa" ? "پاک‌سازی کش و حافظه موقت" : "Clear Cache & Temporary Memory"}
+              </h3>
               <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
                 {t("confirmClearCache")}
               </p>
@@ -869,14 +938,14 @@ export default function SettingsPage() {
             <div className="space-y-2 pt-2">
               <button
                 type="button"
-                onClick={handleConfirmClearOfflineCache}
+                onClick={handleConfirmClearAllCaches}
                 className="sf-press w-full min-h-[50px] rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm cursor-pointer shadow-sm"
               >
                 {lang === "fa" ? "پاک‌سازی حافظه موقت" : "Clear Cache"}
               </button>
               <button
                 type="button"
-                onClick={() => setConfirmClearOfflineCache(false)}
+                onClick={() => setConfirmClearAllCache(false)}
                 className="sf-press w-full min-h-[50px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
               >
                 {lang === "fa" ? "لغو" : "Cancel"}
@@ -897,7 +966,7 @@ export default function SettingsPage() {
           onClick={() => setConfirmDeleteAllDownloads(false)}
         >
           <div
-            className="sf-sheet-up w-full max-w-sm sm:max-w-md bg-white/95 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+            className="sf-sheet-up sm:sf-modal-pop w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#12141e]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.35)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/30 mx-auto -mt-1 mb-2.5 sm:hidden" />
@@ -905,7 +974,9 @@ export default function SettingsPage() {
               <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center mb-1 ring-1 ring-rose-500/25">
                 <TrashIcon size={24} weight="bold" />
               </div>
-              <h3 id="delete-all-dialog-title" className="text-base font-bold text-rose-600 dark:text-rose-400">{t("deleteAllDownloadsTitle")}</h3>
+              <h3 id="delete-all-dialog-title" className="text-base font-bold text-rose-600 dark:text-rose-400">
+                {t("deleteAllDownloadsTitle")}
+              </h3>
               <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
                 {t("confirmClearDownloads")}
               </p>

@@ -17,6 +17,7 @@ import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 import com.soundify.app.media.MediaSessionPlugin;
 import com.soundify.app.media.MediaStorePlugin;
+import com.soundify.app.media.NativeAudioPlugin;
 import com.soundify.app.security.SecurityIntegrityPlugin;
 
 import java.io.File;
@@ -188,6 +189,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SecurityIntegrityPlugin.class);
         registerPlugin(MediaSessionPlugin.class);
         registerPlugin(MediaStorePlugin.class);
+        registerPlugin(NativeAudioPlugin.class);
 
         super.onCreate(savedInstanceState);
 

@@ -77,18 +77,25 @@ export function djCrossfadeGains(progress: number): { outGain: number; inGain: n
   if (p <= 0) return { outGain: 1, inGain: 0 };
   if (p >= 1) return { outGain: 0, inGain: 1 };
 
-  const inP = Math.min(1, p / 0.72);
-  const inSmooth = inP * inP * (3 - 2 * inP);
-  const inGain = Math.sin(inSmooth * Math.PI * 0.5);
-
-  const outP = Math.max(0, (p - 0.16) / 0.84);
-  const outSmooth = outP * outP * (3 - 2 * outP);
-  const outGain = Math.pow(Math.max(0, Math.cos(outSmooth * Math.PI * 0.5)), 1.35);
+  // Pure Apple Music constant-loudness cosine-eased S-curve:
+  // outGain^2 + inGain^2 === 1.0 at every instant (no volume dip, no muddy vocal clash)
+  const eased = 0.5 - 0.5 * Math.cos(p * Math.PI);
+  const outGain = Math.cos(eased * Math.PI * 0.5);
+  const inGain = Math.sin(eased * Math.PI * 0.5);
 
   return {
     outGain: Number.isFinite(outGain) ? Math.max(0, Math.min(1, outGain)) : 0,
     inGain: Number.isFinite(inGain) ? Math.max(0, Math.min(1, inGain)) : 1,
   };
+}
+
+function hasReliableWaveform(track: Track): boolean {
+  if (!Array.isArray(track.waveform) || track.waveform.length < 8) return false;
+  if (track.id.startsWith("ext-")) return false;
+  if (track.source === "youtube" || track.source === "soundcloud" || track.source === "spotify") {
+    return false;
+  }
+  return true;
 }
 
 function normalizeWaveform(wf?: number[]): number[] {
@@ -155,13 +162,15 @@ export function computeAutoMixPlan(
     };
   }
 
-  const outBars = normalizeWaveform(outgoing.waveform);
-  const inBars = normalizeWaveform(incoming.waveform);
+  const outReliable = hasReliableWaveform(outgoing);
+  const inReliable = hasReliableWaveform(incoming);
+  const outBars = outReliable ? normalizeWaveform(outgoing.waveform) : [];
+  const inBars = inReliable ? normalizeWaveform(incoming.waveform) : [];
   const inDur = Number.isFinite(incoming.durationSec) && incoming.durationSec > 0 ? incoming.durationSec : 180;
 
-  // 1. Incoming intro silence-skip & beat cue
+  // 1. Incoming intro silence-skip & beat cue (only on real local waveforms; external streams start cleanly at 0:00)
   let mixInSec = 0;
-  if (inBars.length >= 8 && inDur >= 20) {
+  if (inReliable && inBars.length >= 8 && inDur >= 20) {
     const maxScanBars = Math.min(
       Math.max(2, Math.floor(inBars.length * 0.16)),
       Math.max(2, Math.round((12 / inDur) * inBars.length)),
@@ -191,39 +200,48 @@ export function computeAutoMixPlan(
   const incomingHeadEnergy =
     inBars.length > 0 ? meanRange(inBars, headStartIdx, headEndIdx, 0.5) : 0.5;
 
-  const energySimilarity = Math.max(0, 1 - Math.abs(outgoingTailEnergy - incomingHeadEnergy));
-  let crossfadeSec = 5.0 + energySimilarity * 2.5; // 5.0s .. 7.5s
+  let crossfadeSec = 5.5;
+  let mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.35);
 
-  // 3. Find natural outgoing breakdown / outro drop in the last 14s..4.5s window
-  const minOutSec = Math.max(dur * 0.65, dur - 14);
-  const maxOutSec = Math.max(minOutSec, dur - Math.min(crossfadeSec, 4.5));
-  let mixOutSec = Math.max(minOutSec, dur - crossfadeSec);
+  if (!outReliable) {
+    // External tracks use synthetic hash waveforms: always blend cleanly in the final outro
+    crossfadeSec = Math.max(3.5, Math.min(5.5, dur * 0.12));
+    mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.35);
+  } else {
+    const energySimilarity = Math.max(0, 1 - Math.abs(outgoingTailEnergy - incomingHeadEnergy));
+    crossfadeSec = 4.5 + energySimilarity * 2.0; // 4.5s .. 6.5s
 
-  if (outBars.length >= 12) {
-    const bodyStart = Math.floor(outBars.length * 0.15);
-    const bodyEnd = Math.ceil(outBars.length * 0.85);
-    const trackMedian = median(outBars.slice(bodyStart, bodyEnd), 0.55);
-    const dropThreshold = Math.min(0.42, Math.max(0.18, trackMedian * 0.58));
+    // 3. Find natural outgoing breakdown / outro drop in the last 12s..4.5s window
+    const minOutSec = Math.max(dur * 0.65, dur - 12);
+    const maxOutSec = Math.max(minOutSec, dur - Math.min(crossfadeSec, 4.5));
+    mixOutSec = Math.max(minOutSec, dur - crossfadeSec);
 
-    const startIdx = Math.max(2, Math.floor((minOutSec / dur) * outBars.length));
-    const endIdx = Math.min(outBars.length - 1, Math.ceil((maxOutSec / dur) * outBars.length));
+    if (outBars.length >= 12) {
+      const bodyStart = Math.floor(outBars.length * 0.15);
+      const bodyEnd = Math.ceil(outBars.length * 0.85);
+      const trackMedian = median(outBars.slice(bodyStart, bodyEnd), 0.55);
+      const dropThreshold = Math.min(0.42, Math.max(0.18, trackMedian * 0.58));
 
-    for (let i = startIdx; i <= endIdx; i++) {
-      const prev = outBars[Math.max(0, i - 1)];
-      const cur = outBars[i];
-      const next = outBars[Math.min(outBars.length - 1, i + 1)];
-      const movingAvg = (prev + cur + next) / 3;
-      if (movingAvg <= dropThreshold) {
-        const candidateSec = (i / outBars.length) * dur;
-        mixOutSec = Math.max(minOutSec, Math.min(maxOutSec, candidateSec));
-        break;
+      const startIdx = Math.max(2, Math.floor((minOutSec / dur) * outBars.length));
+      const endIdx = Math.min(outBars.length - 1, Math.ceil((maxOutSec / dur) * outBars.length));
+
+      for (let i = startIdx; i <= endIdx; i++) {
+        const prev = outBars[Math.max(0, i - 1)];
+        const cur = outBars[i];
+        const next = outBars[Math.min(outBars.length - 1, i + 1)];
+        const movingAvg = (prev + cur + next) / 3;
+        if (movingAvg <= dropThreshold) {
+          const candidateSec = (i / outBars.length) * dur;
+          mixOutSec = Math.max(minOutSec, Math.min(maxOutSec, candidateSec));
+          break;
+        }
       }
     }
   }
 
   // Ensure crossfade completes gracefully before Deck A reaches EOF with 0.35s headroom
   const remainingSec = Math.max(3.5, dur - mixOutSec - 0.35);
-  crossfadeSec = Math.max(3.5, Math.min(7.5, Math.min(crossfadeSec, remainingSec)));
+  crossfadeSec = Math.max(3.5, Math.min(6.5, Math.min(crossfadeSec, remainingSec)));
 
   return {
     mixOutSec: Number(mixOutSec.toFixed(2)),

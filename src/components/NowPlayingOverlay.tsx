@@ -1641,18 +1641,13 @@ export function NowPlayingOverlay() {
                     {currentTrack.genre}
                   </span>
                   {isCrossfading && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 shadow-sm max-w-[230px]">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 shadow-sm shrink-0 whitespace-nowrap">
                       <span aria-hidden="true" className="flex items-end gap-0.5 h-2.5 shrink-0">
                         <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" />
                         <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-300 rounded-full" style={{ animationDelay: "0.18s" }} />
                         <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
                       </span>
-                      <span className="truncate">
-                        {pickText("AutoMix", "میکس روان")}
-                        {crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id
-                          ? ` • ${pickText(crossfadeFromTrack.title, crossfadeFromTrack.titleFa)}`
-                          : ""}
-                      </span>
+                      <span>{pickText("AutoMix", "میکس روان")}</span>
                     </span>
                   )}
                 </div>
@@ -1807,24 +1802,19 @@ export function NowPlayingOverlay() {
                 </div>
 
                 <div key={`info-${currentTrack.id}`} className="sf-view-fade w-full max-w-[356px] sm:max-w-md flex items-center justify-between gap-2.5 px-1 shrink-0">
-                  <div className="min-w-0 flex-1 text-start">
-                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
+                  <div className="min-w-0 flex-1 overflow-hidden text-start">
+                    <div className="flex items-center gap-1.5 flex-nowrap overflow-hidden mb-1">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15 shrink-0">
                         {currentTrack.genre}
                       </span>
                       {isCrossfading && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 max-w-[180px]">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 shrink-0 whitespace-nowrap">
                           <span aria-hidden="true" className="flex items-end gap-0.5 h-2.5 shrink-0">
                             <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" />
                             <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-300 rounded-full" style={{ animationDelay: "0.18s" }} />
                             <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
                           </span>
-                          <span className="truncate">
-                            {pickText("AutoMix", "میکس روان")}
-                            {crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id
-                              ? ` • ${pickText(crossfadeFromTrack.title, crossfadeFromTrack.titleFa)}`
-                              : ""}
-                          </span>
+                          <span>{pickText("AutoMix", "میکس روان")}</span>
                         </span>
                       )}
                     </div>

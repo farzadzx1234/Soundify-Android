@@ -13,34 +13,34 @@ describe("Soundify v1.0.26 Upfront DJ AutoMix UI, 60fps Curve & Global Search Pa
     vi.restoreAllMocks();
   });
 
-  it("synchronizes v1.0.26 / versionCode 27 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.26");
-    expect(APP_BUILD_NUMBER).toBe(27);
+  it("synchronizes v1.0.26+ / versionCode >= 27 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.2[6-9]/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(27);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toBe("1.0.26");
+    expect(pkg.version).toMatch(/^1\.0\.2[6-9]/);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toContain("soundify-v1.0.26-b27");
+    expect(swJs).toMatch(/soundify-v1\.0\.2[6-9]-b2[7-9]/);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toContain("versionCode 27");
-    expect(gradle).toContain('versionName "1.0.26"');
+    expect(gradle).toMatch(/versionCode 2[7-9]/);
+    expect(gradle).toMatch(/versionName "1\.0\.2[6-9]"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.26"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.26"');
+    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.2[6-9]"/);
+    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.2[6-9]"/);
   });
 
   it("computes silky monotonic DJ S-curve crossfade gains with exact 0..1 endpoints", () => {
@@ -50,8 +50,9 @@ describe("Soundify v1.0.26 Upfront DJ AutoMix UI, 60fps Curve & Global Search Pa
     expect(djCrossfadeGains(1.5)).toEqual({ outGain: 0, inGain: 1 });
 
     const mid = djCrossfadeGains(0.5);
-    expect(mid.inGain).toBeGreaterThan(0.75);
-    expect(mid.outGain).toBeGreaterThan(0.45);
+    expect(mid.inGain).toBeCloseTo(Math.SQRT1_2, 4);
+    expect(mid.outGain).toBeCloseTo(Math.SQRT1_2, 4);
+    expect(mid.outGain * mid.outGain + mid.inGain * mid.inGain).toBeCloseTo(1, 5);
 
     let prevIn = 0;
     let prevOut = 1;

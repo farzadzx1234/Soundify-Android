@@ -335,6 +335,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const autoMixPreparingKeyRef = useRef<string | null>(null);
   const autoMixTargetTrackRef = useRef<Track | null>(null);
   const autoMixPlanRef = useRef<AutoMixPlan | null>(null);
+  const autoMixPlanDurRef = useRef<number>(0);
   const autoMixModeRef = useRef<"native" | "web" | null>(null);
   const autoMixStartedRef = useRef<boolean>(false);
   const finalizeWebAutoMixRef = useRef<(() => void) | null>(null);
@@ -852,6 +853,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     autoMixPreparingKeyRef.current = null;
     autoMixTargetTrackRef.current = null;
     autoMixPlanRef.current = null;
+    autoMixPlanDurRef.current = 0;
     autoMixModeRef.current = null;
     autoMixStartedRef.current = false;
     finalizeWebAutoMixRef.current = null;
@@ -933,6 +935,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         autoMixTargetTrackRef.current = nextTrack;
         plan = computeAutoMixPlan(curr, nextTrack, durSec);
         autoMixPlanRef.current = plan;
+        autoMixPlanDurRef.current = durSec;
+      } else if (Math.abs(durSec - autoMixPlanDurRef.current) > 1.5) {
+        plan = computeAutoMixPlan(curr, nextTrack, durSec);
+        autoMixPlanRef.current = plan;
+        autoMixPlanDurRef.current = durSec;
       }
 
       const pairKey = `${curr.id}::${nextTrack.id}`;
@@ -1184,6 +1191,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             autoMixPreparingKeyRef.current = null;
             autoMixTargetTrackRef.current = null;
             autoMixPlanRef.current = null;
+            autoMixPlanDurRef.current = 0;
             autoMixModeRef.current = null;
             setIsCrossfading(false);
             setCrossfadeFromTrack(null);
@@ -4221,6 +4229,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         autoMixPreparingKeyRef.current = null;
         autoMixTargetTrackRef.current = null;
         autoMixPlanRef.current = null;
+        autoMixPlanDurRef.current = 0;
         autoMixModeRef.current = null;
         setIsCrossfading(false);
         setCrossfadeFromTrack(null);
@@ -4241,6 +4250,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         autoMixPreparingKeyRef.current = null;
         autoMixTargetTrackRef.current = null;
         autoMixPlanRef.current = null;
+        autoMixPlanDurRef.current = 0;
         autoMixModeRef.current = null;
         setIsCrossfading(false);
         setCrossfadeFromTrack(null);

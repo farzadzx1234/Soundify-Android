@@ -1636,11 +1636,8 @@ export function NowPlayingOverlay() {
                   </div>
                 </div>
 
-                <div className="mt-3 xl:mt-5 flex items-center justify-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
-                    {currentTrack.genre}
-                  </span>
-                  {isCrossfading && (
+                <div className="mt-3 xl:mt-5 flex items-center justify-center gap-2">
+                  {isCrossfading ? (
                     <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 shadow-sm shrink-0 whitespace-nowrap">
                       <span aria-hidden="true" className="flex items-end gap-0.5 h-2.5 shrink-0">
                         <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" />
@@ -1648,6 +1645,10 @@ export function NowPlayingOverlay() {
                         <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
                       </span>
                       <span>{pickText("AutoMix", "میکس روان")}</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
+                      {currentTrack.genre}
                     </span>
                   )}
                 </div>
@@ -1803,11 +1804,8 @@ export function NowPlayingOverlay() {
 
                 <div key={`info-${currentTrack.id}`} className="sf-view-fade w-full max-w-[356px] sm:max-w-md flex items-center justify-between gap-2.5 px-1 shrink-0">
                   <div className="min-w-0 flex-1 overflow-hidden text-start">
-                    <div className="flex items-center gap-1.5 flex-nowrap overflow-hidden mb-1">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15 shrink-0">
-                        {currentTrack.genre}
-                      </span>
-                      {isCrossfading && (
+                    <div className="flex items-center gap-1.5 mb-1">
+                      {isCrossfading ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 shrink-0 whitespace-nowrap">
                           <span aria-hidden="true" className="flex items-end gap-0.5 h-2.5 shrink-0">
                             <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" />
@@ -1815,6 +1813,10 @@ export function NowPlayingOverlay() {
                             <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
                           </span>
                           <span>{pickText("AutoMix", "میکس روان")}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15 max-w-full truncate">
+                          {currentTrack.genre}
                         </span>
                       )}
                     </div>

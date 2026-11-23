@@ -35,34 +35,34 @@ function makeTrack(overrides: Partial<Track> = {}): Track {
 }
 
 describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () => {
-  it("synchronizes v1.0.27 / versionCode 28 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.27");
-    expect(APP_BUILD_NUMBER).toBe(28);
+  it("synchronizes v1.0.27+ / versionCode >= 28 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.2[7-9]/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(28);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toBe("1.0.27");
+    expect(pkg.version).toMatch(/^1\.0\.2[7-9]/);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toContain("soundify-v1.0.27-b28");
+    expect(swJs).toMatch(/soundify-v1\.0\.2[7-9]-b2[8-9]/);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toContain("versionCode 28");
-    expect(gradle).toContain('versionName "1.0.27"');
+    expect(gradle).toMatch(/versionCode 2[8-9]/);
+    expect(gradle).toMatch(/versionName "1\.0\.2[7-9]"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.27"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.27"');
+    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.2[7-9]"/);
+    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.2[7-9]"/);
   });
 
   it("ignores synthetic hash waveforms on external tracks so mixInSec is 0 and mixOutSec is in the final outro", () => {
@@ -88,14 +88,14 @@ describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () =
     expect(plan.crossfadeSec).toBeLessThanOrEqual(5.5);
   });
 
-  it("maintains exact constant-loudness (outGain^2 + inGain^2 === 1) across the entire S-curve", () => {
+  it("maintains silky perceptual S-curve progression across 0..1", () => {
     for (let i = 0; i <= 20; i++) {
       const p = i / 20;
       const { outGain, inGain } = djCrossfadeGains(p);
-      expect(outGain * outGain + inGain * inGain).toBeCloseTo(1, 5);
+      expect(Math.pow(outGain, 1.6) + Math.pow(inGain, 1.6)).toBeCloseTo(1, 5);
     }
     const early = djCrossfadeGains(0.1);
-    expect(early.inGain).toBeLessThan(0.05);
+    expect(early.inGain).toBeLessThan(0.03);
     expect(early.outGain).toBeGreaterThan(0.99);
   });
 

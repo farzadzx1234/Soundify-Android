@@ -50,9 +50,10 @@ describe("Soundify v1.0.26 Upfront DJ AutoMix UI, 60fps Curve & Global Search Pa
     expect(djCrossfadeGains(1.5)).toEqual({ outGain: 0, inGain: 1 });
 
     const mid = djCrossfadeGains(0.5);
-    expect(mid.inGain).toBeCloseTo(Math.SQRT1_2, 4);
-    expect(mid.outGain).toBeCloseTo(Math.SQRT1_2, 4);
-    expect(mid.outGain * mid.outGain + mid.inGain * mid.inGain).toBeCloseTo(1, 5);
+    const expectedMid = Math.pow(Math.SQRT1_2, 1.25);
+    expect(mid.inGain).toBeCloseTo(expectedMid, 4);
+    expect(mid.outGain).toBeCloseTo(expectedMid, 4);
+    expect(Math.pow(mid.outGain, 1.6) + Math.pow(mid.inGain, 1.6)).toBeCloseTo(1, 5);
 
     let prevIn = 0;
     let prevOut = 1;

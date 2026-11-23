@@ -77,8 +77,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.27";
-    private static final String APP_VERSION_HEADER = "1.0.27";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.28";
+    private static final String APP_VERSION_HEADER = "1.0.28";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -118,6 +118,7 @@ public class SoundifyMediaService extends Service {
     private volatile boolean isSwitchingNativeTrack = false;
     private String nextDeckTrackId = "";
     private String nextDeckStreamUrl = "";
+    private long nextDeckStartMs = 0L;
     private String lastNativeStreamUrl = "";
     private String lastNativeAuthToken = "";
     private volatile String nativeRepeatMode = "off";
@@ -269,12 +270,12 @@ public class SoundifyMediaService extends Service {
             long elapsedMs = SystemClock.elapsedRealtime() - crossfadeStartMs;
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(500L, crossfadeDurationMs)));
 
-            // Pure Apple Music constant-loudness cosine-eased S-curve matching smartAutoMix.djCrossfadeGains
+            // Perceptual Apple Music cosine-eased S-curve (pow 1.25) matching smartAutoMix.djCrossfadeGains
             double eased = 0.5 - 0.5 * Math.cos(p * Math.PI);
-            float inGain = (float) (Math.sin(eased * Math.PI * 0.5) * crossfadeTargetVolume);
+            float inGain = (float) (Math.pow(Math.sin(eased * Math.PI * 0.5), 1.25) * crossfadeTargetVolume);
             float outGain = outgoingEnded
                 ? 0.0f
-                : (float) (Math.cos(eased * Math.PI * 0.5) * crossfadeTargetVolume);
+                : (float) (Math.pow(Math.cos(eased * Math.PI * 0.5), 1.25) * crossfadeTargetVolume);
 
             try {
                 nextDeckPlayer.setVolume(Math.max(0.0f, outGain));
@@ -292,6 +293,8 @@ public class SoundifyMediaService extends Service {
                 nativePlayer.setVolume(crossfadeTargetVolume);
             } catch (Exception ignored) {}
             try {
+                nextDeckPlayer.setPlayWhenReady(false);
+                nextDeckPlayer.pause();
                 nextDeckPlayer.stop();
                 nextDeckPlayer.clearMediaItems();
             } catch (Exception ignored) {}
@@ -1178,6 +1181,8 @@ public class SoundifyMediaService extends Service {
         nextDeckTrackId = "";
         if (nextDeckPlayer != null) {
             try {
+                nextDeckPlayer.setPlayWhenReady(false);
+                nextDeckPlayer.pause();
                 nextDeckPlayer.stop();
                 nextDeckPlayer.clearMediaItems();
             } catch (Exception ignored) {}
@@ -1350,14 +1355,15 @@ public class SoundifyMediaService extends Service {
             }
             nextDeckTrackId = trackId != null ? trackId : "";
             nextDeckStreamUrl = url.trim();
+            nextDeckStartMs = startSec > 0 ? (long) (startSec * 1000.0) : 0L;
+            nextDeckPlayer.setPlayWhenReady(false);
+            nextDeckPlayer.pause();
             nextDeckPlayer.stop();
             nextDeckPlayer.clearMediaItems();
             nextDeckPlayer.setVolume(0.0f);
             nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
             nextDeckPlayer.setMediaItem(MediaItem.fromUri(url.trim()));
-            if (startSec > 0) {
-                nextDeckPlayer.seekTo((long) (startSec * 1000.0));
-            }
+            nextDeckPlayer.seekTo(nextDeckStartMs);
             nextDeckPlayer.prepare();
         });
     }
@@ -1425,6 +1431,9 @@ public class SoundifyMediaService extends Service {
 
             try {
                 nativePlayer.setVolume(0.0f);
+                if (Math.abs(nativePlayer.getCurrentPosition() - nextDeckStartMs) > 600L) {
+                    nativePlayer.seekTo(nextDeckStartMs);
+                }
                 nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
                 nativePlayer.addListener(primaryPlayerListener);
                 nativePlayer.setPlayWhenReady(true);

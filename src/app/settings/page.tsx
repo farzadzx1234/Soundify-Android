@@ -8,6 +8,7 @@ import {
   CaretLeftIcon,
   CloudCheckIcon,
   DeviceMobileIcon,
+  FadersIcon,
   FolderSimpleIcon,
   GlobeHemisphereWestIcon,
   GlobeIcon,
@@ -32,7 +33,9 @@ import { Button, GlassSegmented, Switch } from "@/components/GlassControls";
 import { useDownloadedTracks } from "@/lib/downloadManager";
 import { APP_BUILD_NUMBER, APP_CHANNEL, APP_VERSION } from "@/lib/appVersion";
 import { isAndroidNative } from "@/lib/androidBridge";
+import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { isNativeAudioAvailable } from "@/lib/nativeAudioBridge";
+import { setAutoMixEnabled, useAutoMixEnabled } from "@/lib/smartAutoMix";
 
 const LOCAL_PREF_EVENT = "soundify-local-pref-change";
 
@@ -94,6 +97,7 @@ export default function SettingsPage() {
 
   const [highQuality, handleToggleHighQuality] = useLocalStorageBool("soundify_hq", true);
   const [offlineCache, handleToggleOfflineCache] = useLocalStorageBool("soundify_offline_cache", true);
+  const autoMixEnabled = useAutoMixEnabled();
 
   // Storage management controls
   const {
@@ -625,6 +629,32 @@ export default function SettingsPage() {
               aria-label={t("visualizerLabel")}
               checked={visualizerEnabled}
               onCheckedChange={setVisualizerEnabled}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5 min-h-[60px]">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/12 text-indigo-600 dark:text-indigo-400 border border-indigo-500/15 shrink-0">
+                <FadersIcon size={18} weight="bold" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <span className="block font-semibold text-sm text-[var(--sf-text)]">
+                  {lang === "fa" ? "میکس خودکار پلی‌لیست" : "Playlist AutoMix"}
+                </span>
+                <span className="block text-xs text-[var(--sf-muted)]">
+                  {lang === "fa"
+                    ? "پیدا کردن نقطه طلایی پایان و شروع آهنگ‌ها برای میکس روان و پیوسته مثل اپل موزیک"
+                    : "Finds natural outro & intro cue points for seamless DJ-style transitions"}
+                </span>
+              </div>
+            </div>
+            <Switch
+              aria-label={lang === "fa" ? "میکس خودکار پلی‌لیست" : "Playlist AutoMix"}
+              checked={autoMixEnabled}
+              onCheckedChange={(checked) => {
+                void triggerHapticFeedback("selection");
+                setAutoMixEnabled(checked);
+              }}
             />
           </div>
 

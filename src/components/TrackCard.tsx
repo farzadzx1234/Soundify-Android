@@ -36,7 +36,6 @@ interface TrackCardProps {
 export const TrackCard = memo(function TrackCard({
   track,
   queue,
-  playlists = [],
   onTrackUpdated,
   priorityImage = false,
   autoExpand = false,
@@ -106,32 +105,12 @@ export const TrackCard = memo(function TrackCard({
     }
   };
 
-  const editablePlaylists = user
-    ? playlists.filter((pl) => pl.ownerId === user.id || user.role === "admin").slice(0, 5)
-    : [];
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(""), 2200);
-  };
-
   const menuItems = [
     {
       label: t("addToPlaylist"),
       icon: <PlusCircleIcon size={16} aria-hidden="true" />,
       onSelect: () => openPlaylistPicker(activeTrack),
     },
-    ...(editablePlaylists.length > 0 ? (["separator"] as const) : []),
-    ...editablePlaylists.map((pl) => ({
-      label: `${t("addToPlaylist")}: ${pickText(pl.title, pl.titleFa)}`,
-      icon: <PlusCircleIcon size={16} aria-hidden="true" />,
-      onSelect: () => {
-        void api
-          .addTrackToPlaylist(pl.id, activeTrack.id)
-          .then(() => showToast(t("addedToPlaylist")))
-          .catch(() => showToast(t("actionFailed")));
-      },
-    })),
     "separator" as const,
     {
       label: t("share"),

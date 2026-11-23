@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   SegmentedControl as GlisseSegmentedControl,
@@ -487,42 +488,108 @@ export function Menu({
   "aria-label": ariaLabel = "Options",
 }: GlassMenuProps) {
   const [open, setOpen] = useState(false);
-  const [openUpwards, setOpenUpwards] = useState(true);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; origin: string }>({
+    top: 12,
+    left: 12,
+    origin: "top right",
+  });
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+
+  const computeMenuCoords = useCallback(
+    (menuW: number, menuH: number) => {
+      const el = triggerRef.current;
+      if (!el || typeof window === "undefined") return { top: 12, left: 12, origin: "center" };
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const isRtl =
+        document.documentElement.dir === "rtl" || getComputedStyle(el).direction === "rtl";
+
+      const alignEnd = align === "end";
+      const desiredLeft = isRtl
+        ? alignEnd
+          ? rect.left
+          : rect.right - menuW
+        : alignEnd
+          ? rect.right - menuW
+          : rect.left;
+      const left = Math.max(12, Math.min(vw - menuW - 12, desiredLeft));
+
+      const spaceBelow = vh - rect.bottom - 12;
+      const spaceAbove = rect.top - 12;
+      const openUpwards = spaceBelow < menuH + 8 && spaceAbove >= spaceBelow;
+      const rawTop = openUpwards ? rect.top - menuH - 8 : rect.bottom + 8;
+      const top = Math.max(12, Math.min(vh - menuH - 12, rawTop));
+
+      const originX = rect.left + rect.width / 2 - left;
+      const originY = openUpwards ? menuH : 0;
+      return {
+        top,
+        left,
+        origin: `${Math.round(originX)}px ${Math.round(originY)}px`,
+      };
+    },
+    [align],
+  );
 
   const handleToggle = () => {
     setOpen((prev) => {
       const next = !prev;
-      if (next && wrapRef.current) {
-        const rect = wrapRef.current.getBoundingClientRect();
-        setOpenUpwards(rect.top > 230);
+      if (next) {
+        const estH = Math.min(320, items.length * 40 + 16);
+        setMenuPos(computeMenuCoords(200, estH));
       }
       return next;
     });
   };
 
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current) return;
+    const node = menuRef.current;
+    const w = node.offsetWidth || 200;
+    const h = node.offsetHeight || 120;
+    const nextPos = computeMenuCoords(w, h);
+    node.style.top = `${nextPos.top}px`;
+    node.style.left = `${nextPos.left}px`;
+    node.style.transformOrigin = nextPos.origin;
+  }, [open, computeMenuCoords]);
+
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        !wrapRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
         setOpen(false);
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
+    const onScrollOrResize = () => {
+      setOpen(false);
+    };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onScrollOrResize, { passive: true, capture: true });
+    window.addEventListener("resize", onScrollOrResize, { passive: true });
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
     };
   }, [open]);
 
   return (
     <div ref={wrapRef} className="relative inline-flex">
       <button
+        ref={triggerRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="menu"
@@ -534,37 +601,44 @@ export function Menu({
         <DotsThreeIcon size={18} weight="bold" aria-hidden="true" />
       </button>
 
-      {open && (
-        <div
-          id={menuId}
-          role="menu"
-          className={`sf-glass-chrome sf-popover-in absolute ${
-            openUpwards ? "bottom-full mb-2" : "top-full mt-2"
-          } ${
-            align === "end" ? "end-0" : "start-0"
-          } z-40 min-w-[205px] max-w-[260px] rounded-2xl p-1.5 shadow-2xl dark:bg-[#0e101c]/95 dark:border dark:border-white/10 dark:shadow-[0_16px_40px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl`}
-        >
-          {items.map((item, idx) =>
-            item === "separator" ? (
-              <div key={`sep-${idx}`} role="separator" className="my-1 h-px bg-[var(--sf-hairline)] dark:bg-white/[0.08]" />
-            ) : (
-              <button
-                key={`${item.label}-${idx}`}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setOpen(false);
-                  item.onSelect();
-                }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-start text-xs font-semibold text-[var(--sf-text)] dark:text-white/90 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] active:scale-[0.98] transition-colors cursor-pointer"
-              >
-                {item.icon && <span className="shrink-0 opacity-80">{item.icon}</span>}
-                <span className="truncate">{item.label}</span>
-              </button>
-            ),
-          )}
-        </div>
-      )}
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={menuRef}
+            id={menuId}
+            role="menu"
+            style={{
+              position: "fixed",
+              top: menuPos.top,
+              left: menuPos.left,
+              transformOrigin: menuPos.origin,
+              maxWidth: "min(230px, calc(100vw - 24px))",
+            }}
+            className="sf-glass-chrome sf-popover-in z-[115] min-w-[180px] rounded-2xl p-1.5 shadow-2xl bg-white/95 dark:bg-[#0e101c]/95 border border-black/[0.08] dark:border-white/12 dark:shadow-[0_16px_40px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl"
+          >
+            {items.map((item, idx) =>
+              item === "separator" ? (
+                <div key={`sep-${idx}`} role="separator" className="my-1 h-px bg-[var(--sf-hairline)] dark:bg-white/[0.08]" />
+              ) : (
+                <button
+                  key={`${item.label}-${idx}`}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect();
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-start text-xs font-semibold text-[var(--sf-text)] dark:text-white/90 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] active:scale-[0.98] transition-colors cursor-pointer"
+                >
+                  {item.icon && <span className="shrink-0 opacity-80">{item.icon}</span>}
+                  <span className="truncate">{item.label}</span>
+                </button>
+              ),
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -757,6 +757,7 @@ export function NowPlayingOverlay() {
     queue,
     isPlaying,
     isBuffering,
+    isCrossfading,
     duration,
     volume,
     muted,
@@ -1616,9 +1617,17 @@ export function NowPlayingOverlay() {
                   </div>
                 </div>
 
-                <span className="mt-3 xl:mt-5 inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
-                  {currentTrack.genre}
-                </span>
+                <div className="mt-3 xl:mt-5 flex items-center justify-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
+                    {currentTrack.genre}
+                  </span>
+                  {isCrossfading && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-400/35 animate-pulse">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+                      {pickText("AutoMix", "در حال میکس")}
+                    </span>
+                  )}
+                </div>
 
                 <div className="mt-2 xl:mt-2.5 flex items-center gap-2 max-w-md flex-wrap">
                   <h2 className="text-xl lg:text-2xl xl:text-[31px] leading-tight font-black tracking-tight text-white line-clamp-2">
@@ -1756,9 +1765,17 @@ export function NowPlayingOverlay() {
 
                 <div key={`info-${currentTrack.id}`} className="sf-view-fade w-full max-w-[356px] sm:max-w-md flex items-center justify-between gap-2.5 px-1 shrink-0">
                   <div className="min-w-0 flex-1 text-start">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15 mb-1">
-                      {currentTrack.genre}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
+                        {currentTrack.genre}
+                      </span>
+                      {isCrossfading && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-400/35 animate-pulse">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+                          {pickText("AutoMix", "میکس روان")}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       <h2 className="truncate whitespace-nowrap text-[17px] min-[375px]:text-[20px] font-black tracking-tight text-white leading-snug">
                         {title}

@@ -6,7 +6,6 @@ import {
   FireIcon,
   PauseIcon,
   PlayIcon,
-  PlaylistIcon,
   SparkleIcon,
 } from "@phosphor-icons/react";
 import {
@@ -31,6 +30,17 @@ import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { useDownloadedTracks } from "@/lib/downloadManager";
 import { buildPersonalizedMixes } from "@/lib/listeningPersonalization";
 import type { Playlist, Track } from "@/lib/types";
+
+function getDailyPlaysScore(tr: Track): number {
+  return tr.dailyPlaysCount ?? tr.playsToday ?? tr.todayPlays ?? tr.playsCount ?? 0;
+}
+
+function getExplicitDailyPlays(tr: Track): number | null {
+  if (typeof tr.dailyPlaysCount === "number" && tr.dailyPlaysCount > 0) return tr.dailyPlaysCount;
+  if (typeof tr.playsToday === "number" && tr.playsToday > 0) return tr.playsToday;
+  if (typeof tr.todayPlays === "number" && tr.todayPlays > 0) return tr.todayPlays;
+  return null;
+}
 
 export default function HomePage() {
   const { user } = useAuth();
@@ -85,9 +95,16 @@ export default function HomePage() {
 
   const featured = useMemo(() => {
     if (!tracks.length) return null;
-    return [...tracks].sort((a, b) => (b.playsCount ?? 0) - (a.playsCount ?? 0))[0] ?? tracks[0];
+    return (
+      [...tracks].sort((a, b) => {
+        const diff = getDailyPlaysScore(b) - getDailyPlaysScore(a);
+        if (diff !== 0) return diff;
+        return (b.playsCount ?? 0) - (a.playsCount ?? 0);
+      })[0] ?? tracks[0]
+    );
   }, [tracks]);
   const featuredPlaying = featured && currentTrack?.id === featured.id && isPlaying;
+  const featuredDailyPlays = featured ? getExplicitDailyPlays(featured) : null;
 
   const personalizedMixes = useMemo(() => {
     const dlTrackObjects = downloadedTracks.map((d) => d.track);
@@ -178,7 +195,9 @@ export default function HomePage() {
 
                   <p className="text-sm sm:text-base text-[var(--sf-muted)] dark:text-slate-200 font-medium">
                     {pickText(featured.artistName, featured.artistNameFa)} • {pickText(featured.album, featured.albumFa)} •{" "}
-                    {formatNum(featured.playsCount)} {t("plays")}
+                    {featuredDailyPlays !== null
+                      ? `${formatNum(featuredDailyPlays)} ${pickText("plays today", "پخش امروز")}`
+                      : `${formatNum(featured.playsCount)} ${t("plays")}`}
                   </p>
 
                   <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 pt-1">
@@ -278,50 +297,6 @@ export default function HomePage() {
                   </div>
                 );
               })}
-            </div>
-          </section>
-        )}
-
-        {/* Curated Playlists (Spotify-style Square Grid Cards) */}
-        {playlists.length > 0 && (
-          <section className="space-y-3.5">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-slate-900 dark:text-white">
-                <PlaylistIcon size={22} weight="duotone" className="text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
-                <span>{t("curatedPlaylists")}</span>
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5 sm:gap-4">
-              {playlists.slice(0, 4).map((pl) => (
-                  <Link
-                    key={pl.id}
-                    href={getPlaylistDetailHref(pl.id)}
-                    onClick={() => void triggerHapticFeedback("tap")}
-                    className="group sf-content-card rounded-2xl p-2.5 sm:p-3.5 flex flex-col gap-2.5"
-                  >
-                  <div className="relative aspect-square w-full overflow-hidden rounded-xl shadow-md bg-black/20">
-                    <PlaylistMosaic coverUrls={pl.coverUrls} className="h-full w-full rounded-xl" lazy />
-                    <span
-                      aria-hidden="true"
-                      className="absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500 text-slate-950 shadow-[0_6px_16px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-105"
-                    >
-                      <PlayIcon size={17} weight="fill" className="translate-x-[0.5px]" />
-                    </span>
-                  </div>
-                  <div className="min-w-0 space-y-0.5 px-0.5">
-                    <h3 className="font-bold text-xs sm:text-sm truncate text-slate-950 dark:text-white">
-                      {pickText(pl.title, pl.titleFa)}
-                    </h3>
-                    <p className="text-[11px] text-[var(--sf-muted)] dark:text-slate-400 truncate">
-                      {pickText(pl.description, pl.descriptionFa)}
-                    </p>
-                    <span className="inline-block text-[10.5px] font-semibold text-indigo-600 dark:text-indigo-400 pt-0.5">
-                      {formatNum(pl.trackCount)} {t("tracksCount")}
-                    </span>
-                  </div>
-                </Link>
-              ))}
             </div>
           </section>
         )}

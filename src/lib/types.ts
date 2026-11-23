@@ -32,6 +32,9 @@ export interface Track {
   lyricsSource: string;
   lyricsOffsetMs?: number;
   playsCount: number;
+  dailyPlaysCount?: number;
+  playsToday?: number;
+  todayPlays?: number;
   likesCount: number;
   repostsCount: number;
   likedByMe: boolean;

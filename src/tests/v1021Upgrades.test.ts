@@ -99,17 +99,17 @@ describe("Soundify v1.0.21 Upgrades & Regression Suite", () => {
     (globalThis as unknown as { window?: unknown }).window = originalWindow;
   });
 
-  describe("1. Version Synchronization (v1.0.21 / build 22)", () => {
-    it("matches v1.0.21 and build 22 across TypeScript, package.json, and Gradle", () => {
-      expect(APP_VERSION).toBe("1.0.21");
-      expect(APP_BUILD_NUMBER).toBe(22);
+  describe("1. Version Synchronization (>= v1.0.21 / build 22)", () => {
+    it("keeps TypeScript version and Gradle build config synchronized", () => {
+      expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(22);
 
       const gradle = fs.readFileSync(
         path.resolve(__dirname, "../../android/app/build.gradle"),
         "utf8",
       );
-      expect(gradle).toContain("versionCode 22");
-      expect(gradle).toContain('versionName "1.0.21"');
+      expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+      expect(gradle).toContain(`versionName "${APP_VERSION}"`);
     });
   });
 

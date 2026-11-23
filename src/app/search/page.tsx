@@ -983,10 +983,6 @@ function SearchPageInner() {
                     track={tr}
                     queue={externalTracks}
                     autoExpand={true}
-                    onImportSuccess={() => {
-                      // refresh catalog in background
-                      api.getTracks().then((r) => setLocalTracks(r.tracks)).catch(() => {});
-                    }}
                   />
                 ))}
               </div>

@@ -9,16 +9,23 @@ import {
   MusicNotesSimpleIcon,
   PlayIcon,
   PauseIcon,
+  PlaylistIcon,
   SparkleIcon,
-  WaveformIcon,
 } from "@phosphor-icons/react";
-import { api, getPlaylistDetailHref } from "@/lib/api";
+import {
+  api,
+  getCachedCatalogPlaylists,
+  getCachedCatalogTracks,
+  getPlaylistDetailHref,
+} from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { Glass } from "@/components/GlassControls";
+import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
+import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { FALLBACK_PLAYLISTS, FALLBACK_TRACKS } from "@/lib/fallbackSeedData";
 import type { Playlist, Track } from "@/lib/types";
 
@@ -35,8 +42,8 @@ export default function ExplorePage() {
   const { t, pickText, lang, formatNum } = useI18n();
   const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayer();
 
-  const [tracks, setTracks] = useState<Track[]>(FALLBACK_TRACKS);
-  const [playlists, setPlaylists] = useState<Playlist[]>(FALLBACK_PLAYLISTS);
+  const [tracks, setTracks] = useState<Track[]>(() => getCachedCatalogTracks() ?? FALLBACK_TRACKS);
+  const [playlists, setPlaylists] = useState<Playlist[]>(() => getCachedCatalogPlaylists() ?? FALLBACK_PLAYLISTS);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [loading, setLoading] = useState(false);
 
@@ -234,40 +241,44 @@ export default function ExplorePage() {
           )}
         </section>
 
-        {/* Featured Curated Playlists */}
+        {/* Curated Playlists */}
         {playlists.length > 0 && (
-          <section className="space-y-4">
-            <h2 className="text-lg sm:text-xl font-bold flex items-center gap-2 text-slate-900 dark:text-white">
-              <WaveformIcon size={20} className="text-teal-400" weight="fill" />
-              <span>{lang === "fa" ? "پلی‌لیست‌های پیشنهادی" : "Featured Playlists"}</span>
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {playlists.slice(0, 5).map((pl) => (
+          <section className="space-y-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-slate-900 dark:text-white">
+                <PlaylistIcon size={22} weight="duotone" className="text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+                <span>{t("curatedPlaylists")}</span>
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5 sm:gap-4">
+              {playlists.slice(0, 8).map((pl) => (
                 <Link
                   key={pl.id}
                   href={getPlaylistDetailHref(pl.id)}
-                  className="group block p-3 rounded-2xl bg-black/[0.03] dark:bg-white/5 hover:bg-black/[0.06] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/5 hover:border-black/[0.1] dark:hover:border-white/10 transition-all"
+                  onClick={() => void triggerHapticFeedback("tap")}
+                  className="group sf-content-card rounded-2xl p-2.5 sm:p-3.5 flex flex-col gap-2.5"
                 >
-                  <div className="aspect-square rounded-xl overflow-hidden bg-zinc-800 mb-2 relative">
-                    {pl.coverUrls?.[0] ? (
-                      <img
-                        src={pl.coverUrls[0]}
-                        alt={pickText(pl.title, pl.titleFa)}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-indigo-950 text-indigo-400">
-                        <MusicNotesSimpleIcon size={32} />
-                      </div>
-                    )}
+                  <div className="relative aspect-square w-full overflow-hidden rounded-xl shadow-md bg-black/20">
+                    <PlaylistMosaic coverUrls={pl.coverUrls} className="h-full w-full rounded-xl" lazy />
+                    <span
+                      aria-hidden="true"
+                      className="absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500 text-slate-950 shadow-[0_6px_16px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-105"
+                    >
+                      <PlayIcon size={17} weight="fill" className="translate-x-[0.5px]" />
+                    </span>
                   </div>
-                  <h3 className="font-semibold text-sm text-slate-900 dark:text-zinc-100 truncate">
-                    {pickText(pl.title, pl.titleFa)}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-zinc-400 truncate">
-                    {formatNum(pl.trackCount)} {t("tracksCount")}
-                  </p>
+                  <div className="min-w-0 space-y-0.5 px-0.5">
+                    <h3 className="font-bold text-xs sm:text-sm truncate text-slate-950 dark:text-white">
+                      {pickText(pl.title, pl.titleFa)}
+                    </h3>
+                    <p className="text-[11px] text-[var(--sf-muted)] dark:text-slate-400 truncate">
+                      {pickText(pl.description, pl.descriptionFa)}
+                    </p>
+                    <span className="inline-block text-[10.5px] font-semibold text-indigo-600 dark:text-indigo-400 pt-0.5 tabular-nums">
+                      {formatNum(pl.trackCount)} {t("tracksCount")}
+                    </span>
+                  </div>
                 </Link>
               ))}
             </div>

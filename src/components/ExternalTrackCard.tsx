@@ -2,9 +2,7 @@
 
 import React, { memo, useState } from "react";
 import {
-  CheckCircleIcon,
   CircleNotchIcon,
-  CloudArrowDownIcon,
   HeartIcon,
   ListPlusIcon,
   PauseIcon,
@@ -26,22 +24,18 @@ import type { Track } from "@/lib/types";
 interface ExternalTrackCardProps {
   track: Track;
   queue?: Track[];
-  onImportSuccess?: (imported: Track) => void;
   autoExpand?: boolean;
 }
 
 export const ExternalTrackCard = memo(function ExternalTrackCard({
   track,
   queue = [],
-  onImportSuccess,
   autoExpand = false,
 }: ExternalTrackCardProps) {
   const { user, openAuthDialog } = useAuth();
   const { pickText, t } = useI18n();
   const { currentTrack, isPlaying, isBuffering, playTrack, togglePlay, setExpanded } = usePlayer();
 
-  const [importing, setImporting] = useState(false);
-  const [imported, setImported] = useState(false);
   const [isLiked, setIsLiked] = useState(track.likedByMe ?? false);
   const [likeBusy, setLikeBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -121,36 +115,6 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
     }
     if (autoExpand) {
       setExpanded(true);
-    }
-  };
-
-  const handleAdminImport = async () => {
-    if (importing || imported || !user || user.role !== "admin") return;
-    setImporting(true);
-    setErrorMsg(null);
-    try {
-      const safeSource: "youtube" | "soundcloud" | "spotify" =
-        track.source === "soundcloud" || track.source === "spotify" ? track.source : "youtube";
-      const res = await api.adminYtDlpImport({
-        url: track.pageUrl || track.audioUrl,
-        source: safeSource,
-        title: track.title,
-        titleFa: track.titleFa,
-        artistName: track.artistName,
-        artistNameFa: track.artistNameFa,
-        album: track.album,
-        albumFa: track.albumFa,
-        genre: track.genre,
-        mood: track.mood,
-        accentColor: brandInfo.accent,
-        autoFetchLyrics: true,
-      });
-      setImported(true);
-      onImportSuccess?.(res.track);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : t("actionFailed"));
-    } finally {
-      setImporting(false);
     }
   };
 
@@ -267,29 +231,6 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
         >
           <ListPlusIcon size={18} weight="bold" aria-hidden="true" />
         </button>
-
-        {user?.role === "admin" && (
-          <button
-            type="button"
-            disabled={importing || imported}
-            onClick={() => void handleAdminImport()}
-            title={imported ? t("adminImported") : t("adminImportBtn")}
-            aria-label={imported ? t("adminImported") : t("adminImportBtn")}
-            className={`sf-press inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full transition-colors cursor-pointer text-center leading-none ${
-              imported
-                ? "text-emerald-500 bg-emerald-500/15"
-                : "text-slate-400 hover:text-indigo-500 hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
-            }`}
-          >
-            {importing ? (
-              <CircleNotchIcon size={17} className="animate-spin" aria-hidden="true" />
-            ) : imported ? (
-              <CheckCircleIcon size={17} weight="fill" aria-hidden="true" />
-            ) : (
-              <CloudArrowDownIcon size={17} weight="bold" aria-hidden="true" />
-            )}
-          </button>
-        )}
 
         <button
           type="button"

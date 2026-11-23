@@ -24,7 +24,7 @@ export interface NativePlayStreamOptions {
 }
 
 export interface NativeAudioStateEvent {
-  event: "buffering" | "ready" | "state" | "ended" | "error";
+  event: "buffering" | "ready" | "state" | "ended" | "error" | "crossfadeStarted" | "crossfadeComplete";
   active?: boolean;
   trackId?: string;
   isPlaying?: boolean;
@@ -36,8 +36,30 @@ export interface NativeAudioStateEvent {
   errorMessage?: string;
 }
 
+export interface NativePrepareNextOptions {
+  url: string;
+  authToken?: string;
+  startSec?: number;
+  playbackRate?: number;
+  trackId?: string;
+}
+
+export interface NativeStartCrossfadeOptions {
+  crossfadeMs: number;
+  volume?: number;
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverUrl?: string;
+  duration?: number;
+  trackId?: string;
+}
+
 interface NativeAudioPluginInterface {
   playStream?: (opts: NativePlayStreamOptions) => Promise<void>;
+  prepareNextStream?: (opts: NativePrepareNextOptions) => Promise<void>;
+  startCrossfade?: (opts: NativeStartCrossfadeOptions) => Promise<void>;
+  cancelCrossfade?: () => Promise<void>;
   play?: () => Promise<void>;
   pause?: () => Promise<void>;
   stop?: () => Promise<void>;
@@ -69,6 +91,27 @@ export async function nativeAudioPlayStream(opts: NativePlayStreamOptions): Prom
   if (!plugin?.playStream) return false;
   await plugin.playStream(opts);
   return true;
+}
+
+export async function nativeAudioPrepareNextStream(opts: NativePrepareNextOptions): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.prepareNextStream) {
+    await plugin.prepareNextStream(opts).catch(() => {});
+  }
+}
+
+export async function nativeAudioStartCrossfade(opts: NativeStartCrossfadeOptions): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.startCrossfade) {
+    await plugin.startCrossfade(opts).catch(() => {});
+  }
+}
+
+export async function nativeAudioCancelCrossfade(): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.cancelCrossfade) {
+    await plugin.cancelCrossfade().catch(() => {});
+  }
 }
 
 export async function nativeAudioPlay(): Promise<void> {

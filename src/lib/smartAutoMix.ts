@@ -77,11 +77,15 @@ export function djCrossfadeGains(progress: number): { outGain: number; inGain: n
   if (p <= 0) return { outGain: 1, inGain: 0 };
   if (p >= 1) return { outGain: 0, inGain: 1 };
 
-  // Perceptual Apple Music cosine-eased crossfade curve (pow 1.25):
-  // Gentle whisper entry + silky handoff without mid-point volume jump or muddy vocal clash
-  const eased = 0.5 - 0.5 * Math.cos(p * Math.PI);
-  const outGain = Math.pow(Math.max(0, Math.cos(eased * Math.PI * 0.5)), 1.25);
-  const inGain = Math.pow(Math.max(0, Math.sin(eased * Math.PI * 0.5)), 1.25);
+  // Vocal-Safe Apple Music DJ S-curve:
+  // - Outgoing holds full warmth initially, then ducks completely out by 82% (`pow(..., 1.45)`)
+  // - Incoming enters as a silk whisper (`pow(..., 1.35)`), claiming foreground solo cleanly at 82%+
+  const easedIn = 0.5 - 0.5 * Math.cos(p * Math.PI);
+  const inGain = Math.pow(Math.max(0, Math.sin(easedIn * Math.PI * 0.5)), 1.35);
+
+  const outP = Math.min(1, p / 0.82);
+  const easedOut = 0.5 - 0.5 * Math.cos(outP * Math.PI);
+  const outGain = Math.pow(Math.max(0, Math.cos(easedOut * Math.PI * 0.5)), 1.45);
 
   return {
     outGain: Number.isFinite(outGain) ? Math.max(0, Math.min(1, outGain)) : 0,
@@ -200,21 +204,21 @@ export function computeAutoMixPlan(
   const incomingHeadEnergy =
     inBars.length > 0 ? meanRange(inBars, headStartIdx, headEndIdx, 0.5) : 0.5;
 
-  let crossfadeSec = 4.5;
-  let mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.35);
+  let crossfadeSec = 4.0;
+  let mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.3);
 
   if (!outReliable) {
-    // External tracks use synthetic hash waveforms: always blend tightly in the final outro
-    crossfadeSec = Math.max(3.5, Math.min(4.5, dur * 0.1));
-    mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.35);
+    // External tracks use synthetic hash waveforms: always blend crisply in the final outro
+    crossfadeSec = Math.max(3.5, Math.min(4.2, dur * 0.09));
+    mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.3);
   } else {
     const energySimilarity = Math.max(0, 1 - Math.abs(outgoingTailEnergy - incomingHeadEnergy));
-    crossfadeSec = 4.0 + energySimilarity * 1.2; // 4.0s .. 5.2s
+    crossfadeSec = 3.8 + energySimilarity * 0.8; // 3.8s .. 4.6s
 
-    // 3. Find true sustained outgoing outro drop in the last 10s..4.0s window
+    // 3. Find true sustained outgoing outro drop in the last 10s..3.8s window
     const minOutSec = Math.max(dur * 0.65, dur - 10);
-    const maxOutSec = Math.max(minOutSec, dur - Math.min(crossfadeSec, 4.0));
-    mixOutSec = Math.max(minOutSec, dur - crossfadeSec - 0.35);
+    const maxOutSec = Math.max(minOutSec, dur - Math.min(crossfadeSec, 3.8));
+    mixOutSec = Math.max(minOutSec, dur - crossfadeSec - 0.3);
 
     if (outBars.length >= 12) {
       const bodyStart = Math.floor(outBars.length * 0.15);
@@ -240,9 +244,9 @@ export function computeAutoMixPlan(
     }
   }
 
-  // Ensure crossfade completes gracefully before Deck A reaches EOF with 0.35s headroom
-  const remainingSec = Math.max(3.5, dur - mixOutSec - 0.35);
-  crossfadeSec = Math.max(3.5, Math.min(5.2, Math.min(crossfadeSec, remainingSec)));
+  // Ensure crossfade completes gracefully before Deck A reaches EOF with 0.3s headroom
+  const remainingSec = Math.max(3.5, dur - mixOutSec - 0.3);
+  crossfadeSec = Math.max(3.5, Math.min(4.6, Math.min(crossfadeSec, remainingSec)));
 
   return {
     mixOutSec: Number(mixOutSec.toFixed(2)),

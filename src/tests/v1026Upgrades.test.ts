@@ -14,33 +14,33 @@ describe("Soundify v1.0.26 Upfront DJ AutoMix UI, 60fps Curve & Global Search Pa
   });
 
   it("synchronizes v1.0.26+ / versionCode >= 27 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.2[6-9]/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[6-9]|3\d)/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(27);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toMatch(/^1\.0\.2[6-9]/);
+    expect(pkg.version).toMatch(/^1\.0\.(2[6-9]|3\d)/);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toMatch(/soundify-v1\.0\.2[6-9]-b2[7-9]/);
+    expect(swJs).toMatch(/soundify-v1\.0\.(2[6-9]|3\d)-b(2[7-9]|3\d)/);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode 2[7-9]/);
-    expect(gradle).toMatch(/versionName "1\.0\.2[6-9]"/);
+    expect(gradle).toMatch(/versionCode (2[7-9]|3\d)/);
+    expect(gradle).toMatch(/versionName "1\.0\.(2[6-9]|3\d)"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.2[6-9]"/);
-    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.2[6-9]"/);
+    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.(2[6-9]|3\d)"/);
+    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.(2[6-9]|3\d)"/);
   });
 
   it("computes silky monotonic DJ S-curve crossfade gains with exact 0..1 endpoints", () => {
@@ -50,10 +50,10 @@ describe("Soundify v1.0.26 Upfront DJ AutoMix UI, 60fps Curve & Global Search Pa
     expect(djCrossfadeGains(1.5)).toEqual({ outGain: 0, inGain: 1 });
 
     const mid = djCrossfadeGains(0.5);
-    const expectedMid = Math.pow(Math.SQRT1_2, 1.25);
-    expect(mid.inGain).toBeCloseTo(expectedMid, 4);
-    expect(mid.outGain).toBeCloseTo(expectedMid, 4);
-    expect(Math.pow(mid.outGain, 1.6) + Math.pow(mid.inGain, 1.6)).toBeCloseTo(1, 5);
+    expect(mid.inGain).toBeGreaterThan(0.55);
+    expect(mid.inGain).toBeLessThan(0.75);
+    expect(mid.outGain).toBeGreaterThan(0.3);
+    expect(mid.outGain).toBeLessThan(0.6);
 
     let prevIn = 0;
     let prevOut = 1;
@@ -74,7 +74,7 @@ describe("Soundify v1.0.26 Upfront DJ AutoMix UI, 60fps Curve & Global Search Pa
     );
     expect(service).toContain("mainHandler.postDelayed(this, 16L);");
     expect(service).toContain("outgoingDeck.removeListener(primaryPlayerListener);");
-    const startCrossfadeBlock = service.match(/public void startNativeCrossfade\([\s\S]*?public void cancelNativeCrossfade/);
+    const startCrossfadeBlock = service.match(/private void executeReadyNativeCrossfade\([\s\S]*?public void cancelNativeCrossfade/);
     expect(startCrossfadeBlock?.[0] ?? "").toContain("nativePlayer = incomingDeck;");
     expect(startCrossfadeBlock?.[0] ?? "").toContain("updateMetadata(");
 

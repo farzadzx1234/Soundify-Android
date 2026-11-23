@@ -183,6 +183,11 @@ public class NativeAudioPlugin extends Plugin {
         Double startSec = call.getDouble("startSec", 0.0);
         Double rate = call.getDouble("playbackRate", 1.0);
         String trackId = call.getString("trackId", "");
+        String title = call.getString("title", "Soundify");
+        String artist = call.getString("artist", "");
+        String album = call.getString("album", "");
+        String coverUrl = call.getString("coverUrl", "");
+        Double duration = call.getDouble("duration", 0.0);
 
         SoundifyMediaService service = SoundifyMediaService.getInstance();
         if (service != null) {
@@ -191,8 +196,24 @@ public class NativeAudioPlugin extends Plugin {
                 authToken != null ? authToken : "",
                 startSec != null && startSec > 0 ? startSec : 0.0,
                 rate != null && rate > 0 ? rate.floatValue() : 1.0f,
-                trackId != null ? trackId : ""
+                trackId != null ? trackId : "",
+                title != null ? title : "Soundify",
+                artist != null ? artist : "",
+                album != null ? album : "",
+                coverUrl != null ? coverUrl : "",
+                duration != null && duration > 0 ? duration : 0.0
             );
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void fadeOutAndStop(PluginCall call) {
+        Double fadeMs = call.getDouble("fadeMs", 4000.0);
+        long safeFadeMs = fadeMs != null ? Math.max(400L, fadeMs.longValue()) : 4000L;
+        SoundifyMediaService service = SoundifyMediaService.getInstance();
+        if (service != null) {
+            service.fadeOutAndStopNative(safeFadeMs);
         }
         call.resolve();
     }

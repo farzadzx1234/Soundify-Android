@@ -36,33 +36,33 @@ function makeTrack(overrides: Partial<Track> = {}): Track {
 
 describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () => {
   it("synchronizes v1.0.27+ / versionCode >= 28 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.2[7-9]/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[7-9]|3\d)/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(28);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toMatch(/^1\.0\.2[7-9]/);
+    expect(pkg.version).toMatch(/^1\.0\.(2[7-9]|3\d)/);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toMatch(/soundify-v1\.0\.2[7-9]-b2[8-9]/);
+    expect(swJs).toMatch(/soundify-v1\.0\.(2[7-9]|3\d)-b(2[8-9]|3\d)/);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode 2[8-9]/);
-    expect(gradle).toMatch(/versionName "1\.0\.2[7-9]"/);
+    expect(gradle).toMatch(/versionCode (2[8-9]|3\d)/);
+    expect(gradle).toMatch(/versionName "1\.0\.(2[7-9]|3\d)"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.2[7-9]"/);
-    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.2[7-9]"/);
+    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.(2[7-9]|3\d)"/);
+    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.(2[7-9]|3\d)"/);
   });
 
   it("ignores synthetic hash waveforms on external tracks so mixInSec is 0 and mixOutSec is in the final outro", () => {
@@ -89,10 +89,15 @@ describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () =
   });
 
   it("maintains silky perceptual S-curve progression across 0..1", () => {
-    for (let i = 0; i <= 20; i++) {
+    let prevIn = 0;
+    let prevOut = 1;
+    for (let i = 1; i <= 20; i++) {
       const p = i / 20;
       const { outGain, inGain } = djCrossfadeGains(p);
-      expect(Math.pow(outGain, 1.6) + Math.pow(inGain, 1.6)).toBeCloseTo(1, 5);
+      expect(inGain).toBeGreaterThanOrEqual(prevIn);
+      expect(outGain).toBeLessThanOrEqual(prevOut);
+      prevIn = inGain;
+      prevOut = outGain;
     }
     const early = djCrossfadeGains(0.1);
     expect(early.inGain).toBeLessThan(0.03);

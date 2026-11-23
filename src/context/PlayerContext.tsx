@@ -55,6 +55,7 @@ import { recordListeningEvent } from "@/lib/listeningPersonalization";
 import {
   isNativeAudioAvailable,
   nativeAudioCancelCrossfade,
+  nativeAudioFadeOutAndStop,
   nativeAudioPause,
   nativeAudioPlay,
   nativeAudioPlayStream,
@@ -336,7 +337,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const autoMixTargetTrackRef = useRef<Track | null>(null);
   const autoMixPlanRef = useRef<AutoMixPlan | null>(null);
   const autoMixPlanDurRef = useRef<number>(0);
-  const autoMixModeRef = useRef<"native" | "web" | null>(null);
+  const autoMixModeRef = useRef<"native" | "web" | "native-to-web" | "web-to-native" | null>(null);
   const autoMixStartedRef = useRef<boolean>(false);
   const finalizeWebAutoMixRef = useRef<(() => void) | null>(null);
 
@@ -900,9 +901,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       const curr = currentTrackRef.current;
       const q = queueRef.current;
-      if (!curr || q.length < 2 || !Number.isFinite(durSec) || durSec < 24 || autoMixStartedRef.current) {
+      const hasKnownDur = Number.isFinite(durSec) && durSec > 0;
+      if (!curr || q.length < 2 || autoMixStartedRef.current) {
         return;
       }
+      if (hasKnownDur && durSec < 24) {
+        return;
+      }
+      if (!hasKnownDur && posSec < 12) {
+        return;
+      }
+      const effectiveDur = hasKnownDur ? durSec : 180;
 
       let nextTrack = autoMixTargetTrackRef.current;
       let plan = autoMixPlanRef.current;
@@ -933,19 +942,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
         if (!nextTrack || nextTrack.id === curr.id) return;
         autoMixTargetTrackRef.current = nextTrack;
-        plan = computeAutoMixPlan(curr, nextTrack, durSec);
+        plan = computeAutoMixPlan(curr, nextTrack, effectiveDur);
         autoMixPlanRef.current = plan;
-        autoMixPlanDurRef.current = durSec;
-      } else if (Math.abs(durSec - autoMixPlanDurRef.current) > 1.5) {
+        autoMixPlanDurRef.current = hasKnownDur ? durSec : 0;
+      } else if (hasKnownDur && Math.abs(durSec - autoMixPlanDurRef.current) > 1.5) {
         plan = computeAutoMixPlan(curr, nextTrack, durSec);
         autoMixPlanRef.current = plan;
         autoMixPlanDurRef.current = durSec;
       }
 
       const pairKey = `${curr.id}::${nextTrack.id}`;
+      const prebufferTriggerSec = hasKnownDur ? Math.max(6, plan.mixOutSec - 35) : 12;
 
       if (
-        posSec >= Math.max(8, plan.mixOutSec - 20) &&
+        posSec >= prebufferTriggerSec &&
         autoMixPreparedKeyRef.current !== pairKey &&
         autoMixPreparingKeyRef.current !== pairKey
       ) {
@@ -965,11 +975,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               return;
             }
 
-            if (nativeAudioActiveRef.current) {
-              if (isNextDownloaded) {
-                autoMixPreparingKeyRef.current = null;
-                return;
-              }
+            const prepareNativeIncoming = async (mode: "native" | "web-to-native"): Promise<boolean> => {
               if (
                 resolvedNext.source === "spotify" &&
                 (!resolvedNext.audioUrl || resolvedNext.audioUrl.includes("open.spotify.com"))
@@ -978,14 +984,26 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                   resolvedNext = await resolveSpotifyTrackStream(resolvedNext);
                 } catch {}
               }
-              if (currentTrackRef.current?.id !== curr.id) return;
-              const streamUrl = resolveMediaUrl(resolvedNext.audioUrl);
+              if (currentTrackRef.current?.id !== curr.id || autoMixStartedRef.current) return false;
+              const streamUrl = stripFastStartParam(resolveMediaUrl(resolvedNext.audioUrl));
               if (!streamUrl || (!streamUrl.startsWith("http://") && !streamUrl.startsWith("https://"))) {
                 autoMixPreparingKeyRef.current = null;
-                return;
+                return false;
               }
+              const resolvedCover =
+                resolvedNext.coverUrl && !resolvedNext.coverUrl.startsWith("blob:")
+                  ? resolveMediaUrl(resolvedNext.coverUrl)
+                  : originalCoverUrlsRef.current[resolvedNext.id]
+                    ? resolveMediaUrl(originalCoverUrlsRef.current[resolvedNext.id])
+                    : "";
+              let artworkUrl = resolvedCover;
+              try {
+                if (resolvedCover) {
+                  artworkUrl = new URL(resolvedCover, window.location.origin).toString();
+                }
+              } catch {}
               autoMixTargetTrackRef.current = resolvedNext;
-              autoMixModeRef.current = "native";
+              autoMixModeRef.current = mode;
               autoMixPreparedKeyRef.current = pairKey;
               await nativeAudioPrepareNextStream({
                 url: streamUrl,
@@ -993,10 +1011,28 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 startSec: targetPlan.mixInSec,
                 playbackRate: playbackRateRef.current || 1,
                 trackId: resolvedNext.id,
+                title: resolvedNext.title,
+                artist: resolvedNext.artistName,
+                album: resolvedNext.album,
+                coverUrl: artworkUrl,
+                duration: resolvedNext.durationSec || 0,
               });
+              return true;
+            };
+
+            // 1. Native -> Native (both online streams on ExoPlayer)
+            if (nativeAudioActiveRef.current && !isNextDownloaded) {
+              await prepareNativeIncoming("native");
               return;
             }
 
+            // 2. Web -> Native (outgoing downloaded/web track fading out, incoming online track buffering in ExoPlayer)
+            if (!nativeAudioActiveRef.current && !isNextDownloaded && isNativeAudioAvailable()) {
+              const ok = await prepareNativeIncoming("web-to-native");
+              if (ok) return;
+            }
+
+            // 3. Native -> Web (downloaded incoming track) OR 4. Web -> Web
             let nextSrc = "";
             if (isNextDownloaded) {
               const cachedBlob =
@@ -1044,7 +1080,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             } catch {}
 
             autoMixTargetTrackRef.current = resolvedNext;
-            autoMixModeRef.current = "web";
+            autoMixModeRef.current = nativeAudioActiveRef.current ? "native-to-web" : "web";
             autoMixPreparedKeyRef.current = pairKey;
           } catch {
             autoMixPreparingKeyRef.current = null;
@@ -1053,35 +1089,257 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (posSec >= plan.mixOutSec && autoMixPreparedKeyRef.current === pairKey) {
+      if (hasKnownDur && posSec >= plan.mixOutSec && autoMixPreparedKeyRef.current === pairKey) {
         const targetNext = autoMixTargetTrackRef.current || nextTrack;
         const targetVol = mutedRef.current ? 0 : volumeRef.current;
 
-        if (autoMixModeRef.current === "native" && nativeAudioActiveRef.current) {
-          autoMixStartedRef.current = true;
-          setIsCrossfading(true);
+        const buildNativeArtworkUrl = (track: Track): string => {
           const resolvedCover =
-            targetNext.coverUrl && !targetNext.coverUrl.startsWith("blob:")
-              ? resolveMediaUrl(targetNext.coverUrl)
-              : originalCoverUrlsRef.current[targetNext.id]
-                ? resolveMediaUrl(originalCoverUrlsRef.current[targetNext.id])
+            track.coverUrl && !track.coverUrl.startsWith("blob:")
+              ? resolveMediaUrl(track.coverUrl)
+              : originalCoverUrlsRef.current[track.id]
+                ? resolveMediaUrl(originalCoverUrlsRef.current[track.id])
                 : "";
-          let artworkUrl = resolvedCover;
           try {
             if (resolvedCover) {
-              artworkUrl = new URL(resolvedCover, window.location.origin).toString();
+              return new URL(resolvedCover, window.location.origin).toString();
             }
           } catch {}
+          return resolvedCover;
+        };
+
+        if (autoMixModeRef.current === "native" && nativeAudioActiveRef.current) {
+          autoMixStartedRef.current = true;
+          // UI isCrossfading & track handoff wait for "crossfadeStarted" from ExoPlayer once nextDeckPlayer is READY
           void nativeAudioStartCrossfade({
             crossfadeMs: Math.round(plan.crossfadeSec * 1000),
             volume: targetVol,
             title: targetNext.title,
             artist: targetNext.artistName,
             album: targetNext.album,
-            coverUrl: artworkUrl,
+            coverUrl: buildNativeArtworkUrl(targetNext),
             duration: targetNext.durationSec || 0,
             trackId: targetNext.id,
           });
+          return;
+        }
+
+        if (autoMixModeRef.current === "web-to-native" && !nativeAudioActiveRef.current) {
+          const deckA = getSingletonAudio();
+          if (!deckA) return;
+          autoMixStartedRef.current = true;
+          nativeAudioActiveRef.current = true;
+
+          const startMs = performance.now();
+          const actualRemainingMs =
+            Number.isFinite(deckA.duration) && deckA.duration > 0
+              ? Math.max(1200, (deckA.duration - deckA.currentTime - 0.15) * 1000)
+              : plan.crossfadeSec * 1000;
+          const fadeMs = Math.max(1200, Math.min(plan.crossfadeSec * 1000, actualRemainingMs));
+
+          let stoppedOut = false;
+          const finishWebOutgoing = () => {
+            if (stoppedOut) return;
+            stoppedOut = true;
+            if (autoMixRafRef.current !== null && typeof window !== "undefined") {
+              cancelAnimationFrame(autoMixRafRef.current);
+              autoMixRafRef.current = null;
+            }
+            if (autoMixTimerRef.current) {
+              clearInterval(autoMixTimerRef.current);
+              autoMixTimerRef.current = null;
+            }
+            finalizeWebAutoMixRef.current = null;
+            isSettingSourceRef.current = true;
+            try {
+              deckA.pause();
+              deckA.removeAttribute("src");
+              deckA.load();
+            } catch {} finally {
+              isSettingSourceRef.current = false;
+            }
+          };
+          finalizeWebAutoMixRef.current = finishWebOutgoing;
+
+          const stepWebOut = () => {
+            if (stoppedOut) return false;
+            if (userPausedIntentRef.current) {
+              finishWebOutgoing();
+              return false;
+            }
+            const p = Math.max(0, Math.min(1, (performance.now() - startMs) / fadeMs));
+            const baseVol = mutedRef.current ? 0 : volumeRef.current;
+            const { outGain } = djCrossfadeGains(p);
+            try {
+              deckA.volume = Math.max(0, outGain * baseVol);
+            } catch {}
+            if (p >= 1 || deckA.ended || deckA.paused) {
+              finishWebOutgoing();
+              return false;
+            }
+            return true;
+          };
+
+          if (typeof window !== "undefined" && typeof requestAnimationFrame === "function") {
+            const rafTick = () => {
+              if (!stepWebOut()) {
+                autoMixRafRef.current = null;
+                return;
+              }
+              autoMixRafRef.current = requestAnimationFrame(rafTick);
+            };
+            autoMixRafRef.current = requestAnimationFrame(rafTick);
+          }
+          if (autoMixTimerRef.current) clearInterval(autoMixTimerRef.current);
+          autoMixTimerRef.current = setInterval(() => {
+            void stepWebOut();
+          }, 30);
+
+          void nativeAudioStartCrossfade({
+            crossfadeMs: Math.round(fadeMs),
+            volume: targetVol,
+            title: targetNext.title,
+            artist: targetNext.artistName,
+            album: targetNext.album,
+            coverUrl: buildNativeArtworkUrl(targetNext),
+            duration: targetNext.durationSec || 0,
+            trackId: targetNext.id,
+          });
+          return;
+        }
+
+        if (autoMixModeRef.current === "native-to-web" && nativeAudioActiveRef.current) {
+          const deckA = getSingletonAudio();
+          const deckB =
+            typeof document !== "undefined"
+              ? (document.getElementById("soundify-crossfade-audio") as HTMLAudioElement | null)
+              : null;
+          if (!deckA || !deckB || !deckB.src || deckB.readyState < 2) {
+            return;
+          }
+
+          const outgoingTrack = currentTrackRef.current;
+          autoMixStartedRef.current = true;
+          nativeAudioActiveRef.current = false;
+          setIsCrossfading(true);
+          setCrossfadeFromTrack(outgoingTrack && outgoingTrack.id !== targetNext.id ? outgoingTrack : null);
+          deckB.volume = 0;
+          deckB.playbackRate = playbackRateRef.current || 1;
+          void deckB.play().catch(() => {
+            cancelAutoMix();
+          });
+
+          const fadeMs = Math.max(1200, Math.round(plan.crossfadeSec * 1000));
+          void nativeAudioFadeOutAndStop(fadeMs);
+
+          // Promote downloaded Web Deck B to active singletonAudio & switch Player UI immediately
+          isSettingSourceRef.current = true;
+          try {
+            deckA.id = "soundify-crossfade-audio";
+            deckB.id = "soundify-global-audio";
+            swapSingletonAudioDeck(deckB);
+          } catch {} finally {
+            isSettingSourceRef.current = false;
+          }
+
+          const promoted = autoMixTargetTrackRef.current || targetNext;
+          lyricsRef.current = [];
+          setLyrics([]);
+          setLyricsSource("none");
+          lyricsSourceRef.current = "none";
+          recordedPlayForIdRef.current = null;
+          currentTrackRef.current = promoted;
+          setCurrentTrack(promoted);
+
+          const posB = Number.isFinite(deckB.currentTime) ? deckB.currentTime : 0;
+          const durB =
+            Number.isFinite(deckB.duration) && deckB.duration > 0
+              ? deckB.duration
+              : promoted.durationSec || 0;
+          currentTimeRef.current = posB;
+          setCurrentTime(posB);
+          durationRef.current = durB;
+          setDuration(durB);
+          setCurrentlyPlayingTrackId(promoted.id);
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          setIsBuffering(false);
+          isBufferingRef.current = false;
+          void updateAndroidPlaybackState({
+            isPlaying: true,
+            position: posB,
+            duration: durB,
+            playbackRate: deckB.playbackRate || playbackRateRef.current || 1,
+          });
+          setAudioDeckVersion((v) => v + 1);
+          void loadLyricsForTrack(promoted.id, false);
+          savePlayerState(posB);
+          broadcastLeaderState();
+          broadcastCurrentState();
+
+          const startMs = performance.now();
+          let finished = false;
+          const finishNativeToWeb = () => {
+            if (finished) return;
+            finished = true;
+            if (autoMixRafRef.current !== null && typeof window !== "undefined") {
+              cancelAnimationFrame(autoMixRafRef.current);
+              autoMixRafRef.current = null;
+            }
+            if (autoMixTimerRef.current) {
+              clearInterval(autoMixTimerRef.current);
+              autoMixTimerRef.current = null;
+            }
+            finalizeWebAutoMixRef.current = null;
+            const baseVol = mutedRef.current ? 0 : volumeRef.current;
+            try {
+              deckB.volume = baseVol;
+            } catch {}
+            autoMixStartedRef.current = false;
+            autoMixPreparedKeyRef.current = null;
+            autoMixPreparingKeyRef.current = null;
+            autoMixTargetTrackRef.current = null;
+            autoMixPlanRef.current = null;
+            autoMixPlanDurRef.current = 0;
+            autoMixModeRef.current = null;
+            setIsCrossfading(false);
+            setCrossfadeFromTrack(null);
+          };
+          finalizeWebAutoMixRef.current = finishNativeToWeb;
+
+          const stepIn = () => {
+            if (finished) return false;
+            if (userPausedIntentRef.current) {
+              cancelAutoMix();
+              return false;
+            }
+            const p = Math.max(0, Math.min(1, (performance.now() - startMs) / fadeMs));
+            const baseVol = mutedRef.current ? 0 : volumeRef.current;
+            const { inGain } = djCrossfadeGains(p);
+            try {
+              deckB.volume = Math.max(0, inGain * baseVol);
+            } catch {}
+            if (p >= 1) {
+              finishNativeToWeb();
+              return false;
+            }
+            return true;
+          };
+
+          if (typeof window !== "undefined" && typeof requestAnimationFrame === "function") {
+            const rafTick = () => {
+              if (!stepIn()) {
+                autoMixRafRef.current = null;
+                return;
+              }
+              autoMixRafRef.current = requestAnimationFrame(rafTick);
+            };
+            autoMixRafRef.current = requestAnimationFrame(rafTick);
+          }
+          if (autoMixTimerRef.current) clearInterval(autoMixTimerRef.current);
+          autoMixTimerRef.current = setInterval(() => {
+            void stepIn();
+          }, 30);
           return;
         }
 
@@ -4189,7 +4447,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       if (state.event === "crossfadeStarted") {
         const outgoingTrack = currentTrackRef.current;
-        const promoted = autoMixTargetTrackRef.current;
+        const promoted =
+          autoMixTargetTrackRef.current ||
+          (state.trackId ? queueRef.current.find((t) => t.id === state.trackId) || null : null);
         setIsCrossfading(true);
         setCrossfadeFromTrack(outgoingTrack && promoted && outgoingTrack.id !== promoted.id ? outgoingTrack : null);
         if (promoted && currentTrackRef.current?.id !== promoted.id) {
@@ -4244,7 +4504,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (state.event === "crossfadeComplete") {
-        const promoted = autoMixTargetTrackRef.current;
+        const promoted =
+          autoMixTargetTrackRef.current ||
+          (state.trackId ? queueRef.current.find((t) => t.id === state.trackId) || null : null);
         autoMixStartedRef.current = false;
         autoMixPreparedKeyRef.current = null;
         autoMixPreparingKeyRef.current = null;

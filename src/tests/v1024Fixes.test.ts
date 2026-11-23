@@ -85,7 +85,7 @@ describe("Soundify v1.0.24 Smooth AutoMix Handoff & Playlist Cover Fixes", () =>
   });
 
   it("synchronizes v1.0.24+ / versionCode >= 25 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.2[4-9]/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[4-9]|3\d)/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(25);
 
     const pkg = JSON.parse(
@@ -103,8 +103,8 @@ describe("Soundify v1.0.24 Smooth AutoMix Handoff & Playlist Cover Fixes", () =>
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode\s+2[5-9]/);
-    expect(gradle).toMatch(/versionName\s+"1\.0\.2[4-9]"/);
+    expect(gradle).toMatch(/versionCode\s+(2[5-9]|3\d)/);
+    expect(gradle).toMatch(/versionName\s+"1\.0\.(2[4-9]|3\d)"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),

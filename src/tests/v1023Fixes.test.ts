@@ -6,15 +6,15 @@ import { isMatchingExternalFallback } from "@/lib/externalFallbackMatcher";
 
 describe("Soundify v1.0.23 Playback, Seek, Repeat-1, Notification & Failover Fixes", () => {
   it("synchronizes v1.0.23+ / versionCode >= 24 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.2[3-9]/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[3-9]|3\d)/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(24);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode\s+2[4-9]/);
-    expect(gradle).toMatch(/versionName\s+"1\.0\.2[3-9]"/);
+    expect(gradle).toMatch(/versionCode\s+(2[4-9]|3\d)/);
+    expect(gradle).toMatch(/versionName\s+"1\.0\.(2[3-9]|3\d)"/);
   });
 
   it("folds Turkish and Latin diacritics when verifying cross-platform mirrors without false positives", () => {

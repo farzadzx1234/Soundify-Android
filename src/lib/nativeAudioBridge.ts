@@ -42,6 +42,11 @@ export interface NativePrepareNextOptions {
   startSec?: number;
   playbackRate?: number;
   trackId?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverUrl?: string;
+  duration?: number;
 }
 
 export interface NativeStartCrossfadeOptions {
@@ -60,6 +65,7 @@ interface NativeAudioPluginInterface {
   prepareNextStream?: (opts: NativePrepareNextOptions) => Promise<void>;
   startCrossfade?: (opts: NativeStartCrossfadeOptions) => Promise<void>;
   cancelCrossfade?: () => Promise<void>;
+  fadeOutAndStop?: (opts: { fadeMs: number }) => Promise<void>;
   play?: () => Promise<void>;
   pause?: () => Promise<void>;
   stop?: () => Promise<void>;
@@ -113,6 +119,15 @@ export async function nativeAudioCancelCrossfade(): Promise<void> {
   const plugin = getNativeAudioPlugin();
   if (plugin?.cancelCrossfade) {
     await plugin.cancelCrossfade().catch(() => {});
+  }
+}
+
+export async function nativeAudioFadeOutAndStop(fadeMs: number): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.fadeOutAndStop) {
+    await plugin.fadeOutAndStop({ fadeMs: Math.max(400, Math.round(fadeMs)) }).catch(() => {});
+  } else if (plugin?.stop) {
+    await plugin.stop().catch(() => {});
   }
 }
 

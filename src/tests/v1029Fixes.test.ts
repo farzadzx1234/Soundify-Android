@@ -1,0 +1,84 @@
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { APP_BUILD_NUMBER, APP_VERSION } from "@/lib/appVersion";
+import { djCrossfadeGains } from "@/lib/smartAutoMix";
+
+describe("Soundify v1.0.29 Universal 4-Way Hybrid AutoMix, Wait-Ready Gate & Vocal-Safe Curve", () => {
+  it("synchronizes v1.0.29 / versionCode 30 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toBe("1.0.29");
+    expect(APP_BUILD_NUMBER).toBe(30);
+
+    const pkg = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
+    );
+    expect(pkg.version).toBe("1.0.29");
+
+    const swJs = fs.readFileSync(
+      path.resolve(__dirname, "../../public/sw.js"),
+      "utf8",
+    );
+    expect(swJs).toContain("soundify-v1.0.29-b30");
+
+    const gradle = fs.readFileSync(
+      path.resolve(__dirname, "../../android/app/build.gradle"),
+      "utf8",
+    );
+    expect(gradle).toContain("versionCode 30");
+    expect(gradle).toContain('versionName "1.0.29"');
+
+    const service = fs.readFileSync(
+      path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
+      "utf8",
+    );
+    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.29"');
+    expect(service).toContain('APP_VERSION_HEADER = "1.0.29"');
+  });
+
+  it("shapes Vocal-Safe DJ crossfade gains so vocals never shout simultaneously and Song B gets clean solo by 82%+", () => {
+    const entry = djCrossfadeGains(0.15);
+    expect(entry.inGain).toBeLessThan(0.05);
+    expect(entry.outGain).toBeGreaterThan(0.95);
+
+    const mid = djCrossfadeGains(0.45);
+    expect(mid.outGain).toBeLessThan(0.6);
+    expect(mid.inGain).toBeLessThan(0.6);
+
+    const handoff = djCrossfadeGains(0.6);
+    expect(handoff.outGain).toBeLessThan(0.25);
+    expect(handoff.inGain).toBeGreaterThan(0.78);
+
+    const tailCleared = djCrossfadeGains(0.85);
+    expect(tailCleared.outGain).toBeCloseTo(0, 5);
+    expect(tailCleared.inGain).toBeGreaterThan(0.95);
+  });
+
+  it("supports 4-way hybrid AutoMix (native, web, native-to-web, web-to-native) and 35s pre-buffer in PlayerContext", () => {
+    const playerCtx = fs.readFileSync(
+      path.resolve(__dirname, "../context/PlayerContext.tsx"),
+      "utf8",
+    );
+    expect(playerCtx).toContain('"native-to-web"');
+    expect(playerCtx).toContain('"web-to-native"');
+    expect(playerCtx).toContain("nativeAudioFadeOutAndStop");
+    expect(playerCtx).toContain("plan.mixOutSec - 35");
+    expect(playerCtx).toContain("queueRef.current.find((t) => t.id === state.trackId)");
+  });
+
+  it("wires wait-until-ready gate, 650ms early-EOF gapless rescue, and native fadeOutAndStop in SoundifyMediaService & Plugin", () => {
+    const service = fs.readFileSync(
+      path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
+      "utf8",
+    );
+    expect(service).toContain("pendingCrossfadeWaitTicker");
+    expect(service).toContain("fadeOutAndStopNative");
+    expect(service).toContain("crossfadeFadeInOnly");
+    expect(service).toContain("executeReadyNativeCrossfade(");
+
+    const plugin = fs.readFileSync(
+      path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/NativeAudioPlugin.java"),
+      "utf8",
+    );
+    expect(plugin).toContain("public void fadeOutAndStop(PluginCall call)");
+  });
+});

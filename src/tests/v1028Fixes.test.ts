@@ -35,34 +35,34 @@ function makeLocalTrack(overrides: Partial<Track> = {}): Track {
 }
 
 describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & Single-Slot Badge", () => {
-  it("synchronizes v1.0.28 / versionCode 29 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.28");
-    expect(APP_BUILD_NUMBER).toBe(29);
+  it("synchronizes v1.0.28+ / versionCode >= 29 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[8-9]|3\d)/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(29);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toBe("1.0.28");
+    expect(pkg.version).toMatch(/^1\.0\.(2[8-9]|3\d)/);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toContain("soundify-v1.0.28-b29");
+    expect(swJs).toMatch(/soundify-v1\.0\.(2[8-9]|3\d)-b(29|3\d)/);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toContain("versionCode 29");
-    expect(gradle).toContain('versionName "1.0.28"');
+    expect(gradle).toMatch(/versionCode (29|3\d)/);
+    expect(gradle).toMatch(/versionName "1\.0\.(2[8-9]|3\d)"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.28"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.28"');
+    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.(2[8-9]|3\d)"/);
+    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.(2[8-9]|3\d)"/);
   });
 
   it("clears playWhenReady on recycled nextDeckPlayer in prepare, completion, and cancel and guards nextDeckStartMs", () => {
@@ -77,12 +77,12 @@ describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & S
     expect(prepBlock).toContain("nextDeckPlayer.pause();");
     expect(prepBlock).toContain("nextDeckPlayer.seekTo(nextDeckStartMs);");
 
-    const startBlock = service.match(/public void startNativeCrossfade\([\s\S]*?public void cancelNativeCrossfade/)?.[0] ?? "";
+    const startBlock = service.match(/private void executeReadyNativeCrossfade\([\s\S]*?public void cancelNativeCrossfade/)?.[0] ?? "";
     expect(startBlock).toContain("nextDeckStartMs");
 
     const tickerBlock = service.match(/private final Runnable crossfadeTicker = new Runnable\(\) \{[\s\S]*?private final IBinder binder/)?.[0] ?? "";
     expect(tickerBlock).toContain("nextDeckPlayer.setPlayWhenReady(false);");
-    expect(tickerBlock).toContain("Math.pow(Math.sin(eased * Math.PI * 0.5), 1.25)");
+    expect(tickerBlock).toMatch(/Math\.pow\(Math\.sin\(eased\w* \* Math\.PI \* 0\.5\), 1\.(25|35)\)/);
 
     const cancelBlock = service.match(/private void cancelCrossfadeOnMainThread\(\) \{[\s\S]*?private DefaultExtractorsFactory/)?.[0] ?? "";
     expect(cancelBlock).toContain("nextDeckPlayer.setPlayWhenReady(false);");
@@ -99,9 +99,9 @@ describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & S
 
     const plan = computeAutoMixPlan(out, inc, 200);
     expect(plan.mixInSec).toBe(0);
-    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(4.0);
-    expect(plan.crossfadeSec).toBeLessThanOrEqual(5.2);
-    expect(plan.mixOutSec).toBeCloseTo(200 - plan.crossfadeSec - 0.35, 1);
+    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(3.8);
+    expect(plan.crossfadeSec).toBeLessThanOrEqual(4.6);
+    expect(plan.mixOutSec).toBeCloseTo(200 - plan.crossfadeSec - 0.3, 1);
 
     // Perceptual curve starts as a whisper and blends cleanly
     const whisper = djCrossfadeGains(0.1);

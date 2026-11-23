@@ -74,6 +74,7 @@ import {
   performClientHandshake,
 } from "./mobileCrypto";
 import { getCachedUserSync, queueOfflineLike } from "./mobileSync";
+import { isNativeAudioAvailable } from "./nativeAudioBridge";
 
 export class ApiError extends Error {
   status: number;
@@ -939,7 +940,7 @@ export const api = {
   async searchExternal(
     q: string,
     source: "all" | "youtube" | "soundcloud" | "spotify" = "all",
-    limit = 16,
+    limit = 32,
   ): Promise<{
     query: string;
     source: string;
@@ -984,21 +985,32 @@ export const api = {
       return { query: q, source, results: [], total: 0 };
     }
 
+    const isBlockingAccessOrVersionErr = (err: unknown): boolean =>
+      (err instanceof ApiError && (err.status === 403 || err.status === 426 || err.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" || err.code === "APP_UPDATE_REQUIRED")) ||
+      (err as { code?: string })?.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" ||
+      (err as { code?: string })?.code === "APP_UPDATE_REQUIRED" ||
+      String(err).includes("GLOBAL_SEARCH_ACCESS_REQUIRED") ||
+      String(err).includes("APP_UPDATE_REQUIRED");
+
     try {
       const targetSource = isSpotifyUrl ? "youtube" : source;
-      const effectiveLimit = targetSource === "all" ? limit : Math.min(limit, 12);
+      const backendLimit = Math.max(8, Math.min(limit, 32));
+      const useNativeAudio = isNativeAudioAvailable();
 
-      const normalizeExternalResults = (items: Track[]): Track[] => {
+      const normalizeExternalResults = (items: Track[], forcedSourceOverride?: "youtube" | "soundcloud" | "spotify"): Track[] => {
         const normalized = items.map((tr) => {
           const norm = normalizeTrack(tr);
-          if (
-            norm.audioUrl &&
-            norm.audioUrl.includes("/api/stream/external") &&
-            !norm.audioUrl.includes("fastStart=")
-          ) {
-            norm.audioUrl = `${norm.audioUrl}${norm.audioUrl.includes("?") ? "&" : "?"}fastStart=true`;
+          if (norm.audioUrl && norm.audioUrl.includes("/api/stream/external")) {
+            if (useNativeAudio) {
+              norm.audioUrl = norm.audioUrl
+                .replace(/([?&])fastStart=[^&]*&?/gi, "$1")
+                .replace(/[?&]$/, "")
+                .replace(/\?&/, "?");
+            } else if (!norm.audioUrl.includes("fastStart=")) {
+              norm.audioUrl = `${norm.audioUrl}${norm.audioUrl.includes("?") ? "&" : "?"}fastStart=true`;
+            }
           }
-          if (source === "spotify" || (isSpotifyUrl && spotifyTitle)) {
+          if (source === "spotify" || forcedSourceOverride === "spotify" || (isSpotifyUrl && spotifyTitle)) {
             norm.source = "spotify";
             norm.album = "Spotify";
             norm.albumFa = "اسپاتیفای";
@@ -1013,51 +1025,141 @@ export const api = {
         return filterSensitiveTracks(normalized);
       };
 
-      const sp = new URLSearchParams({
-        q: effectiveQuery,
-        source: targetSource,
-        limit: String(effectiveLimit),
-      });
-      let res = await apiFetch<{
+      type ExternalSearchPayload = {
         query: string;
         source: string;
         results: Track[];
         total: number;
         error?: string;
-      }>(`/api/external/search?${sp.toString()}`);
+      };
+
+      const fetchSourceBatch = (qStr: string, src: string, lim: number) => {
+        const params = new URLSearchParams({
+          q: qStr,
+          source: src,
+          limit: String(lim),
+        });
+        return apiFetch<ExternalSearchPayload>(`/api/external/search?${params.toString()}`);
+      };
+
+      let res: ExternalSearchPayload | undefined;
+
+      // Parallel multi-provider fan-out for "all" searches when >20 results requested
+      if (targetSource === "all" && !isSpotifyUrl && limit > 20) {
+        const settled = await Promise.allSettled([
+          fetchSourceBatch(effectiveQuery, "youtube", 32),
+          fetchSourceBatch(effectiveQuery, "soundcloud", 32),
+          fetchSourceBatch(effectiveQuery, "spotify", 16),
+        ]);
+
+        for (const item of settled) {
+          if (item.status === "rejected" && isBlockingAccessOrVersionErr(item.reason)) {
+            throw item.reason;
+          }
+        }
+
+        const ytItems = settled[0].status === "fulfilled" && Array.isArray(settled[0].value.results) ? settled[0].value.results : [];
+        const scItems = settled[1].status === "fulfilled" && Array.isArray(settled[1].value.results) ? settled[1].value.results : [];
+        const spItems = settled[2].status === "fulfilled" && Array.isArray(settled[2].value.results) ? normalizeExternalResults(settled[2].value.results, "spotify") : [];
+
+        const merged: Track[] = [];
+        const seenKeys = new Set<string>();
+        const pushUnique = (tr: Track) => {
+          const canonPage = (tr.pageUrl || "").split("?")[0].toLowerCase();
+          if (seenKeys.has(tr.id) || (canonPage && seenKeys.has(canonPage))) return;
+          seenKeys.add(tr.id);
+          if (canonPage) seenKeys.add(canonPage);
+          merged.push(tr);
+        };
+
+        const maxLen = Math.max(ytItems.length, scItems.length, spItems.length);
+        for (let i = 0; i < maxLen; i++) {
+          if (ytItems[i]) pushUnique(ytItems[i]);
+          if (scItems[i]) pushUnique(scItems[i]);
+          if (spItems[i]) pushUnique(spItems[i]);
+          if (merged.length >= limit) break;
+        }
+
+        if (merged.length > 0) {
+          res = {
+            query: effectiveQuery,
+            source: "all",
+            results: merged.slice(0, limit),
+            total: merged.length,
+          };
+        } else {
+          const allRejected = settled.every((s) => s.status === "rejected");
+          const firstRejected = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+          if (allRejected && firstRejected) {
+            throw firstRejected.reason;
+          }
+        }
+      }
+
+      if (!res) {
+        res = await fetchSourceBatch(effectiveQuery, targetSource, backendLimit);
+      }
 
       // Fast secondary alias fallback if specific source returned empty results (e.g. SoundCloud/YouTube/Spotify)
       if ((!res?.results || res.results.length === 0) && targetSource !== "all") {
         try {
           const aliasPath =
             targetSource === "soundcloud"
-              ? `/api/mobile/v1/soundcloud/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`
+              ? `/api/mobile/v1/soundcloud/search?q=${encodeURIComponent(effectiveQuery)}&limit=${backendLimit}`
               : targetSource === "spotify"
-                ? `/api/mobile/v1/spotify/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`
-                : `/api/mobile/v1/youtube/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`;
-          const aliasRes = await apiFetch<{
-            query: string;
-            source: string;
-            results: Track[];
-            total: number;
-            error?: string;
-          }>(aliasPath);
+                ? `/api/mobile/v1/spotify/search?q=${encodeURIComponent(effectiveQuery)}&limit=${backendLimit}`
+                : `/api/mobile/v1/youtube/search?q=${encodeURIComponent(effectiveQuery)}&limit=${backendLimit}`;
+          const aliasRes = await apiFetch<ExternalSearchPayload>(aliasPath);
           if (aliasRes?.results && aliasRes.results.length > 0) {
             res = aliasRes;
           } else if (source === "spotify") {
-            const ytFallbackRes = await apiFetch<{
-              query: string;
-              source: string;
-              results: Track[];
-              total: number;
-              error?: string;
-            }>(`/api/mobile/v1/youtube/search?q=${encodeURIComponent(effectiveQuery)}&limit=${effectiveLimit}`);
+            const ytFallbackRes = await apiFetch<ExternalSearchPayload>(
+              `/api/mobile/v1/youtube/search?q=${encodeURIComponent(effectiveQuery)}&limit=${backendLimit}`,
+            );
             if (ytFallbackRes?.results && ytFallbackRes.results.length > 0) {
               res = ytFallbackRes;
             }
           }
-        } catch {
+        } catch (aliasErr) {
+          if (isBlockingAccessOrVersionErr(aliasErr)) {
+            throw aliasErr;
+          }
           // Keep original response unless auth/version gate rejected
+        }
+      }
+
+      // Single best-effort enrichment pass for specific-provider searches returning few results
+      if (
+        res?.results &&
+        res.results.length > 0 &&
+        res.results.length < 14 &&
+        targetSource !== "all" &&
+        !isSpotifyUrl &&
+        limit >= 20 &&
+        !/\b(?:music|remix)\b/i.test(effectiveQuery)
+      ) {
+        try {
+          const enrichRes = await fetchSourceBatch(`${effectiveQuery} music`, targetSource, 20);
+          if (enrichRes?.results && enrichRes.results.length > 0) {
+            const seenKeys = new Set<string>();
+            for (const existing of res.results) {
+              seenKeys.add(existing.id);
+              const canon = (existing.pageUrl || "").split("?")[0].toLowerCase();
+              if (canon) seenKeys.add(canon);
+            }
+            const combined = [...res.results];
+            for (const candidate of enrichRes.results) {
+              const canon = (candidate.pageUrl || "").split("?")[0].toLowerCase();
+              if (seenKeys.has(candidate.id) || (canon && seenKeys.has(canon))) continue;
+              seenKeys.add(candidate.id);
+              if (canon) seenKeys.add(canon);
+              combined.push(candidate);
+              if (combined.length >= limit) break;
+            }
+            res = { ...res, results: combined, total: combined.length };
+          }
+        } catch {
+          // Best-effort enrichment must never lose primary results
         }
       }
 

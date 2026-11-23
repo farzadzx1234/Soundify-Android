@@ -16,6 +16,7 @@ import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
 import { openPlaylistPicker } from "@/components/PlaylistPickerSheet";
 import { formatDuration } from "@/lib/lrc";
 import { api } from "@/lib/api";
+import { extractTrackReleaseInfo } from "@/lib/externalSort";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -120,6 +121,7 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
 
   const title = pickText(track.title, track.titleFa);
   const artist = pickText(track.artistName, track.artistNameFa);
+  const releaseInfo = extractTrackReleaseInfo(track);
 
   return (
     <article
@@ -197,6 +199,11 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
           {track.durationSec > 0 && (
             <span dir="ltr" className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400 shrink-0">
               {formatDuration(track.durationSec)}
+            </span>
+          )}
+          {releaseInfo.displayYear && (
+            <span dir="ltr" className="text-[10px] font-semibold tabular-nums rounded-full bg-black/[0.05] dark:bg-white/[0.08] px-1.5 py-0.5 text-slate-500 dark:text-slate-400 shrink-0">
+              {releaseInfo.displayYear}
             </span>
           )}
           {errorMsg && <span className="text-[10px] text-rose-500 truncate">{errorMsg}</span>}

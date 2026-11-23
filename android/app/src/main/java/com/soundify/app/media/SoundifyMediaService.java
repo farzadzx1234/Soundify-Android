@@ -77,8 +77,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.24";
-    private static final String APP_VERSION_HEADER = "1.0.24";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.25";
+    private static final String APP_VERSION_HEADER = "1.0.25";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -115,6 +115,7 @@ public class SoundifyMediaService extends Service {
     private DefaultHttpDataSource.Factory nativeHttpFactory = null;
     private volatile boolean nativeAudioActive = false;
     private volatile boolean isCrossfading = false;
+    private volatile boolean isSwitchingNativeTrack = false;
     private String nextDeckTrackId = "";
     private String nextDeckStreamUrl = "";
     private String lastNativeStreamUrl = "";
@@ -185,7 +186,13 @@ public class SoundifyMediaService extends Service {
         @Override
         public void onIsPlayingChanged(boolean playing) {
             if (nativePlayer == null || !nativeAudioActive) return;
-            if (isCrossfading && !playing) {
+            if ((isCrossfading || isSwitchingNativeTrack) && !playing) {
+                return;
+            }
+            if (!playing && nativePlayer.getPlayWhenReady() && nativePlayer.getPlaybackState() == Player.STATE_BUFFERING) {
+                isPlaying = true;
+                acquireWakeLock();
+                emitNativeState("buffering", null);
                 return;
             }
             isPlaying = playing;
@@ -1215,8 +1222,8 @@ public class SoundifyMediaService extends Service {
             nativeHttpFactory = new DefaultHttpDataSource.Factory()
                 .setUserAgent(APP_USER_AGENT)
                 .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(12_000)
-                .setReadTimeoutMs(30_000);
+                .setConnectTimeoutMs(20_000)
+                .setReadTimeoutMs(60_000);
         }
         nativeHttpFactory.setDefaultRequestProperties(headers);
 
@@ -1255,7 +1262,10 @@ public class SoundifyMediaService extends Service {
             double durSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
                 ? durMs / 1000.0
                 : currentDurationSec;
-            obj.put("isPlaying", nativePlayer.isPlaying());
+            boolean effectivePlaying = nativePlayer.getPlayWhenReady()
+                && state != Player.STATE_IDLE
+                && state != Player.STATE_ENDED;
+            obj.put("isPlaying", effectivePlaying);
             obj.put("isBuffering", state == Player.STATE_BUFFERING);
             obj.put("position", posMs / 1000.0);
             obj.put("duration", durSec);
@@ -1303,17 +1313,21 @@ public class SoundifyMediaService extends Service {
             ensureForegroundNotification();
 
             if (nativePlayer != null) {
-                nativePlayer.stop();
-                nativePlayer.clearMediaItems();
-                nativePlayer.setVolume(currentNativeVolume);
-                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
-                nativePlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
-                nativePlayer.setMediaItem(MediaItem.fromUri(url));
-                if (startSec > 0) {
-                    nativePlayer.seekTo((long) (startSec * 1000.0));
+                isSwitchingNativeTrack = true;
+                try {
+                    nativePlayer.setVolume(currentNativeVolume);
+                    nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+                    nativePlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
+                    nativePlayer.setMediaItem(MediaItem.fromUri(url));
+                    if (startSec > 0) {
+                        nativePlayer.seekTo((long) (startSec * 1000.0));
+                    }
+                    nativePlayer.setPlayWhenReady(true);
+                    nativePlayer.prepare();
+                    nativePlayer.play();
+                } finally {
+                    isSwitchingNativeTrack = false;
                 }
-                nativePlayer.prepare();
-                nativePlayer.play();
             }
             emitNativeState("buffering", null);
         });

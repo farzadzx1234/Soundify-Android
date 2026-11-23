@@ -206,6 +206,14 @@ type SyncMessage =
     }
   | { type: "CLAIM_LEADERSHIP"; newLeaderTabId: string };
 
+function stripFastStartParam(url: string): string {
+  if (!url || !url.includes("fastStart=")) return url;
+  return url
+    .replace(/([?&])fastStart=[^&]*&?/gi, "$1")
+    .replace(/[?&]$/, "")
+    .replace(/\?&/, "?");
+}
+
 function checkIsOffline(): boolean {
   if (typeof window === "undefined") return false;
   // If top bar/backend connectivity is marked online or browser says online, we are NOT offline!
@@ -1226,14 +1234,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const startNativeStreamForTrack = useCallback(
     async (targetTrack: Track, streamSource: string, startSec = 0) => {
       const audio = getSingletonAudio();
-      if (audio && !audio.paused) {
+      if (audio) {
         isSettingSourceRef.current = true;
         try {
-          audio.pause();
+          if (!audio.paused) audio.pause();
+          if (audio.src || audio.getAttribute("src")) {
+            audio.removeAttribute("src");
+            audio.load();
+          }
         } catch {}
         isSettingSourceRef.current = false;
       }
+      if (audioCtxRef.current?.state === "running") {
+        void audioCtxRef.current.suspend().catch(() => {});
+      }
       nativeAudioActiveRef.current = true;
+      const sanitizedStreamSource = stripFastStartParam(streamSource);
 
       const resolvedCover =
         targetTrack.coverUrl && !targetTrack.coverUrl.startsWith("blob:")
@@ -1250,7 +1266,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       await nativeAudioSetRepeatMode(repeatRef.current);
       await nativeAudioPlayStream({
-        url: streamSource,
+        url: sanitizedStreamSource,
         authToken: getApiToken() || "",
         startSec: startSec > 0 ? startSec : 0,
         playbackRate: playbackRateRef.current || 1,
@@ -1273,6 +1289,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isDownloaded: boolean,
       baseAudioSource?: string,
       targetStartSec?: number,
+      forceWebAudio = false,
     ): Promise<boolean> => {
       const reqId = ++playRequestIdRef.current;
       userPausedIntentRef.current = false;
@@ -1296,6 +1313,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       // instead of WebView's HTML5 <audio> element for rapid startup and rock-solid buffering.
       const candidateStreamUrl = baseAudioSource || resolveMediaUrl(track.audioUrl);
       if (
+        !forceWebAudio &&
         isNativeAudioAvailable() &&
         !isDownloaded &&
         candidateStreamUrl &&
@@ -1715,7 +1733,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           : `/api/stream/external?url=${encodeURIComponent(canonical || trackToPlay.id)}&id=${encodeURIComponent(trackToPlay.id)}&title=${encodeURIComponent(trackTitleParam)}&artist=${encodeURIComponent(trackArtistParam)}${isNativePlayer ? "" : "&fastStart=true"}`;
         let resolvedAudio = rawResolved;
         if (resolvedAudio.includes("/api/stream/external")) {
-          if (!isNativePlayer && !resolvedAudio.includes("fastStart=")) {
+          if (isNativePlayer) {
+            resolvedAudio = stripFastStartParam(resolvedAudio);
+          } else if (!resolvedAudio.includes("fastStart=")) {
             resolvedAudio = `${resolvedAudio}${resolvedAudio.includes("?") ? "&" : "?"}fastStart=true`;
           }
           if (!resolvedAudio.includes("title=") && trackTitleParam) {
@@ -1808,9 +1828,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           void loadLyricsForTrack(track.id, false);
         }
         if (resolvedAutoPlay) {
-          initAudioGraph();
-          if (audioCtxRef.current?.state === "suspended") {
-            void audioCtxRef.current.resume();
+          if (!willUseNativeStream && !nativeAudioActiveRef.current) {
+            initAudioGraph();
+            if (audioCtxRef.current?.state === "suspended") {
+              void audioCtxRef.current.resume();
+            }
           }
           if (
             nativeAudioActiveRef.current &&
@@ -1908,9 +1930,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      initAudioGraph();
-      if (audioCtxRef.current?.state === "suspended") {
-        void audioCtxRef.current.resume();
+      if (!willUseNativeStream) {
+        initAudioGraph();
+        if (audioCtxRef.current?.state === "suspended") {
+          void audioCtxRef.current.resume();
+        }
       }
 
       if (!resolvedAutoPlay) {
@@ -2186,9 +2210,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         void loadLyricsForTrack(curr.id, false);
       }
 
-      initAudioGraph();
-      if (audioCtxRef.current?.state === "suspended") {
-        void audioCtxRef.current.resume();
+      if (!(nativeAudioActiveRef.current && !isDownloadedSync)) {
+        initAudioGraph();
+        if (audioCtxRef.current?.state === "suspended") {
+          void audioCtxRef.current.resume();
+        }
       }
       localSessionStartedRef.current = true;
       if (!isThisDeviceActiveRef.current || activeDeviceIdRef.current !== deviceId) {
@@ -3109,7 +3135,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const audio = getSingletonAudio();
       if (!audio || !isExternalTrack(curr)) return false;
       const isDownloaded = getTrackDownloadSnapshot(curr.id).status === "downloaded";
-      if (isDownloaded || audio.src.startsWith("blob:")) return false;
+      if (isDownloaded || (!nativeAudioActiveRef.current && audio.src.startsWith("blob:"))) return false;
 
       const attempts = refreshAttemptsRef.current[curr.id] || 0;
       if (attempts >= 5) return false;
@@ -3149,12 +3175,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               updateTrackInQueue(refreshedTrack);
               externalTracksCache.set(curr.id, refreshedTrack);
               const fbSource = resolveMediaUrl(refreshedTrack.audioUrl);
-              if (
+              const useNativeFallback =
                 isNativeAudioAvailable() &&
-                fbSource &&
-                (fbSource.startsWith("http://") || fbSource.startsWith("https://"))
-              ) {
-                await startNativeStreamForTrack(refreshedTrack, fbSource, resumePosSec);
+                Boolean(fbSource) &&
+                (fbSource.startsWith("http://") || fbSource.startsWith("https://"));
+              if (useNativeFallback) {
+                await startNativeStreamForTrack(refreshedTrack, stripFastStartParam(fbSource), resumePosSec);
               } else {
                 isSettingSourceRef.current = true;
                 audio.src = fbSource;
@@ -3164,11 +3190,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 }
                 await audio.play();
                 isSettingSourceRef.current = false;
+                setIsBuffering(false);
+                isBufferingRef.current = false;
               }
               setIsPlaying(true);
               isPlayingRef.current = true;
-              setIsBuffering(false);
-              isBufferingRef.current = false;
               broadcastLeaderState();
               broadcastCurrentState();
               noticeTypeRef.current = null;
@@ -3190,17 +3216,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             coverUrl?: string;
           }> = [];
 
-          const [scRes, ytRes, ytAudioRes] = await Promise.allSettled([
-            api.searchExternal(fallbackQuery, "soundcloud", 5),
-            api.searchExternal(fallbackQuery, "youtube", 5),
-            api.searchExternal(`${fallbackQuery} audio`, "youtube", 4),
+          const [scRes, ytRes] = await Promise.allSettled([
+            api.searchExternal(fallbackQuery, "soundcloud", 8),
+            api.searchExternal(fallbackQuery, "youtube", 8),
           ]);
 
           const scItems = scRes.status === "fulfilled" && scRes.value.results ? scRes.value.results : [];
-          const ytItems = [
-            ...(ytRes.status === "fulfilled" && ytRes.value.results ? ytRes.value.results : []),
-            ...(ytAudioRes.status === "fulfilled" && ytAudioRes.value.results ? ytAudioRes.value.results : []),
-          ];
+          const ytItems = ytRes.status === "fulfilled" && ytRes.value.results ? ytRes.value.results : [];
 
           const currentYtId = extractYouTubeIdClient(curr.pageUrl || curr.audioUrl || curr.id);
           const orderedBatches: Array<{ source: "soundcloud" | "youtube"; items: Track[] }> =
@@ -3256,23 +3278,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           updateTrackInQueue(fallbackTrack);
           externalTracksCache.set(curr.id, fallbackTrack);
           const fbSource = resolveMediaUrl(fallbackTrack.audioUrl);
-          if (
+          const useNativeFallback =
             isNativeAudioAvailable() &&
-            fbSource &&
-            (fbSource.startsWith("http://") || fbSource.startsWith("https://"))
-          ) {
-            await startNativeStreamForTrack(fallbackTrack, fbSource, resumePosSec);
+            Boolean(fbSource) &&
+            (fbSource.startsWith("http://") || fbSource.startsWith("https://"));
+          if (useNativeFallback) {
+            await startNativeStreamForTrack(fallbackTrack, stripFastStartParam(fbSource), resumePosSec);
           } else {
             isSettingSourceRef.current = true;
             audio.src = fbSource;
             try { audio.load(); } catch {}
             await audio.play();
             isSettingSourceRef.current = false;
+            setIsBuffering(false);
+            isBufferingRef.current = false;
           }
           setIsPlaying(true);
           isPlayingRef.current = true;
-          setIsBuffering(false);
-          isBufferingRef.current = false;
           broadcastLeaderState();
           broadcastCurrentState();
           noticeTypeRef.current = null;
@@ -4252,6 +4274,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isBufferingRef.current = false;
         if (curr && isExternalTrack(curr)) {
           const retryCount = nativeErrorRetryCountRef.current[curr.id] || 0;
+          if (retryCount === 3) {
+            const rawHttp = resolveMediaUrl(curr.audioUrl);
+            const webAudio = getSingletonAudio();
+            if (
+              webAudio &&
+              rawHttp &&
+              (rawHttp.startsWith("http://") || rawHttp.startsWith("https://"))
+            ) {
+              nativeErrorRetryCountRef.current[curr.id] = retryCount + 1;
+              nativeAudioActiveRef.current = false;
+              void nativeAudioStop();
+              const resumePos = currentTimeRef.current > 3 ? currentTimeRef.current : 0;
+              isSettingSourceRef.current = true;
+              webAudio.src = rawHttp;
+              try { webAudio.load(); } catch {}
+              void attemptPlayWithRetry(webAudio, curr, false, rawHttp, resumePos, true);
+              return;
+            }
+          }
           if (retryCount < 4) {
             nativeErrorRetryCountRef.current[curr.id] = retryCount + 1;
             const resumePos = currentTimeRef.current > 3 ? currentTimeRef.current : 0;
@@ -4283,7 +4324,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
     });
     return unsub;
-  }, [broadcastCurrentState, broadcastLeaderState, lang, loadLyricsForTrack, savePlayerState, triggerExternalFallback]);
+  }, [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, lang, loadLyricsForTrack, savePlayerState, triggerExternalFallback]);
 
   // Synchronize Metadata whenever currentTrack changes
   useEffect(() => {

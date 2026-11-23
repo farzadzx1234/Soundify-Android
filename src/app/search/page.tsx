@@ -27,6 +27,7 @@ import { ExternalTrackCard } from "@/components/ExternalTrackCard";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
 import { filterSensitiveTracks, isSearchQuerySensitive } from "@/lib/contentFilter";
+import { sortExternalTracksByReleaseDate } from "@/lib/externalSort";
 import type { Playlist, Track } from "@/lib/types";
 
 const MOODS = ["all", "Chill", "Energetic", "Deep", "Emotional", "Midnight", "Focus", "Soulful"];
@@ -290,6 +291,7 @@ function SearchPageInner() {
   const [externalTracks, setExternalTracks] = useState<Track[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
   const [externalError, setExternalError] = useState<string | null>(null);
+  const [extSortMode, setExtSortMode] = useState<"releaseDate" | "relevance">("releaseDate");
 
   useEffect(() => {
     api.getPlaylists().then((r) => setPlaylists(r.playlists)).catch(() => {});
@@ -423,7 +425,7 @@ function SearchPageInner() {
 
       setExternalLoading(true);
       setExternalError(null);
-      const searchLimit = extSubSource === "all" ? 16 : 10;
+      const searchLimit = extSubSource === "all" ? 48 : 32;
       api
         .searchExternal(cleanQ, extSubSource, searchLimit)
         .then((res) => {
@@ -519,6 +521,11 @@ function SearchPageInner() {
     if (!debouncedQuery.trim() || localTracks.length === 0) return null;
     return localTracks[0];
   }, [debouncedQuery, localTracks]);
+
+  const displayedExternalTracks = useMemo(
+    () => (extSortMode === "releaseDate" ? sortExternalTracksByReleaseDate(externalTracks) : externalTracks),
+    [externalTracks, extSortMode],
+  );
 
   const topResultPlaying = topResult && currentTrack?.id === topResult.id && isPlaying;
 
@@ -959,16 +966,36 @@ function SearchPageInner() {
             </Glass>
           ) : (
             <section aria-label="External Online Results" className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h2 className="text-base sm:text-lg font-extrabold flex items-center gap-2">
                   <GlobeHemisphereWestIcon size={20} weight="duotone" className="text-emerald-500" aria-hidden="true" />
                   <span>
                     {pickText("Worldwide Streams", "نتایج پخش آنلاین")}
                   </span>
                 </h2>
-                <span className="text-xs text-[var(--sf-muted)] font-medium">
-                  {formatNum(externalTracks.length)} {t("tracksCount")}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExtSortMode((prev) => (prev === "releaseDate" ? "relevance" : "releaseDate"))
+                    }
+                    className="sf-press inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] dark:bg-white/[0.08] hover:bg-black/[0.1] dark:hover:bg-white/[0.12] border border-black/[0.06] dark:border-white/[0.1] px-3 py-1 text-[11px] font-bold text-[var(--sf-text)] cursor-pointer transition-colors"
+                  >
+                    {extSortMode === "releaseDate" ? (
+                      <ClockCounterClockwiseIcon size={13} weight="bold" className="text-emerald-500 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <SparkleIcon size={13} weight="bold" className="text-indigo-500 shrink-0" aria-hidden="true" />
+                    )}
+                    <span>
+                      {extSortMode === "releaseDate"
+                        ? pickText("Newest First", "جدیدترین (تاریخ انتشار)")
+                        : pickText("Most Relevant", "مرتبط‌ترین")}
+                    </span>
+                  </button>
+                  <span className="text-xs text-[var(--sf-muted)] font-medium">
+                    {formatNum(displayedExternalTracks.length)} {t("tracksCount")}
+                  </span>
+                </div>
               </div>
 
               {/* Apple Music Scannable Compact Track Rows */}
@@ -977,11 +1004,11 @@ function SearchPageInner() {
                   externalLoading ? "opacity-60" : "opacity-100"
                 }`}
               >
-                {externalTracks.map((tr) => (
+                {displayedExternalTracks.map((tr) => (
                   <ExternalTrackCard
                     key={tr.id}
                     track={tr}
-                    queue={externalTracks}
+                    queue={displayedExternalTracks}
                     autoExpand={true}
                   />
                 ))}

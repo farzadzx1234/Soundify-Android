@@ -41,6 +41,10 @@ export interface Track {
   repostedByMe: boolean;
   uploadedBy?: string | null;
   createdAt?: string;
+  releaseDate?: string;
+  uploadDate?: string;
+  publishedAt?: string;
+  releaseTimestamp?: number;
   source?: "local" | "youtube" | "soundcloud" | "spotify" | string;
   pageUrl?: string;
   qualityLabel?: string;

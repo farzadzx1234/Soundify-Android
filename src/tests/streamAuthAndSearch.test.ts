@@ -72,7 +72,7 @@ describe("External Stream Query Auth & Global Search Source Fallbacks", () => {
     });
 
     const res = await api.searchExternal("kam kam", "spotify", 20);
-    expect(calledUrls.some((u) => u.includes("limit=12"))).toBe(true);
+    expect(calledUrls.some((u) => u.includes("limit=20"))).toBe(true);
     expect(calledUrls.some((u) => u.includes("/api/mobile/v1/spotify/search"))).toBe(true);
     expect(res.results.length).toBe(1);
     expect(res.results[0].source).toBe("spotify");

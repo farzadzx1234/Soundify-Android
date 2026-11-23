@@ -251,6 +251,7 @@ export function PlaylistPickerSheet() {
                     <div className="flex items-center gap-3 min-w-0">
                       <PlaylistMosaic
                         coverUrls={coverUrls}
+                        tracks={pl.tracks}
                         className="h-12 w-12 rounded-xl shrink-0 shadow-sm"
                       />
                       <div className="min-w-0">

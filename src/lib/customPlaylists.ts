@@ -7,7 +7,7 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { api } from "./api";
+import { api, extractYouTubeIdClient } from "./api";
 import type { Playlist, Track } from "./types";
 import type { PersonalizedMix } from "./listeningPersonalization";
 
@@ -37,6 +37,27 @@ function notifyChange(): void {
   }
 }
 
+export function isCorruptedOrBlobCover(trackId: string, coverUrl?: string): boolean {
+  if (!coverUrl || !coverUrl.trim()) return true;
+  if (coverUrl.startsWith("blob:")) return true;
+  if (trackId !== "track-01" && coverUrl === "/covers/track-01.jpg") return true;
+  return false;
+}
+
+export function sanitizeStoredCoverUrl(track: Track): string {
+  if (!isCorruptedOrBlobCover(track.id, track.coverUrl)) {
+    return track.coverUrl;
+  }
+  const ytId = extractYouTubeIdClient(track.pageUrl || track.id);
+  if (ytId) {
+    return `/api/stream/external-cover?url=${encodeURIComponent(`https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`)}&id=${encodeURIComponent(track.id)}`;
+  }
+  if (track.id && !track.id.startsWith("ext-")) {
+    return `/api/tracks/${track.id}/cover`;
+  }
+  return "";
+}
+
 function readCustomPlaylists(): CustomPlaylistRecord[] {
   if (typeof window === "undefined") return EMPTY_LIST;
   try {
@@ -55,11 +76,43 @@ function readCustomPlaylists(): CustomPlaylistRecord[] {
       cachedParsedList = EMPTY_LIST;
       return cachedParsedList;
     }
+    let healedAny = false;
+    const validRecords: CustomPlaylistRecord[] = [];
+    for (const p of parsed) {
+      if (
+        !p ||
+        typeof p !== "object" ||
+        typeof p.id !== "string" ||
+        typeof p.title !== "string" ||
+        !Array.isArray(p.tracks)
+      ) {
+        continue;
+      }
+      let recordHealed = false;
+      const healedTracks = p.tracks.map((tr: Track) => {
+        if (tr && typeof tr === "object" && isCorruptedOrBlobCover(tr.id, tr.coverUrl)) {
+          const fixedCover = sanitizeStoredCoverUrl(tr);
+          if (fixedCover !== tr.coverUrl) {
+            recordHealed = true;
+            healedAny = true;
+            return { ...tr, coverUrl: fixedCover };
+          }
+        }
+        return tr;
+      });
+      validRecords.push(recordHealed ? { ...p, tracks: healedTracks } : (p as CustomPlaylistRecord));
+    }
+    if (healedAny) {
+      try {
+        const reserialized = JSON.stringify(validRecords);
+        window.localStorage.setItem(CUSTOM_PLAYLISTS_KEY, reserialized);
+        cachedRawJson = reserialized;
+        cachedParsedList = validRecords;
+        return cachedParsedList;
+      } catch {}
+    }
     cachedRawJson = raw;
-    cachedParsedList = parsed.filter(
-      (p): p is CustomPlaylistRecord =>
-        Boolean(p && typeof p === "object" && typeof p.id === "string" && typeof p.title === "string" && Array.isArray(p.tracks)),
-    );
+    cachedParsedList = validRecords;
     return cachedParsedList;
   } catch {
     return EMPTY_LIST;
@@ -115,8 +168,8 @@ export function getCustomPlaylistById(id: string): CustomPlaylistRecord | null {
 
 export function customRecordToPlaylist(record: CustomPlaylistRecord): Playlist {
   const coverUrls = record.tracks
+    .filter((t) => !isCorruptedOrBlobCover(t.id, t.coverUrl))
     .map((t) => t.coverUrl)
-    .filter((u): u is string => Boolean(u && !u.startsWith("blob:")))
     .slice(0, 4);
 
   return {
@@ -139,7 +192,7 @@ function sanitizeTrackForStorage(track: Track): Track {
     ...track,
     // Drop non-persistent blob URLs & waveforms so custom playlists stay compact & valid across restarts
     waveform: [],
-    coverUrl: track.coverUrl?.startsWith("blob:") ? `/covers/track-01.jpg` : track.coverUrl,
+    coverUrl: sanitizeStoredCoverUrl(track),
   };
 }
 

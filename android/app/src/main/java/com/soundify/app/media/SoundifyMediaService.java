@@ -77,8 +77,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.23";
-    private static final String APP_VERSION_HEADER = "1.0.23";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.24";
+    private static final String APP_VERSION_HEADER = "1.0.24";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -166,6 +166,8 @@ public class SoundifyMediaService extends Service {
                 emitNativeState("ready", null);
             } else if (playbackState == Player.STATE_ENDED) {
                 if (isCrossfading) {
+                    mainHandler.removeCallbacks(crossfadeTicker);
+                    mainHandler.post(crossfadeTicker);
                     return;
                 }
                 if ("one".equals(nativeRepeatMode)) {
@@ -218,16 +220,26 @@ public class SoundifyMediaService extends Service {
                 isCrossfading = false;
                 return;
             }
+            PlaybackException nextDeckErr = nextDeckPlayer.getPlayerError();
+            if (nextDeckErr != null || nextDeckPlayer.getPlaybackState() == Player.STATE_IDLE) {
+                try {
+                    nativePlayer.setVolume(crossfadeTargetVolume);
+                } catch (Exception ignored) {}
+                cancelCrossfadeOnMainThread();
+                emitNativeState("crossfadeFailed", nextDeckErr);
+                return;
+            }
             long elapsedMs = SystemClock.elapsedRealtime() - crossfadeStartMs;
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(500L, crossfadeDurationMs)));
-            float outGain = (float) (Math.cos(p * Math.PI * 0.5) * crossfadeTargetVolume);
-            float inGain = (float) (Math.sin(p * Math.PI * 0.5) * crossfadeTargetVolume);
+            boolean outgoingEnded = nativePlayer.getPlaybackState() == Player.STATE_ENDED;
+            float outGain = outgoingEnded ? 0.0f : (float) (Math.cos(p * Math.PI * 0.5) * crossfadeTargetVolume);
+            float inGain = outgoingEnded ? crossfadeTargetVolume : (float) (Math.sin(p * Math.PI * 0.5) * crossfadeTargetVolume);
             try {
                 nativePlayer.setVolume(Math.max(0.0f, outGain));
                 nextDeckPlayer.setVolume(Math.max(0.0f, inGain));
             } catch (Exception ignored) {}
 
-            if (p < 1.0) {
+            if (p < 1.0 && !outgoingEnded) {
                 mainHandler.postDelayed(this, 40L);
                 return;
             }
@@ -251,6 +263,8 @@ public class SoundifyMediaService extends Service {
                 nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
                 nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
                 nativePlayer.addListener(primaryPlayerListener);
+                nativePlayer.setPlayWhenReady(true);
+                nativePlayer.play();
             } catch (Exception ignored) {}
 
             if (nextDeckStreamUrl != null && !nextDeckStreamUrl.isEmpty()) {
@@ -264,7 +278,10 @@ public class SoundifyMediaService extends Service {
             currentDurationSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
                 ? durMs / 1000.0
                 : (crossfadeNextDurationSec > 0 ? crossfadeNextDurationSec : currentDurationSec);
-            isPlaying = nativePlayer.isPlaying();
+            boolean shouldBePlaying = nativePlayer.getPlayWhenReady()
+                && nativePlayer.getPlaybackState() != Player.STATE_IDLE
+                && nativePlayer.getPlaybackState() != Player.STATE_ENDED;
+            isPlaying = shouldBePlaying;
 
             if (crossfadeTitle != null && !crossfadeTitle.isEmpty()) {
                 updateMetadata(
@@ -278,7 +295,7 @@ public class SoundifyMediaService extends Service {
             }
 
             mainHandler.removeCallbacks(nativeProgressTicker);
-            if (isPlaying) {
+            if (shouldBePlaying) {
                 acquireWakeLock();
                 mainHandler.postDelayed(nativeProgressTicker, 500L);
             } else {
@@ -1346,8 +1363,17 @@ public class SoundifyMediaService extends Service {
     ) {
         mainHandler.post(() -> {
             String safeTrackId = trackId != null ? trackId : "";
-            if (!nativeAudioActive || nativePlayer == null || nextDeckPlayer == null) return;
-            if (!safeTrackId.equals(nextDeckTrackId) || nextDeckPlayer.getPlaybackState() == Player.STATE_IDLE) {
+            PlaybackException nextErr = nextDeckPlayer != null ? nextDeckPlayer.getPlayerError() : null;
+            if (
+                !nativeAudioActive ||
+                nativePlayer == null ||
+                nextDeckPlayer == null ||
+                !safeTrackId.equals(nextDeckTrackId) ||
+                nextDeckPlayer.getPlaybackState() == Player.STATE_IDLE ||
+                nextErr != null
+            ) {
+                cancelCrossfadeOnMainThread();
+                emitNativeState("crossfadeFailed", nextErr);
                 return;
             }
             crossfadeTitle = (title != null && !title.isEmpty()) ? title : "Soundify";
@@ -1358,7 +1384,18 @@ public class SoundifyMediaService extends Service {
             crossfadeNextTrackId = safeTrackId;
             crossfadeTargetVolume = Math.max(0.0f, Math.min(1.0f, targetVolume));
             currentNativeVolume = crossfadeTargetVolume;
-            crossfadeDurationMs = Math.max(1000L, crossfadeMs);
+            long nativeDurMs = nativePlayer.getDuration();
+            long nativePosMs = Math.max(0L, nativePlayer.getCurrentPosition());
+            long clampedFadeMs = Math.max(1000L, crossfadeMs);
+            if (nativeDurMs > 0 && nativeDurMs != androidx.media3.common.C.TIME_UNSET) {
+                long remainingMs = nativeDurMs - nativePosMs - 150L;
+                if (remainingMs > 1000L) {
+                    clampedFadeMs = Math.min(clampedFadeMs, remainingMs);
+                } else {
+                    clampedFadeMs = 1000L;
+                }
+            }
+            crossfadeDurationMs = clampedFadeMs;
             crossfadeStartMs = SystemClock.elapsedRealtime();
             isCrossfading = true;
 

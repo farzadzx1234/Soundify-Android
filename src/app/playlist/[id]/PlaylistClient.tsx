@@ -227,6 +227,7 @@ export default function PlaylistClient() {
         <div className="relative z-10 flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-8 text-center sm:text-start">
           <PlaylistMosaic
             coverUrls={playlist.coverUrls}
+            tracks={tracks}
             className="h-44 w-44 sm:h-52 sm:w-52 rounded-3xl shadow-[0_16px_40px_rgba(0,0,0,0.4)] border border-white/15"
           />
 

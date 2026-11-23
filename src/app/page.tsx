@@ -258,7 +258,7 @@ export default function HomePage() {
                   >
                     <div className="relative aspect-square w-full overflow-hidden rounded-xl shadow-md bg-black/20">
                       <Link href={getPlaylistDetailHref(mix.id)} className="block h-full w-full">
-                        <PlaylistMosaic coverUrls={mix.coverUrls} className="h-full w-full rounded-xl" lazy />
+                        <PlaylistMosaic coverUrls={mix.coverUrls} tracks={mix.tracks} className="h-full w-full rounded-xl" lazy />
                       </Link>
                       <span
                         className="pointer-events-none absolute top-2 start-2 rounded-full bg-black/72 border border-white/15 px-2 py-0.5 text-[10px] font-bold text-white"

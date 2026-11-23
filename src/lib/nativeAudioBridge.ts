@@ -24,7 +24,7 @@ export interface NativePlayStreamOptions {
 }
 
 export interface NativeAudioStateEvent {
-  event: "buffering" | "ready" | "state" | "ended" | "error" | "crossfadeStarted" | "crossfadeComplete";
+  event: "buffering" | "ready" | "state" | "ended" | "error" | "crossfadeStarted" | "crossfadeComplete" | "crossfadeFailed";
   active?: boolean;
   trackId?: string;
   isPlaying?: boolean;

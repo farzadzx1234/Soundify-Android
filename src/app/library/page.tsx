@@ -1089,7 +1089,7 @@ export default function LibraryPage() {
                     className="group sf-content-card rounded-3xl p-3.5 flex items-center justify-between gap-3"
                   >
                     <Link href={getPlaylistDetailHref(pl.id)} className="flex items-center gap-3.5 min-w-0 flex-1">
-                      <PlaylistMosaic coverUrls={pl.coverUrls} className="h-18 w-18 rounded-2xl shadow-md shrink-0" lazy />
+                      <PlaylistMosaic coverUrls={pl.coverUrls} tracks={rec.tracks} className="h-18 w-18 rounded-2xl shadow-md shrink-0" lazy />
                       <div className="min-w-0">
                         <span className="inline-block text-[10px] font-bold text-indigo-500 dark:text-indigo-400">
                           {pickText("Custom Playlist", "پلی‌لیست شخصی")}
@@ -1169,7 +1169,7 @@ export default function LibraryPage() {
                       href={getPlaylistDetailHref(mix.id)}
                       className="flex items-center gap-3 min-w-0 flex-1"
                     >
-                      <PlaylistMosaic coverUrls={mix.coverUrls} className="h-14 w-14 rounded-xl shrink-0 shadow" lazy />
+                      <PlaylistMosaic coverUrls={mix.coverUrls} tracks={mix.tracks} className="h-14 w-14 rounded-xl shrink-0 shadow" lazy />
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] font-bold text-emerald-500">
                           {lang === "fa" ? mix.badgeFa : mix.badge}

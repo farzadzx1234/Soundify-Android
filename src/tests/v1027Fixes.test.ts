@@ -82,10 +82,10 @@ describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () =
 
     const plan = computeAutoMixPlan(outgoing, incoming, 200);
     expect(plan.mixInSec).toBe(0);
-    expect(plan.mixOutSec).toBeGreaterThanOrEqual(200 - 6.5);
-    expect(plan.mixOutSec).toBeLessThan(200 - 3.5);
-    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(3.5);
-    expect(plan.crossfadeSec).toBeLessThanOrEqual(5.5);
+    expect(plan.mixOutSec).toBeGreaterThanOrEqual(200 - 8.5);
+    expect(plan.mixOutSec).toBeLessThan(200 - 4.5);
+    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(5.0);
+    expect(plan.crossfadeSec).toBeLessThanOrEqual(7.5);
   });
 
   it("maintains silky perceptual S-curve progression across 0..1", () => {
@@ -100,7 +100,7 @@ describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () =
       prevOut = outGain;
     }
     const early = djCrossfadeGains(0.1);
-    expect(early.inGain).toBeLessThan(0.03);
+    expect(early.inGain).toBeLessThan(0.08);
     expect(early.outGain).toBeGreaterThan(0.99);
   });
 

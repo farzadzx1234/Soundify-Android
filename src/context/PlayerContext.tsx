@@ -952,7 +952,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
 
       const pairKey = `${curr.id}::${nextTrack.id}`;
-      const prebufferTriggerSec = hasKnownDur ? Math.max(6, plan.mixOutSec - 35) : 12;
+      const prebufferTriggerSec = hasKnownDur ? Math.max(6, plan.mixOutSec - 45) : 12;
 
       if (
         posSec >= prebufferTriggerSec &&
@@ -2587,7 +2587,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       const audio = getSingletonAudio();
       if (!audio || !Number.isFinite(seconds)) return;
-      cancelAutoMixRef.current();
+      if (autoMixStartedRef.current) {
+        cancelAutoMixRef.current();
+      }
       const curr = currentTrackRef.current;
       if (curr && !nativeAudioActiveRef.current) {
         ensureAudioPrepared(curr, seconds);

@@ -32,9 +32,13 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
+import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.extractor.DefaultExtractorsFactory;
 import androidx.media3.extractor.mp3.Mp3Extractor;
@@ -77,8 +81,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.29";
-    private static final String APP_VERSION_HEADER = "1.0.29";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.30";
+    private static final String APP_VERSION_HEADER = "1.0.30";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -113,10 +117,14 @@ public class SoundifyMediaService extends Service {
     private ExoPlayer nativePlayer = null;
     private ExoPlayer nextDeckPlayer = null;
     private ExoPlayer fadingOutPlayer = null;
+    private AutoMixDspProcessor nativeDeckDsp = null;
+    private AutoMixDspProcessor nextDeckDsp = null;
+    private AutoMixDspProcessor fadingOutDsp = null;
     private DefaultHttpDataSource.Factory nativeHttpFactory = null;
     private volatile boolean nativeAudioActive = false;
     private volatile boolean isCrossfading = false;
     private volatile boolean isSwitchingNativeTrack = false;
+    private int quietOutroTicks = 0;
     private String nextDeckTrackId = "";
     private String nextDeckStreamUrl = "";
     private String nextDeckTitle = "Soundify";
@@ -132,9 +140,9 @@ public class SoundifyMediaService extends Service {
     private long crossfadeInvokedMs = 0L;
     private boolean crossfadeIncomingReady = false;
     private boolean crossfadeFadeInOnly = false;
-    private long crossfadeDurationMs = 5000L;
+    private long crossfadeDurationMs = 7500L;
     private volatile boolean pendingCrossfade = false;
-    private long pendingCrossfadeMs = 4000L;
+    private long pendingCrossfadeMs = 7500L;
     private float pendingCrossfadeTargetVolume = 1.0f;
     private String pendingCrossfadeTitle = "Soundify";
     private String pendingCrossfadeArtist = "";
@@ -143,7 +151,7 @@ public class SoundifyMediaService extends Service {
     private double pendingCrossfadeDurationSec = 0.0;
     private String pendingCrossfadeTrackId = "";
     private long fadeOutStartMs = 0L;
-    private long fadeOutDurationMs = 4000L;
+    private long fadeOutDurationMs = 7500L;
     private float fadeOutInitialVolume = 1.0f;
     private float currentNativeVolume = 1.0f;
     private float crossfadeTargetVolume = 1.0f;
@@ -166,6 +174,49 @@ public class SoundifyMediaService extends Service {
                 }
                 applyPlaybackState();
                 emitNativeState("state", null);
+
+                // Real-time live PCM acoustic outro trigger (detects actual musical outro drop on ANY stream)
+                if (
+                    !isCrossfading &&
+                    !pendingCrossfade &&
+                    !"one".equals(nativeRepeatMode) &&
+                    nativeDeckDsp != null &&
+                    nextDeckPlayer != null &&
+                    !nextDeckTrackId.isEmpty() &&
+                    nextDeckPlayer.getPlaybackState() == Player.STATE_READY &&
+                    currentDurationSec >= 24.0
+                ) {
+                    double remSec = currentDurationSec - currentPositionSec;
+                    if (remSec <= 14.0 && remSec >= 7.2) {
+                        float body = nativeDeckDsp.getBodyRms();
+                        float live = nativeDeckDsp.getLiveRms();
+                        if (body > 0.06f && live < body * 0.40f) {
+                            quietOutroTicks++;
+                            if (quietOutroTicks >= 2) {
+                                quietOutroTicks = 0;
+                                executeReadyNativeCrossfade(
+                                    7500L,
+                                    currentNativeVolume,
+                                    nextDeckTitle,
+                                    nextDeckArtist,
+                                    nextDeckAlbum,
+                                    nextDeckCoverUrl,
+                                    nextDeckDurationSec,
+                                    nextDeckTrackId,
+                                    false
+                                );
+                                return;
+                            }
+                        } else {
+                            quietOutroTicks = 0;
+                        }
+                    } else {
+                        quietOutroTicks = 0;
+                    }
+                } else {
+                    quietOutroTicks = 0;
+                }
+
                 mainHandler.postDelayed(this, 250L);
             }
         }
@@ -327,12 +378,16 @@ public class SoundifyMediaService extends Service {
             int st = fadingOutPlayer.getPlaybackState();
             long elapsedMs = SystemClock.elapsedRealtime() - fadeOutStartMs;
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(300L, fadeOutDurationMs)));
-            double outP = Math.min(1.0, p / 0.82);
-            double easedOut = 0.5 - 0.5 * Math.cos(outP * Math.PI);
-            float outGain = (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.45) * fadeOutInitialVolume);
+            double easedOut = 0.5 - 0.5 * Math.cos(p * Math.PI);
+            float outGain = (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.35) * fadeOutInitialVolume);
             try {
                 fadingOutPlayer.setVolume(Math.max(0.0f, outGain));
             } catch (Exception ignored) {}
+            if (fadingOutDsp != null) {
+                double outT = Math.max(0.0, Math.min(1.0, (p - 0.18) / 0.72));
+                double outSmooth = outT * outT * (3.0 - 2.0 * outT);
+                fadingOutDsp.setHighPassHz(outT <= 0.0 ? 0.0f : (float) (30.0 + outSmooth * 650.0));
+            }
 
             if (p < 1.0 && st != Player.STATE_ENDED && st != Player.STATE_IDLE) {
                 mainHandler.postDelayed(this, 16L);
@@ -391,14 +446,28 @@ public class SoundifyMediaService extends Service {
             long elapsedMs = SystemClock.elapsedRealtime() - crossfadeStartMs;
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(500L, crossfadeDurationMs)));
 
-            // Vocal-Safe Apple Music DJ S-curve matching smartAutoMix.djCrossfadeGains
-            double easedIn = 0.5 - 0.5 * Math.cos(p * Math.PI);
-            float inGain = (float) (Math.pow(Math.sin(easedIn * Math.PI * 0.5), 1.35) * crossfadeTargetVolume);
-            double outP = Math.min(1.0, p / 0.82);
-            double easedOut = 0.5 - 0.5 * Math.cos(outP * Math.PI);
+            // Apple Music / Club-DJ Bass-Swap loudness + Butterworth HPF sweep matching smartAutoMix.ts
+            double inP = Math.min(1.0, p / 0.82);
+            double easedIn = 0.5 - 0.5 * Math.cos(inP * Math.PI);
+            float inGain = (float) (Math.sin(easedIn * Math.PI * 0.5) * crossfadeTargetVolume);
+            double easedOut = 0.5 - 0.5 * Math.cos(p * Math.PI);
             float outGain = outgoingEnded
                 ? 0.0f
-                : (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.45) * crossfadeTargetVolume);
+                : (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.35) * crossfadeTargetVolume);
+
+            if (!crossfadeFadeInOnly) {
+                double outT = Math.max(0.0, Math.min(1.0, (p - 0.18) / 0.72));
+                double outSmooth = outT * outT * (3.0 - 2.0 * outT);
+                float outHpHz = outT <= 0.0 ? 0.0f : (float) (30.0 + outSmooth * 650.0);
+                if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(outHpHz);
+
+                double inT = Math.max(0.0, Math.min(1.0, (p - 0.28) / 0.34));
+                double inSmooth = inT * inT * (3.0 - 2.0 * inT);
+                float inHpHz = inT >= 1.0 ? 0.0f : (float) (360.0 * (1.0 - inSmooth));
+                if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(inHpHz);
+            } else if (nativeDeckDsp != null) {
+                nativeDeckDsp.setHighPassHz(0.0f);
+            }
 
             try {
                 if (!crossfadeFadeInOnly && nextDeckPlayer != null) {
@@ -415,6 +484,8 @@ public class SoundifyMediaService extends Service {
             isCrossfading = false;
             crossfadeIncomingReady = false;
             crossfadeFadeInOnly = false;
+            if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(0.0f);
+            if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(0.0f);
             try {
                 nativePlayer.setVolume(crossfadeTargetVolume);
             } catch (Exception ignored) {}
@@ -1308,6 +1379,10 @@ public class SoundifyMediaService extends Service {
 
     private void stopFadingOutPlayerOnMainThread() {
         mainHandler.removeCallbacks(nativeFadeOutTicker);
+        if (fadingOutDsp != null) {
+            fadingOutDsp.setHighPassHz(0.0f);
+            fadingOutDsp = null;
+        }
         if (fadingOutPlayer != null) {
             try {
                 fadingOutPlayer.setPlayWhenReady(false);
@@ -1329,7 +1404,11 @@ public class SoundifyMediaService extends Service {
             isCrossfading = false;
             crossfadeIncomingReady = false;
             crossfadeFadeInOnly = false;
+            quietOutroTicks = 0;
             nextDeckTrackId = "";
+            if (nextDeckDsp != null) {
+                nextDeckDsp.setHighPassHz(0.0f);
+            }
             if (nextDeckPlayer != null) {
                 try {
                     nextDeckPlayer.setPlayWhenReady(false);
@@ -1341,13 +1420,16 @@ public class SoundifyMediaService extends Service {
             stopFadingOutPlayerOnMainThread();
             if (nativePlayer != null && nativeAudioActive) {
                 ExoPlayer outgoing = nativePlayer;
+                AutoMixDspProcessor outgoingDsp = nativeDeckDsp;
                 nativePlayer = null;
+                nativeDeckDsp = null;
                 nativeAudioActive = false;
                 try {
                     outgoing.removeListener(primaryPlayerListener);
                     outgoing.setAudioAttributes(buildMediaAudioAttributes(), false);
                 } catch (Exception ignored) {}
                 fadingOutPlayer = outgoing;
+                fadingOutDsp = outgoingDsp;
                 fadeOutInitialVolume = currentNativeVolume;
                 fadeOutDurationMs = Math.max(400L, fadeMs);
                 fadeOutStartMs = SystemClock.elapsedRealtime();
@@ -1365,7 +1447,10 @@ public class SoundifyMediaService extends Service {
         isCrossfading = false;
         crossfadeIncomingReady = false;
         crossfadeFadeInOnly = false;
+        quietOutroTicks = 0;
         nextDeckTrackId = "";
+        if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(0.0f);
+        if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(0.0f);
         stopFadingOutPlayerOnMainThread();
         if (nextDeckPlayer != null) {
             try {
@@ -1401,6 +1486,27 @@ public class SoundifyMediaService extends Service {
             .build();
     }
 
+    private ExoPlayer buildDspExoPlayer(final AutoMixDspProcessor dspProcessor) {
+        DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this) {
+            @Override
+            protected AudioSink buildAudioSink(
+                Context context,
+                boolean enableFloatOutput,
+                boolean enableAudioTrackPlaybackParams
+            ) {
+                return new DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(new AudioProcessor[] { dspProcessor })
+                    .build();
+            }
+        };
+        return new ExoPlayer.Builder(this, renderersFactory)
+            .setLoadControl(buildLoadControl())
+            .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory, buildExtractorsFactory()))
+            .build();
+    }
+
     private void ensureNativePlayerOnMainThread(String authToken) {
         Map<String, String> headers = new HashMap<>();
         headers.put("X-App-Version", APP_VERSION_HEADER);
@@ -1418,10 +1524,8 @@ public class SoundifyMediaService extends Service {
         nativeHttpFactory.setDefaultRequestProperties(headers);
 
         if (nativePlayer == null) {
-            nativePlayer = new ExoPlayer.Builder(this)
-                .setLoadControl(buildLoadControl())
-                .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory, buildExtractorsFactory()))
-                .build();
+            nativeDeckDsp = new AutoMixDspProcessor();
+            nativePlayer = buildDspExoPlayer(nativeDeckDsp);
 
             nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
             nativePlayer.setHandleAudioBecomingNoisy(true);
@@ -1487,6 +1591,10 @@ public class SoundifyMediaService extends Service {
             ensureNativePlayerOnMainThread(authToken);
             currentNativeVolume = Math.max(0.0f, Math.min(1.0f, volume));
             cancelCrossfadeOnMainThread();
+            quietOutroTicks = 0;
+            if (nativeDeckDsp != null) {
+                nativeDeckDsp.resetTrackStats();
+            }
             if (title != null && !title.isEmpty()) {
                 updateMetadata(title, artist, album, coverUrl, durationSec, trackId);
             }
@@ -1549,11 +1657,12 @@ public class SoundifyMediaService extends Service {
         mainHandler.post(() -> {
             ensureNativePlayerOnMainThread(authToken);
             if (nextDeckPlayer == null) {
-                nextDeckPlayer = new ExoPlayer.Builder(this)
-                    .setLoadControl(buildLoadControl())
-                    .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory, buildExtractorsFactory()))
-                    .build();
+                nextDeckDsp = new AutoMixDspProcessor();
+                nextDeckPlayer = buildDspExoPlayer(nextDeckDsp);
                 nextDeckPlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK);
+            }
+            if (nextDeckDsp != null) {
+                nextDeckDsp.resetTrackStats();
             }
             nextDeckPlayer.setAudioAttributes(buildMediaAudioAttributes(), false);
             nextDeckTrackId = trackId != null ? trackId : "";
@@ -1621,8 +1730,11 @@ public class SoundifyMediaService extends Service {
 
         // Promote incoming deck upfront so Player UI, lockscreen metadata & live progress switch immediately,
         // while outgoingDeck keeps Android AudioFocus undisturbed until the crossfade completes.
+        quietOutroTicks = 0;
         ExoPlayer outgoingDeck = nativePlayer;
         ExoPlayer incomingDeck = nextDeckPlayer;
+        AutoMixDspProcessor outgoingDsp = nativeDeckDsp;
+        AutoMixDspProcessor incomingDsp = nextDeckDsp;
         isSwitchingNativeTrack = true;
         if (outgoingDeck != null) {
             try {
@@ -1638,6 +1750,15 @@ public class SoundifyMediaService extends Service {
 
         nativePlayer = incomingDeck;
         nextDeckPlayer = outgoingDeck;
+        nativeDeckDsp = incomingDsp;
+        nextDeckDsp = outgoingDsp;
+        if (nativeDeckDsp != null) {
+            nativeDeckDsp.resetTrackStats();
+            nativeDeckDsp.setHighPassHz(fadeInOnly ? 0.0f : 360.0f);
+        }
+        if (nextDeckDsp != null) {
+            nextDeckDsp.setHighPassHz(0.0f);
+        }
         nativeAudioActive = true;
         crossfadeIncomingReady = (nativePlayer.getPlaybackState() == Player.STATE_READY);
 
@@ -1844,7 +1965,10 @@ public class SoundifyMediaService extends Service {
 
     public void nativeSeek(final double positionSec) {
         mainHandler.post(() -> {
-            cancelCrossfadeOnMainThread();
+            if (isCrossfading || pendingCrossfade) {
+                cancelCrossfadeOnMainThread();
+            }
+            quietOutroTicks = 0;
             double safePos = Math.max(0.0, positionSec);
             if (nativeAudioActive && nativePlayer != null) {
                 long targetMs = (long) (safePos * 1000.0);

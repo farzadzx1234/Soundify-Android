@@ -82,7 +82,7 @@ describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & S
 
     const tickerBlock = service.match(/private final Runnable crossfadeTicker = new Runnable\(\) \{[\s\S]*?private final IBinder binder/)?.[0] ?? "";
     expect(tickerBlock).toContain("nextDeckPlayer.setPlayWhenReady(false);");
-    expect(tickerBlock).toMatch(/Math\.pow\(Math\.sin\(eased\w* \* Math\.PI \* 0\.5\), 1\.(25|35)\)/);
+    expect(tickerBlock).toContain("Math.sin(easedIn * Math.PI * 0.5)");
 
     const cancelBlock = service.match(/private void cancelCrossfadeOnMainThread\(\) \{[\s\S]*?private DefaultExtractorsFactory/)?.[0] ?? "";
     expect(cancelBlock).toContain("nextDeckPlayer.setPlayWhenReady(false);");
@@ -99,16 +99,16 @@ describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & S
 
     const plan = computeAutoMixPlan(out, inc, 200);
     expect(plan.mixInSec).toBe(0);
-    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(3.8);
-    expect(plan.crossfadeSec).toBeLessThanOrEqual(4.6);
-    expect(plan.mixOutSec).toBeCloseTo(200 - plan.crossfadeSec - 0.3, 1);
+    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(6.5);
+    expect(plan.crossfadeSec).toBeLessThanOrEqual(7.5);
+    expect(plan.mixOutSec).toBeCloseTo(200 - plan.crossfadeSec - 0.4, 1);
 
-    // Perceptual curve starts as a whisper and blends cleanly
+    // Perceptual curve enters softly and balances bass-swapped loudness
     const whisper = djCrossfadeGains(0.1);
-    expect(whisper.inGain).toBeLessThan(0.03);
+    expect(whisper.inGain).toBeLessThan(0.08);
     const mid = djCrossfadeGains(0.5);
-    expect(mid.outGain).toBeLessThan(0.68);
-    expect(mid.inGain).toBeLessThan(0.68);
+    expect(mid.outGain).toBeGreaterThan(0.55);
+    expect(mid.inGain).toBeGreaterThan(0.75);
   });
 
   it("recomputes AutoMix plan in PlayerContext when real decoded duration diverges from metadata", () => {

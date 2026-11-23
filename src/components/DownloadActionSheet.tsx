@@ -44,24 +44,58 @@ export function DownloadActionSheet({
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [prevOpenKey, setPrevOpenKey] = useState<string | null>(null);
+
+  const openKey = isOpen && track ? `${track.id}` : null;
+  if (openKey !== prevOpenKey) {
+    setPrevOpenKey(openKey);
+    if (openKey !== null) {
+      setIsClosing(false);
+      setDragY(0);
+    }
+  }
 
   const touchStartY = useRef(0);
   const touchStartX = useRef(0);
   const touchStartTime = useRef(0);
   const isTrackingRef = useRef(false);
+  const isClosingRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
 
   const handleDismissWithPhysics = useCallback(() => {
-    if (isClosing) return;
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
     setIsClosing(true);
     void triggerHapticFeedback("dismiss");
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      isClosingRef.current = false;
       setIsClosing(false);
       setDragY(0);
       onClose();
     }, 220);
-  }, [isClosing, onClose]);
+  }, [onClose]);
+
+  // Clear any stale dismissal timer and ref lock whenever the sheet opens
+  useEffect(() => {
+    if (!isOpen) return;
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    isClosingRef.current = false;
+  }, [isOpen, track?.id]);
+
+  // Clear pending dismissal timeout only on full component unmount
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Escape key handler
   const handleKeyDown = useCallback(
@@ -78,7 +112,6 @@ export function DownloadActionSheet({
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     };
   }, [isOpen, handleKeyDown]);
 

@@ -135,7 +135,7 @@ export const TrackCard = memo(function TrackCard({
 
   return (
     <article
-      className={`group relative rounded-2xl p-3 flex flex-col gap-2.5 bg-white/85 hover:bg-white dark:bg-white/[0.035] dark:hover:bg-white/[0.065] border border-black/[0.06] hover:border-black/[0.1] dark:border-white/[0.05] dark:hover:border-white/[0.09] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.25)] transition-all duration-200 contain-paint ${
+      className={`group relative rounded-2xl p-3 pb-3.5 flex flex-col gap-2.5 bg-white/85 hover:bg-white dark:bg-white/[0.035] dark:hover:bg-white/[0.065] border border-black/[0.06] hover:border-black/[0.1] dark:border-white/[0.05] dark:hover:border-white/[0.09] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.25)] transition-all duration-200 ${
         isCurrentPlaying ? "ring-1 ring-indigo-400/40 dark:ring-white/20 shadow-[0_4px_20px_rgba(0,0,0,0.4)]" : ""
       }`}
     >
@@ -172,17 +172,19 @@ export const TrackCard = memo(function TrackCard({
           {formatDuration(activeTrack.durationSec)}
         </span>
 
-        {/* Clickable cover area to toggle playback */}
+        {/* Clickable cover area to open player or play */}
         <button
           type="button"
           aria-label={`${isCurrentPlaying ? t("pause") : t("play")} ${title}`}
           onClick={() => {
             void triggerHapticFeedback("playPause");
-            if (isCurrentPlaying && autoExpand) {
+            if (autoExpand) {
+              if (!isCurrentPlaying) {
+                playTrack(activeTrack, queue);
+              }
               setExpanded(true);
             } else {
               playTrack(activeTrack, queue);
-              if (autoExpand) setExpanded(true);
             }
           }}
           className="absolute inset-0 z-10 w-full h-full cursor-pointer focus:outline-none"
@@ -205,11 +207,7 @@ export const TrackCard = memo(function TrackCard({
               onClick={(e) => {
                 e.stopPropagation();
                 void triggerHapticFeedback("playPause");
-                if (autoExpand) {
-                  setExpanded(true);
-                } else {
-                  playTrack(activeTrack, queue);
-                }
+                playTrack(activeTrack, queue);
               }}
               className="sf-press flex h-10 items-center gap-2 px-3 rounded-full text-white bg-black/82 hover:bg-black/90 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-pointer group/btn"
             >
@@ -228,7 +226,6 @@ export const TrackCard = memo(function TrackCard({
                 e.stopPropagation();
                 void triggerHapticFeedback("playPause");
                 playTrack(activeTrack, queue);
-                if (autoExpand) setExpanded(true);
               }}
               className="sf-press flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)] cursor-pointer opacity-95 group-hover:opacity-100"
               style={{
@@ -242,13 +239,34 @@ export const TrackCard = memo(function TrackCard({
       </div>
 
       <div className="min-w-0 space-y-0.5 px-0.5">
-        <Link
-          href={getTrackDetailHref(activeTrack.id)}
-          className="block truncate font-bold text-base text-[var(--sf-text)] hover:underline focus-visible:underline"
-        >
-          {title}
-        </Link>
-        <p className="truncate text-xs text-[var(--sf-muted)]">{artist}</p>
+        {autoExpand ? (
+          <button
+            type="button"
+            onClick={() => {
+              void triggerHapticFeedback("selection");
+              if (!isCurrentPlaying) {
+                playTrack(activeTrack, queue);
+              }
+              setExpanded(true);
+            }}
+            className="w-full text-start cursor-pointer focus:outline-none"
+          >
+            <span className="block truncate font-bold text-base text-[var(--sf-text)] hover:underline">
+              {title}
+            </span>
+            <span className="block truncate text-xs text-[var(--sf-muted)]">{artist}</span>
+          </button>
+        ) : (
+          <>
+            <Link
+              href={getTrackDetailHref(activeTrack.id)}
+              className="block truncate font-bold text-base text-[var(--sf-text)] hover:underline focus-visible:underline"
+            >
+              {title}
+            </Link>
+            <p className="truncate text-xs text-[var(--sf-muted)]">{artist}</p>
+          </>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-1 pt-0.5">

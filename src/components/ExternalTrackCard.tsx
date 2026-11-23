@@ -92,24 +92,33 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
           accent: "#1DB954",
         };
 
-  const handlePlayToggle = () => {
+  const handlePlayButtonClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (isCurrent && isPlaying) {
-      if (autoExpand) {
-        setExpanded(true);
-      } else {
-        togglePlay();
-      }
-    } else {
-      const effectiveQueue =
-        queue.length > 0
-          ? queue.some((t) => t.id === track.id)
-            ? queue
-            : [track, ...queue]
-          : [track];
+      togglePlay();
+      return;
+    }
+    const effectiveQueue =
+      queue.length > 0
+        ? queue.some((t) => t.id === track.id)
+          ? queue
+          : [track, ...queue]
+        : [track];
+    playTrack(track, effectiveQueue);
+  };
+
+  const handleCardClick = () => {
+    const effectiveQueue =
+      queue.length > 0
+        ? queue.some((t) => t.id === track.id)
+          ? queue
+          : [track, ...queue]
+        : [track];
+    if (!isCurrentPlaying) {
       playTrack(track, effectiveQueue);
-      if (autoExpand) {
-        setExpanded(true);
-      }
+    }
+    if (autoExpand) {
+      setExpanded(true);
     }
   };
 
@@ -154,10 +163,10 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
           : "bg-white/70 dark:bg-white/[0.04] hover:bg-white/90 dark:hover:bg-white/[0.07] border border-black/[0.06] dark:border-white/[0.07]"
       }`}
     >
-      {/* Thumbnail Artwork + Play Trigger (56x56 Apple Music Row Style) */}
+      {/* Thumbnail Artwork + Card Player Trigger (56x56 Apple Music Row Style) */}
       <button
         type="button"
-        onClick={handlePlayToggle}
+        onClick={handleCardClick}
         aria-label={isCurrentPlaying ? t("pause") : t("play")}
         className="relative h-14 w-14 sm:h-16 sm:w-16 shrink-0 overflow-hidden rounded-xl bg-black/15 dark:bg-white/5 shadow-sm cursor-pointer group/art focus-visible:outline-2 focus-visible:outline-[var(--sf-accent)]"
       >
@@ -193,10 +202,10 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
         </span>
       </button>
 
-      {/* Center Metadata (Scannable Hierarchy) */}
+      {/* Center Metadata (Scannable Hierarchy - Tapping opens player) */}
       <button
         type="button"
-        onClick={handlePlayToggle}
+        onClick={handleCardClick}
         className="min-w-0 flex-1 text-start cursor-pointer py-0.5 space-y-1 focus:outline-none"
       >
         <h3
@@ -272,7 +281,7 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
 
         <button
           type="button"
-          onClick={handlePlayToggle}
+          onClick={handlePlayButtonClick}
           aria-label={isCurrentPlaying ? t("pause") : t("play")}
           className="sf-press flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full text-white shadow-sm cursor-pointer transition-transform"
           style={{ backgroundColor: brandInfo.accent }}

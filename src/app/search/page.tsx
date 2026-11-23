@@ -842,13 +842,8 @@ function SearchPageInner() {
                           tint={topResult.accentColor}
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (topResultPlaying) {
-                              setExpanded(true);
-                            } else {
-                              playTrack(topResult, localTracks);
-                              setExpanded(true);
-                              if (inputValue.trim()) saveRecentSearch(inputValue.trim());
-                            }
+                            playTrack(topResult, localTracks);
+                            if (inputValue.trim()) saveRecentSearch(inputValue.trim());
                           }}
                           icon={
                             topResultPlaying ? (

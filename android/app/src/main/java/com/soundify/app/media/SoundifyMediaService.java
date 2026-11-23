@@ -35,6 +35,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Soundify Android Foreground Media Service
@@ -84,10 +85,12 @@ public class SoundifyMediaService extends Service {
     private String currentArtist = "";
     private String currentAlbum = "";
     private String currentCoverUrl = "";
+    private String currentTrackId = "";
     private double currentPositionSec = 0.0;
     private double currentDurationSec = 0.0;
     private double currentPlaybackRate = 1.0;
     private Bitmap cachedArtworkBitmap = null;
+    private final AtomicInteger artworkRequestSeq = new AtomicInteger(0);
 
     private final IBinder binder = new LocalBinder();
 
@@ -546,10 +549,18 @@ public class SoundifyMediaService extends Service {
         this.currentAlbum = (album != null) ? album : "";
         this.currentDurationSec = durationSec;
 
-        boolean coverChanged = coverUrl != null && !coverUrl.equals(this.currentCoverUrl);
-        this.currentCoverUrl = (coverUrl != null) ? coverUrl : "";
+        String safeCoverUrl = (coverUrl != null) ? coverUrl : "";
+        String safeTrackId = (trackId != null) ? trackId : "";
+        boolean trackChanged = !safeTrackId.equals(this.currentTrackId);
+        boolean coverChanged = !safeCoverUrl.equals(this.currentCoverUrl);
+        this.currentTrackId = safeTrackId;
+        this.currentCoverUrl = safeCoverUrl;
 
-        if (coverChanged) {
+        if (trackChanged || coverChanged) {
+            this.cachedArtworkBitmap = null;
+            artworkRequestSeq.incrementAndGet();
+            applyMediaMetadata();
+            updateNotification();
             loadArtworkAsync(this.currentCoverUrl);
         } else {
             applyMediaMetadata();
@@ -631,8 +642,9 @@ public class SoundifyMediaService extends Service {
         } catch (Exception ignored) {}
     }
 
-    private void loadArtworkAsync(String rawCoverUrl) {
-        if (rawCoverUrl == null || rawCoverUrl.isEmpty()) {
+    private void loadArtworkAsync(final String rawCoverUrl) {
+        final int reqSeq = artworkRequestSeq.incrementAndGet();
+        if (rawCoverUrl == null || rawCoverUrl.isEmpty() || rawCoverUrl.startsWith("blob:")) {
             cachedArtworkBitmap = null;
             applyMediaMetadata();
             updateNotification();
@@ -640,9 +652,7 @@ public class SoundifyMediaService extends Service {
         }
 
         final String coverUrl;
-        if (rawCoverUrl.startsWith("blob:")) {
-            coverUrl = "";
-        } else if (rawCoverUrl.startsWith("http://localhost") || rawCoverUrl.startsWith("https://localhost")) {
+        if (rawCoverUrl.startsWith("http://localhost") || rawCoverUrl.startsWith("https://localhost")) {
             coverUrl = rawCoverUrl.replaceFirst("^https?://localhost(:[0-9]+)?", DEFAULT_BASE_URL);
         } else if (rawCoverUrl.startsWith("/")) {
             coverUrl = DEFAULT_BASE_URL + rawCoverUrl;
@@ -653,6 +663,9 @@ public class SoundifyMediaService extends Service {
         }
 
         executorService.execute(() -> {
+            if (reqSeq != artworkRequestSeq.get()) {
+                return;
+            }
             try {
                 Bitmap bitmap = null;
                 if (coverUrl.startsWith("data:image/")) {
@@ -666,8 +679,8 @@ public class SoundifyMediaService extends Service {
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                     conn.setConnectTimeout(5000);
                     conn.setReadTimeout(5000);
-                    conn.setRequestProperty("User-Agent", "Soundify-Android/1.0.18");
-                    conn.setRequestProperty("X-App-Version", "1.0.18");
+                    conn.setRequestProperty("User-Agent", "Soundify-Android/1.0.19");
+                    conn.setRequestProperty("X-App-Version", "1.0.19");
                     conn.setInstanceFollowRedirects(true);
                     conn.connect();
                     if (conn.getResponseCode() == 200) {
@@ -678,13 +691,20 @@ public class SoundifyMediaService extends Service {
                     conn.disconnect();
                 }
 
+                if (reqSeq != artworkRequestSeq.get()) {
+                    if (bitmap != null && !bitmap.isRecycled()) {
+                        bitmap.recycle();
+                    }
+                    return;
+                }
+
                 if (bitmap == null) {
                     try {
                         bitmap = BitmapFactory.decodeResource(getResources(), com.soundify.app.R.mipmap.ic_launcher);
                     } catch (Exception ignored) {}
                 }
 
-                if (bitmap != null && rawCoverUrl.equals(currentCoverUrl)) {
+                if (bitmap != null && reqSeq == artworkRequestSeq.get() && rawCoverUrl.equals(currentCoverUrl)) {
                     int maxDim = 512;
                     int width = bitmap.getWidth();
                     int height = bitmap.getHeight();
@@ -696,14 +716,39 @@ public class SoundifyMediaService extends Service {
                     }
                     final Bitmap finalBitmap = bitmap;
                     mainHandler.post(() -> {
-                        if (rawCoverUrl.equals(currentCoverUrl)) {
+                        if (reqSeq == artworkRequestSeq.get() && rawCoverUrl.equals(currentCoverUrl)) {
                             cachedArtworkBitmap = finalBitmap;
+                            applyMediaMetadata();
+                            updateNotification();
+                        } else if (finalBitmap != null && !finalBitmap.isRecycled()) {
+                            finalBitmap.recycle();
+                        }
+                    });
+                } else {
+                    if (bitmap != null && !bitmap.isRecycled()) {
+                        bitmap.recycle();
+                    }
+                    if (reqSeq == artworkRequestSeq.get()) {
+                        mainHandler.post(() -> {
+                            if (reqSeq == artworkRequestSeq.get()) {
+                                cachedArtworkBitmap = null;
+                                applyMediaMetadata();
+                                updateNotification();
+                            }
+                        });
+                    }
+                }
+            } catch (Exception ignored) {
+                if (reqSeq == artworkRequestSeq.get()) {
+                    mainHandler.post(() -> {
+                        if (reqSeq == artworkRequestSeq.get()) {
+                            cachedArtworkBitmap = null;
                             applyMediaMetadata();
                             updateNotification();
                         }
                     });
                 }
-            } catch (Exception ignored) {}
+            }
         });
     }
 

@@ -21,6 +21,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { AmbientBackdrop } from "./AmbientBackdrop";
+import { AppLaunchSplash } from "./AppLaunchSplash";
 import { Button, Glass, SearchField } from "./GlassControls";
 import { InstallPwaButton } from "./InstallPwaButton";
 import { PlayerDock } from "./PlayerDock";
@@ -702,6 +703,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <LazyAuthDialog />
       <DevicePickerPopover />
       <AppUpdateDialog />
+      <AppLaunchSplash />
     </div>
   );
 }

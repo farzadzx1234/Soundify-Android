@@ -551,7 +551,20 @@ export default function LibraryPage() {
                     </Button>
                   )}
 
-                  {/* View Mode Toggle (List / Grid) */}
+                  <Button
+                    type="button"
+                    variant={selectMode ? "filled" : "glass"}
+                    onClick={() => {
+                      setSelectMode(!selectMode);
+                      setSelectedTrackIds(new Set());
+                      setConfirmDeleteSelected(false);
+                    }}
+                    className="!min-h-[36px] !px-3 text-xs font-semibold"
+                  >
+                    {selectMode ? t("cancelSelect") : t("selectMode")}
+                  </Button>
+
+                  {/* View Mode Toggle (List / Grid) anchored on far trailing edge */}
                   {!selectMode && (
                     <div className="inline-flex rounded-full bg-black/[0.04] dark:bg-white/[0.06] p-0.5 border border-black/[0.04] dark:border-white/[0.06]">
                       <button
@@ -582,19 +595,6 @@ export default function LibraryPage() {
                       </button>
                     </div>
                   )}
-
-                  <Button
-                    type="button"
-                    variant={selectMode ? "filled" : "glass"}
-                    onClick={() => {
-                      setSelectMode(!selectMode);
-                      setSelectedTrackIds(new Set());
-                      setConfirmDeleteSelected(false);
-                    }}
-                    className="!min-h-[36px] !px-3 text-xs font-semibold"
-                  >
-                    {selectMode ? t("cancelSelect") : t("selectMode")}
-                  </Button>
                 </div>
               </div>
             )}
@@ -896,6 +896,7 @@ export default function LibraryPage() {
                 queue={filteredDownloadedTrackObjects}
                 playlists={playlists}
                 onTrackUpdated={handleTrackUpdated}
+                className="pb-4"
               />
             )}
           </div>

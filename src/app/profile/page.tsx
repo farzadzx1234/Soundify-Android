@@ -233,8 +233,8 @@ export default function ProfilePage() {
                     key={color}
                     type="button"
                     onClick={() => setAvatarColor(color)}
-                    className={`w-7 h-7 rounded-full transition-transform ${
-                      avatarColor === color ? "scale-125 ring-2 ring-white ring-offset-2 ring-offset-black" : "opacity-80 hover:opacity-100"
+                    className={`w-7 h-7 rounded-full transition-transform cursor-pointer ${
+                      avatarColor === color ? "scale-110 ring-[1.5px] ring-white/85 ring-offset-[1.5px] ring-offset-[var(--sf-bg)] shadow-sm" : "opacity-80 hover:opacity-100"
                     }`}
                     style={{ backgroundColor: color }}
                     aria-label={`Select color ${color}`}

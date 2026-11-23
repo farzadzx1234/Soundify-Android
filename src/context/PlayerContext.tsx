@@ -28,6 +28,7 @@ import {
 } from "@/lib/networkResilience";
 import { findActiveLyricIndex } from "@/lib/lrc";
 import { extractCleanTitleAndArtist } from "@/lib/lyricsCleaner";
+import { isMatchingExternalFallback } from "@/lib/externalFallbackMatcher";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
@@ -295,6 +296,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const playRequestIdRef = useRef(0);
   const remotePlayStateLockUntilRef = useRef(0);
   const stallProbeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bufferingDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAdvancingPlaybackPosRef = useRef(0);
+  const originalCoverUrlsRef = useRef<Record<string, string>>({});
 
   const lastSavedStateTimeRef = useRef<number>(0);
   const refreshAttemptsRef = useRef<Record<string, number>>({});
@@ -939,7 +943,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
           if (scSettled.status === "fulfilled" && scSettled.value.results && scSettled.value.results.length > 0) {
             for (const r of scSettled.value.results) {
-              if (r.audioUrl) {
+              if (r.audioUrl && isMatchingExternalFallback(track.title, track.artistName, r.title, r.artistName)) {
                 candidates.push({
                   source: "soundcloud",
                   audioUrl: r.audioUrl,
@@ -954,7 +958,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           if (ytSettled.status === "fulfilled" && ytSettled.value.results && ytSettled.value.results.length > 0) {
             for (const r of ytSettled.value.results) {
               const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
-              if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== track.id) {
+              if (
+                r.audioUrl &&
+                (!rId || rId !== currentYtId) &&
+                r.id !== track.id &&
+                isMatchingExternalFallback(track.title, track.artistName, r.title, r.artistName)
+              ) {
                 candidates.push({
                   source: "youtube",
                   audioUrl: r.audioUrl,
@@ -971,7 +980,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               const ytSearch = await api.searchExternal(fallbackQ, "youtube", 3);
               if (ytSearch.results && ytSearch.results.length > 0) {
                 for (const r of ytSearch.results) {
-                  if (r.audioUrl) {
+                  if (r.audioUrl && isMatchingExternalFallback(track.title, track.artistName, r.title, r.artistName)) {
                     candidates.push({
                       source: "youtube",
                       audioUrl: r.audioUrl,
@@ -1036,19 +1045,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (playRequestIdRef.current === reqId) {
         isSettingSourceRef.current = false;
         isRetryingPlayRef.current = false;
+        setIsBuffering(false);
+        isBufferingRef.current = false;
         setIsPlaying(false);
         isPlayingRef.current = false;
         broadcastLeaderState();
         if (isExternalTrackItem) {
-          noticeTypeRef.current = null;
-          setOfflineNotice(null);
+          noticeTypeRef.current = "stream";
+          setOfflineNotice(
+            lang === "fa"
+              ? "این قطعه در حال حاضر قابل پخش نیست"
+              : "This track is currently unavailable for playback",
+          );
         } else if (!isDownloaded) {
           notifyServerConnectivityIssue();
         }
       }
       return false;
     },
-    [broadcastLeaderState, broadcastLocalState, notifyServerConnectivityIssue],
+    [broadcastLeaderState, broadcastLocalState, lang, notifyServerConnectivityIssue],
   );
 
   const playTrack = useCallback(
@@ -1202,6 +1217,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
+      if (normalizedTrack.coverUrl && !normalizedTrack.coverUrl.startsWith("blob:")) {
+        originalCoverUrlsRef.current[normalizedTrack.id] = normalizedTrack.coverUrl;
+      }
+
       if (isDownloaded) {
         try {
           const [blobUrl, coverBlobUrl] = await Promise.all([
@@ -1299,6 +1318,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       refreshAttemptsRef.current[trackToPlay.id] = 0;
       currentTrackRef.current = trackToPlay;
       currentTimeRef.current = startSec;
+      lastAdvancingPlaybackPosRef.current = startSec;
       durationRef.current = track.durationSec || 0;
       setCurrentTrack(trackToPlay);
       setCurrentTime(startSec);
@@ -1557,6 +1577,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           cachedCover = await getDownloadedCoverBlobUrl(curr.id);
         }
         if (cachedCover && curr.coverUrl !== cachedCover) {
+          if (curr.coverUrl && !curr.coverUrl.startsWith("blob:")) {
+            originalCoverUrlsRef.current[curr.id] = curr.coverUrl;
+          }
           const enriched = { ...curr, coverUrl: cachedCover };
           currentTrackRef.current = enriched;
           setCurrentTrack(enriched);
@@ -2146,12 +2169,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       void loadLyricsForTrack(normalizedTrack.id, false);
 
       // Immediately propagate updated remote metadata to native Android Notification shade & lockscreen
-      const resolvedCover = resolveMediaUrl(normalizedTrack.coverUrl);
+      const rawNonBlobCover =
+        normalizedTrack.coverUrl && !normalizedTrack.coverUrl.startsWith("blob:")
+          ? normalizedTrack.coverUrl
+          : originalCoverUrlsRef.current[normalizedTrack.id] || "";
+      const resolvedCover = rawNonBlobCover ? resolveMediaUrl(rawNonBlobCover) : "";
       let artworkSrc = "";
       try {
-        artworkSrc = resolvedCover ? new URL(resolvedCover, window.location.origin).toString() : "";
+        artworkSrc = resolvedCover && !resolvedCover.startsWith("blob:")
+          ? new URL(resolvedCover, window.location.origin).toString()
+          : "";
       } catch {
-        artworkSrc = resolvedCover || "";
+        artworkSrc = resolvedCover && !resolvedCover.startsWith("blob:") ? resolvedCover : "";
       }
       void updateAndroidMediaMetadata({
         title: normalizedTrack.title,
@@ -2476,9 +2505,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
           // 1. Try resilient SoundCloud stream first
           try {
-            const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 2);
-            if (scSearch.results && scSearch.results.length > 0) {
-              const scMatch = scSearch.results[0];
+            const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 3);
+            const scMatch = scSearch.results?.find(
+              (r) => r.audioUrl && isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName),
+            );
+            if (scMatch) {
               fallbackResult = {
                 source: "soundcloud",
                 audioUrl: scMatch.audioUrl,
@@ -2491,9 +2522,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           // 2. If SoundCloud fails or has no match, switch immediately to clean secondary YouTube mirror stream
           if (!fallbackResult) {
             try {
-              const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 3);
-              const ytMatch = ytSearch.results?.find((r) => r.id !== curr.id) || ytSearch.results?.[0];
-              if (ytMatch && ytMatch.id !== curr.id) {
+              const ytSearch = await api.searchExternal(fallbackQuery, "youtube", 4);
+              const currentYtId = extractYouTubeIdClient(curr.pageUrl || curr.audioUrl || curr.id);
+              const ytMatch = ytSearch.results?.find((r) => {
+                if (!r.audioUrl || r.id === curr.id) return false;
+                const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
+                if (currentYtId && rId === currentYtId) return false;
+                return isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName);
+              });
+              if (ytMatch) {
                 fallbackResult = {
                   source: "youtube",
                   audioUrl: ytMatch.audioUrl,
@@ -2579,6 +2616,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isRetryingPlayRef.current = false;
       setIsBuffering(false);
       isBufferingRef.current = false;
+      if (bufferingDebounceTimerRef.current) {
+        clearTimeout(bufferingDebounceTimerRef.current);
+        bufferingDebounceTimerRef.current = null;
+      }
       if (stallProbeTimerRef.current) {
         clearTimeout(stallProbeTimerRef.current);
         stallProbeTimerRef.current = null;
@@ -2594,20 +2635,50 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       // Keep UI in playing/buffering state during VPN/mobile network stalls instead of auto-pausing
       const curr = currentTrackRef.current;
       if (curr && !userPausedIntentRef.current && (isPlayingRef.current || isRetryingPlayRef.current)) {
-        setIsBuffering(true);
-        isBufferingRef.current = true;
-        preservePlaybackIntent(curr.id, audio.currentTime || currentTimeRef.current, true);
+        const probeStartPos = audio.currentTime || 0;
+        preservePlaybackIntent(curr.id, probeStartPos || currentTimeRef.current, true);
+
+        // If playback already started (>0.25s), debounce the buffering spinner by 450ms so brief
+        // fastStart chunk handoffs at ~1s never flash loading -> playing -> resume in the UI.
+        if (probeStartPos > 0.25) {
+          if (!bufferingDebounceTimerRef.current && !isBufferingRef.current) {
+            bufferingDebounceTimerRef.current = setTimeout(() => {
+              bufferingDebounceTimerRef.current = null;
+              if (
+                currentTrackRef.current?.id === curr.id &&
+                !userPausedIntentRef.current &&
+                (isPlayingRef.current || isRetryingPlayRef.current) &&
+                !audio.paused &&
+                audio.readyState < 3
+              ) {
+                setIsBuffering(true);
+                isBufferingRef.current = true;
+              }
+            }, 450);
+          }
+        } else {
+          setIsBuffering(true);
+          isBufferingRef.current = true;
+        }
+
         if (!stallProbeTimerRef.current) {
+          const probeDelayMs = probeStartPos > 0.5 ? 9000 : 2800;
           stallProbeTimerRef.current = setTimeout(() => {
             stallProbeTimerRef.current = null;
-            if (!userPausedIntentRef.current && (isPlayingRef.current || isRetryingPlayRef.current) && audio.readyState < 3) {
-              if (isExternalTrack(curr) && audio.readyState < 2 && !audio.src.startsWith("blob:")) {
+            const stillStuckAtSamePos = Math.abs((audio.currentTime || 0) - probeStartPos) < 0.05;
+            if (
+              !userPausedIntentRef.current &&
+              (isPlayingRef.current || isRetryingPlayRef.current) &&
+              audio.readyState < 3 &&
+              stillStuckAtSamePos
+            ) {
+              if (probeStartPos <= 0.5 && isExternalTrack(curr) && audio.readyState < 2 && !audio.src.startsWith("blob:")) {
                 void triggerExternalFallback(curr);
               } else {
                 void triggerImmediateNetworkProbe();
               }
             }
-          }, 2200);
+          }, probeDelayMs);
         }
       }
     };
@@ -2615,6 +2686,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       // Ignore synthetic pause events fired by the browser during audio.src swaps or active retries
       if (isSettingSourceRef.current || isRetryingPlayRef.current) {
         return;
+      }
+      if (bufferingDebounceTimerRef.current) {
+        clearTimeout(bufferingDebounceTimerRef.current);
+        bufferingDebounceTimerRef.current = null;
       }
       setIsBuffering(false);
       isBufferingRef.current = false;
@@ -2642,6 +2717,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const playbackPos = audio.currentTime;
       currentTimeRef.current = playbackPos;
       const now = performance.now();
+
+      if (playbackPos > lastAdvancingPlaybackPosRef.current + 0.05 && !audio.paused) {
+        lastAdvancingPlaybackPosRef.current = playbackPos;
+        if (bufferingDebounceTimerRef.current) {
+          clearTimeout(bufferingDebounceTimerRef.current);
+          bufferingDebounceTimerRef.current = null;
+        }
+        if (isBufferingRef.current) {
+          setIsBuffering(false);
+          isBufferingRef.current = false;
+        }
+        if (stallProbeTimerRef.current && audio.readyState >= 3) {
+          clearTimeout(stallProbeTimerRef.current);
+          stallProbeTimerRef.current = null;
+        }
+      } else if (playbackPos < lastAdvancingPlaybackPosRef.current) {
+        lastAdvancingPlaybackPosRef.current = playbackPos;
+      }
 
       // Battery & thermal optimization: skip React UI re-renders 4x/sec while app is in background / multitasking / screen locked
       const inForeground = isAppInForeground() && (typeof document === "undefined" || !document.hidden);
@@ -2866,7 +2959,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
                   if (scRes.status === "fulfilled" && scRes.value.results) {
                     for (const r of scRes.value.results) {
-                      if (r.audioUrl) {
+                      if (r.audioUrl && isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)) {
                         fallbackCandidates.push({
                           source: "soundcloud",
                           audioUrl: r.audioUrl,
@@ -2881,7 +2974,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                   if (ytRes.status === "fulfilled" && ytRes.value.results) {
                     for (const r of ytRes.value.results) {
                       const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
-                      if (r.audioUrl && (!rId || rId !== currentYtId) && r.id !== curr.id) {
+                      if (
+                        r.audioUrl &&
+                        (!rId || rId !== currentYtId) &&
+                        r.id !== curr.id &&
+                        isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)
+                      ) {
                         fallbackCandidates.push({
                           source: "youtube",
                           audioUrl: r.audioUrl,
@@ -2897,7 +2995,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                       const scSearch = await api.searchExternal(fallbackQuery, "soundcloud", 3);
                       if (scSearch.results) {
                         for (const r of scSearch.results) {
-                          if (r.audioUrl && r.audioUrl !== curr.audioUrl) {
+                          if (
+                            r.audioUrl &&
+                            r.audioUrl !== curr.audioUrl &&
+                            isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)
+                          ) {
                             fallbackCandidates.push({
                               source: "soundcloud",
                               audioUrl: r.audioUrl,
@@ -2940,6 +3042,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 }
                 setIsPlaying(false);
                 isPlayingRef.current = false;
+                setIsBuffering(false);
+                isBufferingRef.current = false;
                 broadcastLeaderState();
                 noticeTypeRef.current = null;
                 setOfflineNotice(null);
@@ -2947,6 +3051,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             .catch(() => {
               setIsPlaying(false);
               isPlayingRef.current = false;
+              setIsBuffering(false);
+              isBufferingRef.current = false;
               broadcastLeaderState();
               noticeTypeRef.current = null;
               setOfflineNotice(null);
@@ -3003,6 +3109,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (stallProbeTimerRef.current) {
         clearTimeout(stallProbeTimerRef.current);
         stallProbeTimerRef.current = null;
+      }
+      if (bufferingDebounceTimerRef.current) {
+        clearTimeout(bufferingDebounceTimerRef.current);
+        bufferingDebounceTimerRef.current = null;
       }
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("playing", onPlaying);
@@ -3250,12 +3360,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   // Synchronize Metadata whenever currentTrack changes
   useEffect(() => {
     if (!currentTrack) return;
-    const resolvedCover = resolveMediaUrl(currentTrack.coverUrl);
+    const rawNonBlobCover =
+      currentTrack.coverUrl && !currentTrack.coverUrl.startsWith("blob:")
+        ? currentTrack.coverUrl
+        : originalCoverUrlsRef.current[currentTrack.id] || "";
+    const resolvedCover = rawNonBlobCover ? resolveMediaUrl(rawNonBlobCover) : "";
     let artworkSrc = "";
     try {
-      artworkSrc = resolvedCover ? new URL(resolvedCover, window.location.origin).toString() : "";
+      artworkSrc = resolvedCover && !resolvedCover.startsWith("blob:")
+        ? new URL(resolvedCover, window.location.origin).toString()
+        : "";
     } catch {
-      artworkSrc = resolvedCover || "";
+      artworkSrc = resolvedCover && !resolvedCover.startsWith("blob:") ? resolvedCover : "";
     }
 
     void updateAndroidMediaMetadata({

@@ -36,6 +36,8 @@ import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.extractor.DefaultExtractorsFactory;
+import androidx.media3.extractor.mp3.Mp3Extractor;
 
 import com.getcapacitor.JSObject;
 import com.soundify.app.MainActivity;
@@ -75,8 +77,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.22";
-    private static final String APP_VERSION_HEADER = "1.0.22";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.23";
+    private static final String APP_VERSION_HEADER = "1.0.23";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -114,6 +116,10 @@ public class SoundifyMediaService extends Service {
     private volatile boolean nativeAudioActive = false;
     private volatile boolean isCrossfading = false;
     private String nextDeckTrackId = "";
+    private String nextDeckStreamUrl = "";
+    private String lastNativeStreamUrl = "";
+    private String lastNativeAuthToken = "";
+    private volatile String nativeRepeatMode = "off";
     private long crossfadeStartMs = 0L;
     private long crossfadeDurationMs = 5000L;
     private float currentNativeVolume = 1.0f;
@@ -160,6 +166,10 @@ public class SoundifyMediaService extends Service {
                 emitNativeState("ready", null);
             } else if (playbackState == Player.STATE_ENDED) {
                 if (isCrossfading) {
+                    return;
+                }
+                if ("one".equals(nativeRepeatMode)) {
+                    nativeReplayOnMainThread();
                     return;
                 }
                 mainHandler.removeCallbacks(nativeProgressTicker);
@@ -239,9 +249,14 @@ public class SoundifyMediaService extends Service {
             try {
                 nativePlayer.setVolume(crossfadeTargetVolume);
                 nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
+                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
                 nativePlayer.addListener(primaryPlayerListener);
             } catch (Exception ignored) {}
 
+            if (nextDeckStreamUrl != null && !nextDeckStreamUrl.isEmpty()) {
+                lastNativeStreamUrl = nextDeckStreamUrl;
+            }
+            nextDeckStreamUrl = "";
             nextDeckTrackId = "";
             long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
             long durMs = nativePlayer.getDuration();
@@ -379,9 +394,24 @@ public class SoundifyMediaService extends Service {
                 double syncPos = intent.getDoubleExtra("position", currentPositionSec);
                 double syncDuration = intent.getDoubleExtra("duration", currentDurationSec);
                 double syncRate = intent.getDoubleExtra("playbackRate", currentPlaybackRate);
-                // Sync service/notification state from JS without echoing mediaAction back to JS
-                // and without stealing AudioFocus from Chromium WebView's <audio> element.
-                updatePlaybackState(syncPlaying, syncPos, syncDuration, syncRate);
+                if (nativeAudioActive && nativePlayer != null) {
+                    // Authoritative position lives in ExoPlayer; never let hidden <audio> position overwrite it.
+                    mainHandler.post(() -> {
+                        if (nativePlayer != null && nativeAudioActive) {
+                            long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+                            long durMs = nativePlayer.getDuration();
+                            currentPositionSec = posMs / 1000.0;
+                            if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
+                                currentDurationSec = durMs / 1000.0;
+                            }
+                            updatePlaybackState(nativePlayer.isPlaying(), currentPositionSec, currentDurationSec, currentPlaybackRate);
+                        }
+                    });
+                } else {
+                    // Sync service/notification state from JS without echoing mediaAction back to JS
+                    // and without stealing AudioFocus from Chromium WebView's <audio> element.
+                    updatePlaybackState(syncPlaying, syncPos, syncDuration, syncRate);
+                }
                 break;
 
             case ACTION_PLAY:
@@ -396,26 +426,33 @@ public class SoundifyMediaService extends Service {
                         intent.getStringExtra("trackId")
                     );
                 }
-                double playPos = intent.getDoubleExtra("position", currentPositionSec);
-                currentPositionSec = Math.max(0.0, playPos);
+                boolean hasExplicitPlayPos = intent.hasExtra("position");
+                double explicitPlayPos = hasExplicitPlayPos
+                    ? Math.max(0.0, intent.getDoubleExtra("position", 0.0))
+                    : currentPositionSec;
                 double playRate = intent.getDoubleExtra("playbackRate", currentPlaybackRate);
                 currentPlaybackRate = playRate > 0 ? playRate : 1.0;
                 if (nativeAudioActive && nativePlayer != null) {
-                    final double targetPlayPos = currentPositionSec;
                     mainHandler.post(() -> {
                         if (nativePlayer != null) {
-                            if (targetPlayPos > 0) {
-                                nativePlayer.seekTo((long) (targetPlayPos * 1000.0));
+                            acquireWakeLock();
+                            if (hasExplicitPlayPos) {
+                                nativePlayer.seekTo((long) (explicitPlayPos * 1000.0));
                             }
-                            nativePlayer.play();
+                            if (nativePlayer.getPlaybackState() == Player.STATE_ENDED) {
+                                nativeReplayOnMainThread();
+                            } else {
+                                nativePlayer.play();
+                            }
                         }
                     });
                 } else {
+                    currentPositionSec = explicitPlayPos;
                     acquireWakeLock();
                     isPlaying = true;
                     updatePlaybackState(true, currentPositionSec, currentDurationSec, currentPlaybackRate);
+                    MediaSessionPlugin.sendMediaAction("play", null);
                 }
-                MediaSessionPlugin.sendMediaAction("play", null);
                 break;
 
             case ACTION_PAUSE:
@@ -423,12 +460,13 @@ public class SoundifyMediaService extends Service {
                 releaseWakeLock();
                 if (nativeAudioActive && nativePlayer != null) {
                     mainHandler.post(() -> {
+                        cancelCrossfadeOnMainThread();
                         if (nativePlayer != null) nativePlayer.pause();
                     });
                 } else {
                     updatePlaybackState(false, currentPositionSec, currentDurationSec, currentPlaybackRate);
+                    MediaSessionPlugin.sendMediaAction("pause", null);
                 }
-                MediaSessionPlugin.sendMediaAction("pause", null);
                 break;
 
             case ACTION_PLAY_PAUSE:
@@ -436,8 +474,12 @@ public class SoundifyMediaService extends Service {
                     mainHandler.post(() -> {
                         if (nativePlayer != null) {
                             if (nativePlayer.isPlaying()) {
+                                cancelCrossfadeOnMainThread();
                                 nativePlayer.pause();
+                            } else if (nativePlayer.getPlaybackState() == Player.STATE_ENDED) {
+                                nativeReplayOnMainThread();
                             } else {
+                                acquireWakeLock();
                                 nativePlayer.play();
                             }
                         }
@@ -450,8 +492,8 @@ public class SoundifyMediaService extends Service {
                         releaseWakeLock();
                     }
                     updatePlaybackState(isPlaying, currentPositionSec, currentDurationSec, currentPlaybackRate);
+                    MediaSessionPlugin.sendMediaAction("togglePlay", null);
                 }
-                MediaSessionPlugin.sendMediaAction("togglePlay", null);
                 break;
 
             case ACTION_NEXT:
@@ -1130,6 +1172,21 @@ public class SoundifyMediaService extends Service {
         }
     }
 
+    private DefaultExtractorsFactory buildExtractorsFactory() {
+        return new DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setConstantBitrateSeekingAlwaysEnabled(true)
+            .setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING);
+    }
+
+    private DefaultLoadControl buildLoadControl() {
+        return new DefaultLoadControl.Builder()
+            .setBufferDurationsMs(20_000, 180_000, 500, 1_200)
+            .setBackBuffer(180_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build();
+    }
+
     private void ensureNativePlayerOnMainThread(String authToken) {
         Map<String, String> headers = new HashMap<>();
         headers.put("X-App-Version", APP_VERSION_HEADER);
@@ -1142,24 +1199,20 @@ public class SoundifyMediaService extends Service {
                 .setUserAgent(APP_USER_AGENT)
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(12_000)
-                .setReadTimeoutMs(20_000);
+                .setReadTimeoutMs(30_000);
         }
         nativeHttpFactory.setDefaultRequestProperties(headers);
 
         if (nativePlayer == null) {
-            DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15_000, 60_000, 500, 1_200)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build();
-
             nativePlayer = new ExoPlayer.Builder(this)
-                .setLoadControl(loadControl)
-                .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory))
+                .setLoadControl(buildLoadControl())
+                .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory, buildExtractorsFactory()))
                 .build();
 
             nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
             nativePlayer.setHandleAudioBecomingNoisy(true);
             nativePlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK);
+            nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
             nativePlayer.addListener(primaryPlayerListener);
         }
     }
@@ -1221,6 +1274,8 @@ public class SoundifyMediaService extends Service {
                 updateMetadata(title, artist, album, coverUrl, durationSec, trackId);
             }
             nativeAudioActive = true;
+            lastNativeStreamUrl = url != null ? url : "";
+            lastNativeAuthToken = authToken != null ? authToken : "";
             currentPositionSec = Math.max(0.0, startSec);
             currentPlaybackRate = playbackRate > 0 ? playbackRate : 1.0f;
             if (durationSec > 0) {
@@ -1234,6 +1289,7 @@ public class SoundifyMediaService extends Service {
                 nativePlayer.stop();
                 nativePlayer.clearMediaItems();
                 nativePlayer.setVolume(currentNativeVolume);
+                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
                 nativePlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
                 nativePlayer.setMediaItem(MediaItem.fromUri(url));
                 if (startSec > 0) {
@@ -1257,18 +1313,15 @@ public class SoundifyMediaService extends Service {
         mainHandler.post(() -> {
             ensureNativePlayerOnMainThread(authToken);
             if (nextDeckPlayer == null) {
-                DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(15_000, 60_000, 500, 1_200)
-                    .setPrioritizeTimeOverSizeThresholds(true)
-                    .build();
                 nextDeckPlayer = new ExoPlayer.Builder(this)
-                    .setLoadControl(loadControl)
-                    .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory))
+                    .setLoadControl(buildLoadControl())
+                    .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory, buildExtractorsFactory()))
                     .build();
                 nextDeckPlayer.setAudioAttributes(buildMediaAudioAttributes(), false);
                 nextDeckPlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK);
             }
             nextDeckTrackId = trackId != null ? trackId : "";
+            nextDeckStreamUrl = url.trim();
             nextDeckPlayer.stop();
             nextDeckPlayer.clearMediaItems();
             nextDeckPlayer.setVolume(0.0f);
@@ -1353,15 +1406,88 @@ public class SoundifyMediaService extends Service {
         });
     }
 
+    private void nativeReplayOnMainThread() {
+        cancelCrossfadeOnMainThread();
+        if (!nativeAudioActive || nativePlayer == null) return;
+        acquireWakeLock();
+        isPlaying = true;
+        currentPositionSec = 0.0;
+        boolean seekable = nativePlayer.isCurrentMediaItemSeekable();
+        if (seekable && nativePlayer.getPlaybackState() != Player.STATE_IDLE) {
+            nativePlayer.seekTo(0L);
+            nativePlayer.prepare();
+            nativePlayer.play();
+        } else if (lastNativeStreamUrl != null && !lastNativeStreamUrl.isEmpty()) {
+            ensureNativePlayerOnMainThread(lastNativeAuthToken);
+            nativePlayer.stop();
+            nativePlayer.clearMediaItems();
+            nativePlayer.setVolume(currentNativeVolume);
+            nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+            nativePlayer.setPlaybackParameters(new PlaybackParameters((float) (currentPlaybackRate > 0 ? currentPlaybackRate : 1.0)));
+            nativePlayer.setMediaItem(MediaItem.fromUri(lastNativeStreamUrl));
+            nativePlayer.prepare();
+            nativePlayer.play();
+        } else {
+            nativePlayer.seekTo(0L);
+            nativePlayer.prepare();
+            nativePlayer.play();
+        }
+        mainHandler.removeCallbacks(nativeProgressTicker);
+        mainHandler.postDelayed(nativeProgressTicker, 500L);
+        updatePlaybackState(true, 0.0, currentDurationSec, currentPlaybackRate);
+        emitNativeState("state", null);
+    }
+
+    public void nativeReplay() {
+        mainHandler.post(this::nativeReplayOnMainThread);
+    }
+
+    public void nativeSetRepeatMode(final String mode) {
+        nativeRepeatMode = "one".equals(mode) ? "one" : "off";
+        mainHandler.post(() -> {
+            if (nativePlayer != null) {
+                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+            }
+        });
+    }
+
     public void nativeSeek(final double positionSec) {
         mainHandler.post(() -> {
             cancelCrossfadeOnMainThread();
             double safePos = Math.max(0.0, positionSec);
-            currentPositionSec = safePos;
             if (nativeAudioActive && nativePlayer != null) {
-                nativePlayer.seekTo((long) (safePos * 1000.0));
+                long targetMs = (long) (safePos * 1000.0);
+                int playbackState = nativePlayer.getPlaybackState();
+                boolean seekable = nativePlayer.isCurrentMediaItemSeekable();
+                long bufferedMs = Math.max(0L, nativePlayer.getBufferedPosition());
+
+                if (playbackState == Player.STATE_ENDED) {
+                    if (seekable || (targetMs == 0L && bufferedMs > 0L)) {
+                        nativePlayer.seekTo(targetMs);
+                        nativePlayer.prepare();
+                        nativePlayer.play();
+                    } else if (lastNativeStreamUrl != null && !lastNativeStreamUrl.isEmpty()) {
+                        nativeReplayOnMainThread();
+                        return;
+                    }
+                } else if (seekable) {
+                    nativePlayer.seekTo(targetMs);
+                } else {
+                    // For unseekable live/transcoded pipes (e.g. SoundCloud HLS -> FFmpeg Accept-Ranges: none),
+                    // seeking beyond buffered memory resets HTTP from byte 0 (0:00). Clamp strictly inside buffer.
+                    if (bufferedMs > 1000L) {
+                        long clampedMs = Math.min(targetMs, Math.max(0L, bufferedMs - 500L));
+                        nativePlayer.seekTo(clampedMs);
+                        safePos = clampedMs / 1000.0;
+                    } else {
+                        safePos = Math.max(0L, nativePlayer.getCurrentPosition()) / 1000.0;
+                    }
+                }
+                currentPositionSec = safePos;
                 updatePlaybackState(nativePlayer.isPlaying(), safePos, currentDurationSec, currentPlaybackRate);
                 emitNativeState("state", null);
+            } else {
+                currentPositionSec = safePos;
             }
         });
     }

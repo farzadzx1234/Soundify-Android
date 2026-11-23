@@ -1292,7 +1292,7 @@ export const api = {
       },
     );
   },
-  async refreshStreamUrl(id: string, url?: string) {
+  async refreshStreamUrl(id: string, url?: string, title?: string, artist?: string) {
     let canonical = extractCanonicalExternalUrl(url, id);
 
     // If target is a Spotify track, resolve it to YouTube stream URL first because backend yt-dlp cannot stream Spotify DRM
@@ -1311,7 +1311,7 @@ export const api = {
       "/api/external/refresh-stream",
       {
         method: "POST",
-        body: JSON.stringify({ id, url: canonical || url }),
+        body: JSON.stringify({ id, url: canonical || url, title, artist }),
       },
     );
   },

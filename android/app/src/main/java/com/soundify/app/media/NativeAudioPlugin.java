@@ -232,4 +232,23 @@ public class NativeAudioPlugin extends Plugin {
         }
         call.resolve();
     }
+
+    @PluginMethod
+    public void setRepeatMode(PluginCall call) {
+        String mode = call.getString("mode", "off");
+        SoundifyMediaService service = SoundifyMediaService.getInstance();
+        if (service != null) {
+            service.nativeSetRepeatMode(mode != null ? mode : "off");
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void replay(PluginCall call) {
+        SoundifyMediaService service = SoundifyMediaService.getInstance();
+        if (service != null) {
+            service.nativeReplay();
+        }
+        call.resolve();
+    }
 }

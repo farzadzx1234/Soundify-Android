@@ -64,6 +64,8 @@ interface NativeAudioPluginInterface {
   pause?: () => Promise<void>;
   stop?: () => Promise<void>;
   seek?: (opts: { position: number }) => Promise<void>;
+  setRepeatMode?: (opts: { mode: string }) => Promise<void>;
+  replay?: () => Promise<void>;
   setVolume?: (opts: { volume: number }) => Promise<void>;
   setPlaybackRate?: (opts: { rate: number }) => Promise<void>;
   getState?: () => Promise<Record<string, unknown>>;
@@ -139,6 +141,20 @@ export async function nativeAudioSeek(position: number): Promise<void> {
   const plugin = getNativeAudioPlugin();
   if (plugin?.seek) {
     await plugin.seek({ position }).catch(() => {});
+  }
+}
+
+export async function nativeAudioSetRepeatMode(mode: "off" | "all" | "one"): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.setRepeatMode) {
+    await plugin.setRepeatMode({ mode }).catch(() => {});
+  }
+}
+
+export async function nativeAudioReplay(): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.replay) {
+    await plugin.replay().catch(() => {});
   }
 }
 

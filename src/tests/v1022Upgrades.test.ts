@@ -83,34 +83,34 @@ describe("Soundify v1.0.22 Upgrades & Regression Suite", () => {
     (globalThis as unknown as { window?: unknown }).window = originalWindow;
   });
 
-  describe("1. Version Synchronization (v1.0.22 / build 23)", () => {
-    it("matches 1.0.22 / versionCode 23 across TS, package.json, sw.js, Gradle, and Java service", () => {
-      expect(APP_VERSION).toBe("1.0.22");
-      expect(APP_BUILD_NUMBER).toBe(23);
+  describe("1. Version Synchronization (>= v1.0.22 / build 23)", () => {
+    it("matches synced version and build across TS, package.json, sw.js, Gradle, and Java service", () => {
+      expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(23);
 
       const pkg = JSON.parse(
         fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
       );
-      expect(pkg.version).toBe("1.0.22");
+      expect(pkg.version).toBe(APP_VERSION);
 
       const swJs = fs.readFileSync(
         path.resolve(__dirname, "../../public/sw.js"),
         "utf8",
       );
-      expect(swJs).toContain("soundify-v1.0.22-b23");
+      expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
 
       const gradle = fs.readFileSync(
         path.resolve(__dirname, "../../android/app/build.gradle"),
         "utf8",
       );
-      expect(gradle).toContain("versionCode 23");
-      expect(gradle).toContain('versionName "1.0.22"');
+      expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+      expect(gradle).toContain(`versionName "${APP_VERSION}"`);
 
       const service = fs.readFileSync(
         path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
         "utf8",
       );
-      expect(service).toContain('APP_VERSION_HEADER = "1.0.22"');
+      expect(service).toContain(`APP_VERSION_HEADER = "${APP_VERSION}"`);
     });
   });
 

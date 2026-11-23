@@ -4,6 +4,30 @@ import {
   normalizePersianChars,
 } from "./lyricsCleaner";
 
+function foldDiacriticsAndTurkish(str: string): string {
+  return normalizePersianChars(str)
+    .replace(/\u0131/g, "i") // Turkish dotless ı
+    .replace(/\u0130/g, "i") // Turkish dotted İ
+    .replace(/[\u015F\u015E]/g, "s") // ş / Ş
+    .replace(/[\u011F\u011E]/g, "g") // ğ / Ğ
+    .replace(/[\u00FC\u00DC]/g, "u") // ü / Ü
+    .replace(/[\u00F6\u00D6]/g, "o") // ö / Ö
+    .replace(/[\u00E7\u00C7]/g, "c") // ç / Ç
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function stripFallbackDecorators(title: string): string {
+  return title
+    .replace(/\((?:prod\.?|feat\.?|ft\.?|explicit|official|audio|video|lyrics?|slowed|reverb)[^)]*\)/gi, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\|.*$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Verifies that an external mirror candidate (SoundCloud / YouTube) actually represents
  * the same requested song title rather than a different track by the same artist.
@@ -15,26 +39,24 @@ export function isMatchingExternalFallback(
   candidateArtist?: string,
 ): boolean {
   const { title: cleanTargetTitle, artist: cleanTargetArtist } = extractCleanTitleAndArtist(
-    targetTitle,
+    stripFallbackDecorators(targetTitle),
     targetArtist,
   );
   const { title: cleanCandidateTitle } = extractCleanTitleAndArtist(
-    candidateTitle,
+    stripFallbackDecorators(candidateTitle),
     candidateArtist || cleanTargetArtist,
   );
 
-  const normTargetTitle = normalizePersianChars(cleanTargetTitle).toLowerCase().trim();
-  const normCandTitle = normalizePersianChars(cleanCandidateTitle).toLowerCase().trim();
-  const normRawCandTitle = normalizePersianChars(candidateTitle).toLowerCase().trim();
+  const normTargetTitle = foldDiacriticsAndTurkish(cleanTargetTitle);
+  const normCandTitle = foldDiacriticsAndTurkish(cleanCandidateTitle);
+  const normRawCandTitle = foldDiacriticsAndTurkish(candidateTitle);
 
   if (!normTargetTitle || (!normCandTitle && !normRawCandTitle)) {
     return false;
   }
 
   // Prevent matching when candidate's cleaned title is merely the artist's own name
-  const normTargetArtist = normalizePersianChars(cleanTargetArtist || targetArtist || "")
-    .toLowerCase()
-    .trim();
+  const normTargetArtist = foldDiacriticsAndTurkish(cleanTargetArtist || targetArtist || "");
   if (
     normTargetArtist &&
     normCandTitle === normTargetArtist &&
@@ -49,7 +71,7 @@ export function isMatchingExternalFallback(
     const parts = strippedCandTitle.split(/\s*[-–—:|]\s*/);
     if (parts.length >= 2) {
       const filteredParts = parts.filter(
-        (p) => normalizePersianChars(p).toLowerCase().trim() !== normTargetArtist,
+        (p) => foldDiacriticsAndTurkish(p) !== normTargetArtist,
       );
       if (filteredParts.length > 0) {
         strippedCandTitle = filteredParts.join(" ").trim();
@@ -57,10 +79,11 @@ export function isMatchingExternalFallback(
     }
   }
 
+  const foldedCand = foldDiacriticsAndTurkish(strippedCandTitle);
   const score = Math.max(
-    calculateTitleSimilarity(cleanTargetTitle, cleanCandidateTitle),
-    calculateTitleSimilarity(cleanTargetTitle, strippedCandTitle),
+    calculateTitleSimilarity(normTargetTitle, normCandTitle),
+    calculateTitleSimilarity(normTargetTitle, foldedCand),
   );
 
-  return score >= 0.65;
+  return score >= 0.6;
 }

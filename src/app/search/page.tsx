@@ -4,6 +4,8 @@ import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } fr
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  ArrowsClockwiseIcon,
+  CircleNotchIcon,
   ClockCounterClockwiseIcon,
   GlobeHemisphereWestIcon,
   HardDrivesIcon,
@@ -12,6 +14,7 @@ import {
   MusicNotesSimpleIcon,
   PauseIcon,
   PlayIcon,
+  PlusCircleIcon,
   SoundcloudLogoIcon,
   SparkleIcon,
   SpotifyLogoIcon,
@@ -292,6 +295,11 @@ function SearchPageInner() {
   const [externalLoading, setExternalLoading] = useState(false);
   const [externalError, setExternalError] = useState<string | null>(null);
   const [extSortMode, setExtSortMode] = useState<"releaseDate" | "relevance">("releaseDate");
+  const [extPage, setExtPage] = useState(1);
+  const [extLoadingMore, setExtLoadingMore] = useState(false);
+  const [extHasMore, setExtHasMore] = useState(true);
+  const [extRefreshing, setExtRefreshing] = useState(false);
+  const [extMoreFeedback, setExtMoreFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     api.getPlaylists().then((r) => setPlaylists(r.playlists)).catch(() => {});
@@ -425,6 +433,9 @@ function SearchPageInner() {
 
       setExternalLoading(true);
       setExternalError(null);
+      setExtPage(1);
+      setExtHasMore(true);
+      setExtMoreFeedback(null);
       const searchLimit = extSubSource === "all" ? 48 : 32;
       api
         .searchExternal(cleanQ, extSubSource, searchLimit)
@@ -503,10 +514,120 @@ function SearchPageInner() {
     const next = newSub as ExternalSubSource;
     setExtSubSource(next);
     setExternalError(null);
+    setExtPage(1);
+    setExtHasMore(true);
+    setExtMoreFeedback(null);
     if (next !== "all") {
       setExternalTracks((prev) => prev.filter((tr) => tr.source === next));
     }
     syncUrl(inputValue, searchSource, next);
+  };
+
+  const handleRefreshExternalSearch = async () => {
+    const cleanQ = (debouncedQuery.trim() || inputValue.trim()).trim();
+    if (!canAccessGlobal || !cleanQ || cleanQ.length < 2 || extRefreshing || externalLoading) return;
+    setExtRefreshing(true);
+    setExternalError(null);
+    setExtMoreFeedback(null);
+    try {
+      const searchLimit = extSubSource === "all" ? 48 : 32;
+      const res = await api.searchExternal(cleanQ, extSubSource, searchLimit, {
+        page: 1,
+        forceRefresh: true,
+      });
+      if (res.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" || res.error?.includes("GLOBAL_SEARCH_ACCESS_REQUIRED")) {
+        setExternalTracks([]);
+        setSearchSource("local");
+        syncUrl(cleanQ, "local", extSubSource);
+        setAccessModalOpen(true);
+        return;
+      }
+      const nextList = filterSensitiveTracks(res.results || []);
+      setExternalTracks(nextList);
+      setExtPage(1);
+      setExtHasMore(nextList.length > 0);
+      if (res.error && nextList.length === 0) {
+        setExternalError(res.error);
+      }
+    } catch (err: unknown) {
+      setExternalError(err instanceof Error ? err.message : t("actionFailed"));
+    } finally {
+      setExtRefreshing(false);
+    }
+  };
+
+  const handleLoadMoreExternal = async () => {
+    const cleanQ = (debouncedQuery.trim() || inputValue.trim()).trim();
+    if (!canAccessGlobal || !cleanQ || cleanQ.length < 2 || extLoadingMore || externalLoading) return;
+    const nextPage = extPage + 1;
+    if (nextPage > 6) {
+      setExtHasMore(false);
+      return;
+    }
+    setExtLoadingMore(true);
+    setExtMoreFeedback(null);
+    try {
+      const batchLimit = extSubSource === "all" ? 36 : 24;
+      const res = await api.searchExternal(cleanQ, extSubSource, batchLimit, { page: nextPage });
+      if (res.code === "GLOBAL_SEARCH_ACCESS_REQUIRED" || res.error?.includes("GLOBAL_SEARCH_ACCESS_REQUIRED")) {
+        setExternalTracks([]);
+        setSearchSource("local");
+        syncUrl(cleanQ, "local", extSubSource);
+        setAccessModalOpen(true);
+        return;
+      }
+      const incoming = filterSensitiveTracks(res.results || []);
+      const seen = new Set<string>();
+      for (const item of externalTracks) {
+        seen.add(item.id);
+        const canon = (item.pageUrl || "").split("?")[0].toLowerCase();
+        if (canon) seen.add(canon);
+      }
+      const uniqueNew: Track[] = [];
+      for (const item of incoming) {
+        const canon = (item.pageUrl || "").split("?")[0].toLowerCase();
+        if (seen.has(item.id) || (canon && seen.has(canon))) continue;
+        seen.add(item.id);
+        if (canon) seen.add(canon);
+        uniqueNew.push(item);
+      }
+      if (uniqueNew.length > 0) {
+        setExternalTracks((prev) => {
+          const prevIds = new Set(prev.map((p) => p.id));
+          return [...prev, ...uniqueNew.filter((u) => !prevIds.has(u.id))];
+        });
+      }
+      setExtPage(nextPage);
+      if (uniqueNew.length > 0) {
+        setExtMoreFeedback(
+          pickText(
+            `Added ${uniqueNew.length} more tracks`,
+            `${formatNum(uniqueNew.length)} آهنگ جدید به لیست اضافه شد`,
+          ),
+        );
+      } else if (nextPage >= 5) {
+        setExtHasMore(false);
+        setExtMoreFeedback(
+          pickText(
+            "All available matching tracks are loaded",
+            "تمام نتایج مرتبط برای این جستجو نمایش داده شدند",
+          ),
+        );
+      } else {
+        setExtMoreFeedback(
+          pickText(
+            "Tap again to try another search variation",
+            "نتیجه جدیدی در این بخش نبود؛ دوباره بزنید تا جستجوی بعدی انجام شود",
+          ),
+        );
+      }
+    } catch {
+      setExtMoreFeedback(
+        pickText("Could not load more tracks right now", "خطا در بارگذاری آهنگ‌های بیشتر"),
+      );
+    } finally {
+      setExtLoadingMore(false);
+    }
   };
 
   const handleCategoryClick = (catQuery: string) => {
@@ -973,13 +1094,28 @@ function SearchPageInner() {
                     {pickText("Worldwide Streams", "نتایج پخش آنلاین")}
                   </span>
                 </h2>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void handleRefreshExternalSearch()}
+                    disabled={extRefreshing || externalLoading}
+                    aria-label={pickText("Refresh results", "بروزرسانی نتایج")}
+                    className="sf-press inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] dark:bg-white/[0.08] hover:bg-black/[0.1] dark:hover:bg-white/[0.12] border border-black/[0.06] dark:border-white/[0.1] px-3 py-1.5 min-h-[36px] text-[11px] font-bold text-[var(--sf-text)] cursor-pointer transition-colors disabled:opacity-55"
+                  >
+                    <ArrowsClockwiseIcon
+                      size={13}
+                      weight="bold"
+                      className={`text-emerald-500 shrink-0 ${extRefreshing || externalLoading ? "animate-spin" : ""}`}
+                      aria-hidden="true"
+                    />
+                    <span>{pickText("Refresh", "بروزرسانی")}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() =>
                       setExtSortMode((prev) => (prev === "releaseDate" ? "relevance" : "releaseDate"))
                     }
-                    className="sf-press inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] dark:bg-white/[0.08] hover:bg-black/[0.1] dark:hover:bg-white/[0.12] border border-black/[0.06] dark:border-white/[0.1] px-3 py-1 text-[11px] font-bold text-[var(--sf-text)] cursor-pointer transition-colors"
+                    className="sf-press inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] dark:bg-white/[0.08] hover:bg-black/[0.1] dark:hover:bg-white/[0.12] border border-black/[0.06] dark:border-white/[0.1] px-3 py-1.5 min-h-[36px] text-[11px] font-bold text-[var(--sf-text)] cursor-pointer transition-colors"
                   >
                     {extSortMode === "releaseDate" ? (
                       <ClockCounterClockwiseIcon size={13} weight="bold" className="text-emerald-500 shrink-0" aria-hidden="true" />
@@ -1001,7 +1137,7 @@ function SearchPageInner() {
               {/* Apple Music Scannable Compact Track Rows */}
               <div
                 className={`sf-stagger grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-2.5 transition-opacity duration-200 ${
-                  externalLoading ? "opacity-60" : "opacity-100"
+                  externalLoading || extRefreshing ? "opacity-60" : "opacity-100"
                 }`}
               >
                 {displayedExternalTracks.map((tr) => (
@@ -1012,6 +1148,33 @@ function SearchPageInner() {
                     autoExpand={true}
                   />
                 ))}
+              </div>
+
+              {/* Load More External Tracks & Discovery Status */}
+              <div className="pt-2 flex flex-col items-center gap-2">
+                {extMoreFeedback && (
+                  <p className="text-xs text-[var(--sf-muted)] text-center">{extMoreFeedback}</p>
+                )}
+                {extHasMore && (
+                  <Button
+                    type="button"
+                    variant="glass"
+                    disabled={extLoadingMore || externalLoading}
+                    onClick={() => void handleLoadMoreExternal()}
+                    className="w-full sm:w-auto sm:min-w-[260px] !min-h-[48px] !px-6 text-xs sm:text-sm font-bold justify-center"
+                    icon={
+                      extLoadingMore ? (
+                        <CircleNotchIcon size={17} className="animate-spin text-emerald-500 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <PlusCircleIcon size={17} weight="bold" className="text-emerald-500 shrink-0" aria-hidden="true" />
+                      )
+                    }
+                  >
+                    {extLoadingMore
+                      ? pickText("Finding more tracks...", "در حال یافتن آهنگ‌های بیشتر...")
+                      : pickText("Load More Tracks", "بارگذاری آهنگ‌های بیشتر")}
+                  </Button>
+                )}
               </div>
             </section>
           )}

@@ -758,6 +758,7 @@ export function NowPlayingOverlay() {
     isPlaying,
     isBuffering,
     isCrossfading,
+    crossfadeFromTrack,
     duration,
     volume,
     muted,
@@ -1606,7 +1607,12 @@ export function NowPlayingOverlay() {
                     style={{ background: coverPalette.haloRgba }}
                     aria-hidden="true"
                   />
-                  <div className="relative h-full w-full rounded-[28px] overflow-hidden shadow-[0_32px_76px_rgba(0,0,0,0.78)] ring-1 ring-white/15 bg-white/[0.05]">
+                  <div
+                    key={currentTrack.id}
+                    className={`relative h-full w-full rounded-[28px] overflow-hidden shadow-[0_32px_76px_rgba(0,0,0,0.78)] ring-1 ring-white/15 bg-white/[0.05] ${
+                      isCrossfading && crossfadeFromTrack ? "sf-automix-artwork-in" : "sf-track-swap"
+                    }`}
+                  >
                     <OptimizedTrackImage
                       src={currentTrack.coverUrl}
                       trackId={currentTrack.id}
@@ -1614,6 +1620,19 @@ export function NowPlayingOverlay() {
                       priority
                       className="h-full w-full object-cover"
                     />
+                    {isCrossfading && crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id && (
+                      <div
+                        aria-hidden="true"
+                        className="sf-automix-dissolve-out pointer-events-none absolute inset-0 z-10 overflow-hidden"
+                      >
+                        <OptimizedTrackImage
+                          src={crossfadeFromTrack.coverUrl}
+                          trackId={crossfadeFromTrack.id}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1622,9 +1641,18 @@ export function NowPlayingOverlay() {
                     {currentTrack.genre}
                   </span>
                   {isCrossfading && (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-400/35 animate-pulse">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
-                      {pickText("AutoMix", "در حال میکس")}
+                    <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 shadow-sm max-w-[230px]">
+                      <span aria-hidden="true" className="flex items-end gap-0.5 h-2.5 shrink-0">
+                        <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" />
+                        <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-300 rounded-full" style={{ animationDelay: "0.18s" }} />
+                        <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
+                      </span>
+                      <span className="truncate">
+                        {pickText("AutoMix", "میکس روان")}
+                        {crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id
+                          ? ` • ${pickText(crossfadeFromTrack.title, crossfadeFromTrack.titleFa)}`
+                          : ""}
+                      </span>
                     </span>
                   )}
                 </div>
@@ -1749,7 +1777,9 @@ export function NowPlayingOverlay() {
                   />
                   <div
                     key={currentTrack.id}
-                    className={`sf-track-swap relative h-full w-full rounded-[22px] min-[375px]:rounded-[26px] overflow-hidden shadow-[0_28px_64px_rgba(0,0,0,0.78)] ring-1 ring-white/15 bg-white/[0.05] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    className={`${
+                      isCrossfading && crossfadeFromTrack ? "sf-automix-artwork-in" : "sf-track-swap"
+                    } relative h-full w-full rounded-[22px] min-[375px]:rounded-[26px] overflow-hidden shadow-[0_28px_64px_rgba(0,0,0,0.78)] ring-1 ring-white/15 bg-white/[0.05] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                       isPlaying ? "scale-100" : "scale-[0.92]"
                     }`}
                   >
@@ -1760,6 +1790,19 @@ export function NowPlayingOverlay() {
                       priority
                       className="h-full w-full object-cover pointer-events-none"
                     />
+                    {isCrossfading && crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id && (
+                      <div
+                        aria-hidden="true"
+                        className="sf-automix-dissolve-out pointer-events-none absolute inset-0 z-10 overflow-hidden"
+                      >
+                        <OptimizedTrackImage
+                          src={crossfadeFromTrack.coverUrl}
+                          trackId={crossfadeFromTrack.id}
+                          alt=""
+                          className="h-full w-full object-cover pointer-events-none"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1770,9 +1813,18 @@ export function NowPlayingOverlay() {
                         {currentTrack.genre}
                       </span>
                       {isCrossfading && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-400/35 animate-pulse">
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
-                          {pickText("AutoMix", "میکس روان")}
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold text-emerald-200 bg-emerald-500/20 border border-emerald-400/40 max-w-[180px]">
+                          <span aria-hidden="true" className="flex items-end gap-0.5 h-2.5 shrink-0">
+                            <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" />
+                            <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-300 rounded-full" style={{ animationDelay: "0.18s" }} />
+                            <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
+                          </span>
+                          <span className="truncate">
+                            {pickText("AutoMix", "میکس روان")}
+                            {crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id
+                              ? ` • ${pickText(crossfadeFromTrack.title, crossfadeFromTrack.titleFa)}`
+                              : ""}
+                          </span>
                         </span>
                       )}
                     </div>

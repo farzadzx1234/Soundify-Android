@@ -67,6 +67,30 @@ export function equalPowerGains(progress: number): { outGain: number; inGain: nu
   };
 }
 
+/**
+ * Silky Apple Music / Club-DJ asymmetric S-curve blend:
+ * - Smoothstep-eased incoming fade reaches full presence by 72% of transition.
+ * - Outgoing groove holds briefly through the first 16%, then melts smoothly with an exponential tail.
+ */
+export function djCrossfadeGains(progress: number): { outGain: number; inGain: number } {
+  const p = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+  if (p <= 0) return { outGain: 1, inGain: 0 };
+  if (p >= 1) return { outGain: 0, inGain: 1 };
+
+  const inP = Math.min(1, p / 0.72);
+  const inSmooth = inP * inP * (3 - 2 * inP);
+  const inGain = Math.sin(inSmooth * Math.PI * 0.5);
+
+  const outP = Math.max(0, (p - 0.16) / 0.84);
+  const outSmooth = outP * outP * (3 - 2 * outP);
+  const outGain = Math.pow(Math.max(0, Math.cos(outSmooth * Math.PI * 0.5)), 1.35);
+
+  return {
+    outGain: Number.isFinite(outGain) ? Math.max(0, Math.min(1, outGain)) : 0,
+    inGain: Number.isFinite(inGain) ? Math.max(0, Math.min(1, inGain)) : 1,
+  };
+}
+
 function normalizeWaveform(wf?: number[]): number[] {
   if (!Array.isArray(wf) || wf.length === 0) return [];
   const clean = wf.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0));
@@ -168,7 +192,7 @@ export function computeAutoMixPlan(
     inBars.length > 0 ? meanRange(inBars, headStartIdx, headEndIdx, 0.5) : 0.5;
 
   const energySimilarity = Math.max(0, 1 - Math.abs(outgoingTailEnergy - incomingHeadEnergy));
-  let crossfadeSec = 4.5 + energySimilarity * 3.0; // 4.5s .. 7.5s
+  let crossfadeSec = 5.0 + energySimilarity * 2.5; // 5.0s .. 7.5s
 
   // 3. Find natural outgoing breakdown / outro drop in the last 14s..4.5s window
   const minOutSec = Math.max(dur * 0.65, dur - 14);
@@ -197,8 +221,8 @@ export function computeAutoMixPlan(
     }
   }
 
-  // Ensure crossfade completes gracefully before Deck A reaches EOF
-  const remainingSec = Math.max(3.5, dur - mixOutSec);
+  // Ensure crossfade completes gracefully before Deck A reaches EOF with 0.35s headroom
+  const remainingSec = Math.max(3.5, dur - mixOutSec - 0.35);
   crossfadeSec = Math.max(3.5, Math.min(7.5, Math.min(crossfadeSec, remainingSec)));
 
   return {

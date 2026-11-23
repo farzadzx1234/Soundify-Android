@@ -117,6 +117,7 @@ export function PlayerDock() {
     currentTrack,
     isPlaying,
     isBuffering,
+    isCrossfading,
     duration,
     volume,
     muted,
@@ -308,6 +309,12 @@ export function PlayerDock() {
                 </div>
                 <div className="flex items-center gap-2 min-w-0 mt-0.5">
                   <p className="truncate text-[11px] text-slate-500 dark:text-slate-300/85 font-medium">{artist}</p>
+                  {isCrossfading && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-300 shrink-0">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true" />
+                      {pickText("AutoMix", "میکس روان")}
+                    </span>
+                  )}
                   {isCurrentTrackDownloading && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-500 dark:text-emerald-400 shrink-0">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
@@ -393,6 +400,12 @@ export function PlayerDock() {
                 </div>
                 <div className="flex items-center gap-2 min-w-0 mt-0.5">
                   <PlayerDockSubtitle fallback={artist} />
+                  {isCrossfading && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-bold text-emerald-300 shrink-0">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+                      {pickText("AutoMix", "میکس روان")}
+                    </span>
+                  )}
                   {isCurrentTrackDownloading && (
                     <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 shrink-0">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />

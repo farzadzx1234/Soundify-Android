@@ -941,6 +941,7 @@ export const api = {
     q: string,
     source: "all" | "youtube" | "soundcloud" | "spotify" = "all",
     limit = 32,
+    options?: { page?: number; forceRefresh?: boolean },
   ): Promise<{
     query: string;
     source: string;
@@ -996,6 +997,8 @@ export const api = {
       const targetSource = isSpotifyUrl ? "youtube" : source;
       const backendLimit = Math.max(8, Math.min(limit, 32));
       const useNativeAudio = isNativeAudioAvailable();
+      const pageNum = Math.max(1, Math.min(options?.page ?? 1, 6));
+      const cacheBuster = options?.forceRefresh ? String(Date.now()) : "";
 
       const normalizeExternalResults = (items: Track[], forcedSourceOverride?: "youtube" | "soundcloud" | "spotify"): Track[] => {
         const normalized = items.map((tr) => {
@@ -1039,10 +1042,90 @@ export const api = {
           source: src,
           limit: String(lim),
         });
+        if (cacheBuster) {
+          params.set("_r", cacheBuster);
+        }
         return apiFetch<ExternalSearchPayload>(`/api/external/search?${params.toString()}`);
       };
 
       let res: ExternalSearchPayload | undefined;
+
+      // Multi-page discovery expansion (`page >= 2`) to fetch fresh related tracks via query variations
+      if (pageNum >= 2 && !isSpotifyUrl) {
+        const PAGE_SUFFIX_GROUPS: [string, string][] = [
+          ["official", "remix"],
+          ["live", "acoustic"],
+          ["new", "full"],
+          ["album", "best"],
+        ];
+        const [s1, s2] = PAGE_SUFFIX_GROUPS[(pageNum - 2) % PAGE_SUFFIX_GROUPS.length];
+        const merged: Track[] = [];
+        const seenKeys = new Set<string>();
+        const pushUnique = (tr: Track) => {
+          const canonPage = (tr.pageUrl || "").split("?")[0].toLowerCase();
+          if (seenKeys.has(tr.id) || (canonPage && seenKeys.has(canonPage))) return;
+          seenKeys.add(tr.id);
+          if (canonPage) seenKeys.add(canonPage);
+          merged.push(tr);
+        };
+
+        if (targetSource === "all") {
+          const settled = await Promise.allSettled([
+            fetchSourceBatch(`${effectiveQuery} ${s1}`, "youtube", 24),
+            fetchSourceBatch(`${effectiveQuery} ${s2}`, "soundcloud", 24),
+            fetchSourceBatch(`${effectiveQuery} ${s1}`, "spotify", 12),
+          ]);
+          for (const item of settled) {
+            if (item.status === "rejected" && isBlockingAccessOrVersionErr(item.reason)) {
+              throw item.reason;
+            }
+          }
+          const ytItems = settled[0].status === "fulfilled" && Array.isArray(settled[0].value.results) ? settled[0].value.results : [];
+          const scItems = settled[1].status === "fulfilled" && Array.isArray(settled[1].value.results) ? settled[1].value.results : [];
+          const spItems = settled[2].status === "fulfilled" && Array.isArray(settled[2].value.results) ? normalizeExternalResults(settled[2].value.results, "spotify") : [];
+          const maxLen = Math.max(ytItems.length, scItems.length, spItems.length);
+          for (let i = 0; i < maxLen; i++) {
+            if (ytItems[i]) pushUnique(ytItems[i]);
+            if (scItems[i]) pushUnique(scItems[i]);
+            if (spItems[i]) pushUnique(spItems[i]);
+            if (merged.length >= limit) break;
+          }
+          if (merged.length === 0 && settled.every((s) => s.status === "rejected")) {
+            const firstRejected = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+            if (firstRejected) throw firstRejected.reason;
+          }
+        } else {
+          const settled = await Promise.allSettled([
+            fetchSourceBatch(`${effectiveQuery} ${s1}`, targetSource, backendLimit),
+            fetchSourceBatch(`${effectiveQuery} ${s2}`, targetSource, backendLimit),
+          ]);
+          for (const item of settled) {
+            if (item.status === "rejected" && isBlockingAccessOrVersionErr(item.reason)) {
+              throw item.reason;
+            }
+          }
+          const b1 = settled[0].status === "fulfilled" && Array.isArray(settled[0].value.results) ? settled[0].value.results : [];
+          const b2 = settled[1].status === "fulfilled" && Array.isArray(settled[1].value.results) ? settled[1].value.results : [];
+          const maxLen = Math.max(b1.length, b2.length);
+          for (let i = 0; i < maxLen; i++) {
+            if (b1[i]) pushUnique(b1[i]);
+            if (b2[i]) pushUnique(b2[i]);
+            if (merged.length >= limit) break;
+          }
+          if (merged.length === 0 && settled.every((s) => s.status === "rejected")) {
+            const firstRejected = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+            if (firstRejected) throw firstRejected.reason;
+          }
+        }
+
+        const sanitized = normalizeExternalResults(merged);
+        return {
+          query: effectiveQuery,
+          source,
+          results: sanitized,
+          total: sanitized.length,
+        };
+      }
 
       // Parallel multi-provider fan-out for "all" searches when >20 results requested
       if (targetSource === "all" && !isSpotifyUrl && limit > 20) {

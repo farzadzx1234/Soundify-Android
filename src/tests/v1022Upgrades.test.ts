@@ -268,7 +268,7 @@ describe("Soundify v1.0.22 Upgrades & Regression Suite", () => {
         "utf8",
       );
       expect(playerCtx).toContain("computeAutoMixPlan");
-      expect(playerCtx).toContain("equalPowerGains");
+      expect(playerCtx).toMatch(/equalPowerGains|djCrossfadeGains/);
       expect(playerCtx).toContain("soundify-crossfade-audio");
       expect(playerCtx).toContain("isCrossfading");
     });

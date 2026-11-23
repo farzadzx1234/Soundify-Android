@@ -77,8 +77,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.25";
-    private static final String APP_VERSION_HEADER = "1.0.25";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.26";
+    private static final String APP_VERSION_HEADER = "1.0.26";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -227,88 +227,46 @@ public class SoundifyMediaService extends Service {
                 isCrossfading = false;
                 return;
             }
-            PlaybackException nextDeckErr = nextDeckPlayer.getPlayerError();
-            if (nextDeckErr != null || nextDeckPlayer.getPlaybackState() == Player.STATE_IDLE) {
-                try {
-                    nativePlayer.setVolume(crossfadeTargetVolume);
-                } catch (Exception ignored) {}
+            PlaybackException activeErr = nativePlayer.getPlayerError();
+            if (activeErr != null || nativePlayer.getPlaybackState() == Player.STATE_IDLE) {
                 cancelCrossfadeOnMainThread();
-                emitNativeState("crossfadeFailed", nextDeckErr);
+                emitNativeState("crossfadeFailed", activeErr);
                 return;
             }
             long elapsedMs = SystemClock.elapsedRealtime() - crossfadeStartMs;
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(500L, crossfadeDurationMs)));
-            boolean outgoingEnded = nativePlayer.getPlaybackState() == Player.STATE_ENDED;
-            float outGain = outgoingEnded ? 0.0f : (float) (Math.cos(p * Math.PI * 0.5) * crossfadeTargetVolume);
-            float inGain = outgoingEnded ? crossfadeTargetVolume : (float) (Math.sin(p * Math.PI * 0.5) * crossfadeTargetVolume);
+            boolean outgoingEnded = nextDeckPlayer.getPlaybackState() == Player.STATE_ENDED
+                || nextDeckPlayer.getPlaybackState() == Player.STATE_IDLE;
+
+            // Asymmetric DJ S-curve blend matching smartAutoMix.djCrossfadeGains
+            double inP = Math.min(1.0, p / 0.72);
+            double inSmooth = inP * inP * (3.0 - 2.0 * inP);
+            float inGain = (float) (Math.sin(inSmooth * Math.PI * 0.5) * crossfadeTargetVolume);
+
+            double outP = Math.max(0.0, (p - 0.16) / 0.84);
+            double outSmooth = outP * outP * (3.0 - 2.0 * outP);
+            float outGain = outgoingEnded
+                ? 0.0f
+                : (float) (Math.pow(Math.max(0.0, Math.cos(outSmooth * Math.PI * 0.5)), 1.35) * crossfadeTargetVolume);
+
             try {
-                nativePlayer.setVolume(Math.max(0.0f, outGain));
-                nextDeckPlayer.setVolume(Math.max(0.0f, inGain));
+                nextDeckPlayer.setVolume(Math.max(0.0f, outGain));
+                nativePlayer.setVolume(Math.max(0.0f, inGain));
             } catch (Exception ignored) {}
 
             if (p < 1.0 && !outgoingEnded) {
-                mainHandler.postDelayed(this, 40L);
+                mainHandler.postDelayed(this, 16L);
                 return;
             }
 
             isCrossfading = false;
-            ExoPlayer outgoingDeck = nativePlayer;
-            ExoPlayer incomingDeck = nextDeckPlayer;
-
-            try {
-                outgoingDeck.removeListener(primaryPlayerListener);
-                outgoingDeck.stop();
-                outgoingDeck.clearMediaItems();
-                outgoingDeck.setAudioAttributes(buildMediaAudioAttributes(), false);
-            } catch (Exception ignored) {}
-
-            nativePlayer = incomingDeck;
-            nextDeckPlayer = outgoingDeck;
-
             try {
                 nativePlayer.setVolume(crossfadeTargetVolume);
-                nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
-                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
-                nativePlayer.addListener(primaryPlayerListener);
-                nativePlayer.setPlayWhenReady(true);
-                nativePlayer.play();
             } catch (Exception ignored) {}
-
-            if (nextDeckStreamUrl != null && !nextDeckStreamUrl.isEmpty()) {
-                lastNativeStreamUrl = nextDeckStreamUrl;
-            }
-            nextDeckStreamUrl = "";
-            nextDeckTrackId = "";
-            long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
-            long durMs = nativePlayer.getDuration();
-            currentPositionSec = posMs / 1000.0;
-            currentDurationSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
-                ? durMs / 1000.0
-                : (crossfadeNextDurationSec > 0 ? crossfadeNextDurationSec : currentDurationSec);
-            boolean shouldBePlaying = nativePlayer.getPlayWhenReady()
-                && nativePlayer.getPlaybackState() != Player.STATE_IDLE
-                && nativePlayer.getPlaybackState() != Player.STATE_ENDED;
-            isPlaying = shouldBePlaying;
-
-            if (crossfadeTitle != null && !crossfadeTitle.isEmpty()) {
-                updateMetadata(
-                    crossfadeTitle,
-                    crossfadeArtist,
-                    crossfadeAlbum,
-                    crossfadeCoverUrl,
-                    currentDurationSec,
-                    crossfadeNextTrackId
-                );
-            }
-
-            mainHandler.removeCallbacks(nativeProgressTicker);
-            if (shouldBePlaying) {
-                acquireWakeLock();
-                mainHandler.postDelayed(nativeProgressTicker, 500L);
-            } else {
-                releaseWakeLock();
-            }
-            updatePlaybackState(isPlaying, currentPositionSec, currentDurationSec, currentPlaybackRate);
+            try {
+                nextDeckPlayer.stop();
+                nextDeckPlayer.clearMediaItems();
+            } catch (Exception ignored) {}
             emitNativeState("crossfadeComplete", null);
         }
     };
@@ -1400,22 +1358,73 @@ public class SoundifyMediaService extends Service {
             currentNativeVolume = crossfadeTargetVolume;
             long nativeDurMs = nativePlayer.getDuration();
             long nativePosMs = Math.max(0L, nativePlayer.getCurrentPosition());
-            long clampedFadeMs = Math.max(1000L, crossfadeMs);
+            long clampedFadeMs = Math.max(1200L, crossfadeMs);
             if (nativeDurMs > 0 && nativeDurMs != androidx.media3.common.C.TIME_UNSET) {
-                long remainingMs = nativeDurMs - nativePosMs - 150L;
-                if (remainingMs > 1000L) {
+                long remainingMs = nativeDurMs - nativePosMs - 200L;
+                if (remainingMs > 1200L) {
                     clampedFadeMs = Math.min(clampedFadeMs, remainingMs);
                 } else {
-                    clampedFadeMs = 1000L;
+                    clampedFadeMs = 1200L;
                 }
             }
             crossfadeDurationMs = clampedFadeMs;
             crossfadeStartMs = SystemClock.elapsedRealtime();
-            isCrossfading = true;
 
+            // Promote incoming deck upfront so Player UI, lockscreen metadata & live progress switch immediately
+            ExoPlayer outgoingDeck = nativePlayer;
+            ExoPlayer incomingDeck = nextDeckPlayer;
+            isSwitchingNativeTrack = true;
+            try {
+                outgoingDeck.removeListener(primaryPlayerListener);
+                outgoingDeck.setAudioAttributes(buildMediaAudioAttributes(), false);
+            } catch (Exception ignored) {}
+
+            nativePlayer = incomingDeck;
+            nextDeckPlayer = outgoingDeck;
+
+            try {
+                nativePlayer.setVolume(0.0f);
+                nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
+                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+                nativePlayer.addListener(primaryPlayerListener);
+                nativePlayer.setPlayWhenReady(true);
+                nativePlayer.play();
+            } catch (Exception ignored) {} finally {
+                isSwitchingNativeTrack = false;
+            }
+
+            if (nextDeckStreamUrl != null && !nextDeckStreamUrl.isEmpty()) {
+                lastNativeStreamUrl = nextDeckStreamUrl;
+            }
+            nextDeckStreamUrl = "";
+            nextDeckTrackId = "";
+
+            long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+            long durMs = nativePlayer.getDuration();
+            currentPositionSec = posMs / 1000.0;
+            currentDurationSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
+                ? durMs / 1000.0
+                : (crossfadeNextDurationSec > 0 ? crossfadeNextDurationSec : currentDurationSec);
+            isPlaying = true;
+
+            if (crossfadeTitle != null && !crossfadeTitle.isEmpty()) {
+                updateMetadata(
+                    crossfadeTitle,
+                    crossfadeArtist,
+                    crossfadeAlbum,
+                    crossfadeCoverUrl,
+                    currentDurationSec,
+                    crossfadeNextTrackId
+                );
+            }
+
+            mainHandler.removeCallbacks(nativeProgressTicker);
+            acquireWakeLock();
+            mainHandler.postDelayed(nativeProgressTicker, 500L);
+            updatePlaybackState(true, currentPositionSec, currentDurationSec, currentPlaybackRate);
+
+            isCrossfading = true;
             mainHandler.removeCallbacks(crossfadeTicker);
-            nextDeckPlayer.setVolume(0.0f);
-            nextDeckPlayer.play();
             mainHandler.post(crossfadeTicker);
             emitNativeState("crossfadeStarted", null);
         });

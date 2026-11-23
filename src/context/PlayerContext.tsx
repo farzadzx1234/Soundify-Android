@@ -70,7 +70,7 @@ import {
 } from "@/lib/nativeAudioBridge";
 import {
   computeAutoMixPlan,
-  equalPowerGains,
+  djCrossfadeGains,
   getAutoMixEnabled,
   type AutoMixPlan,
 } from "@/lib/smartAutoMix";
@@ -132,6 +132,7 @@ interface PlayerContextValue {
   isCurrentTrackOffline: boolean;
   isBuffering: boolean;
   isCrossfading: boolean;
+  crossfadeFromTrack: Track | null;
 }
 
 interface PlayerProgressContextValue {
@@ -325,9 +326,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [isBuffering, setIsBuffering] = useState(false);
   const isBufferingRef = useRef(false);
   const [isCrossfading, setIsCrossfading] = useState(false);
+  const [crossfadeFromTrack, setCrossfadeFromTrack] = useState<Track | null>(null);
   const [audioDeckVersion, setAudioDeckVersion] = useState(0);
 
   const autoMixTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoMixRafRef = useRef<number | null>(null);
   const autoMixPreparedKeyRef = useRef<string | null>(null);
   const autoMixPreparingKeyRef = useRef<string | null>(null);
   const autoMixTargetTrackRef = useRef<Track | null>(null);
@@ -837,6 +840,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const cancelAutoMix = useCallback(() => {
+    if (autoMixRafRef.current !== null && typeof window !== "undefined") {
+      cancelAnimationFrame(autoMixRafRef.current);
+      autoMixRafRef.current = null;
+    }
     if (autoMixTimerRef.current) {
       clearInterval(autoMixTimerRef.current);
       autoMixTimerRef.current = null;
@@ -849,6 +856,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     autoMixStartedRef.current = false;
     finalizeWebAutoMixRef.current = null;
     setIsCrossfading(false);
+    setCrossfadeFromTrack(null);
 
     if (isNativeAudioAvailable()) {
       void nativeAudioCancelCrossfade();
@@ -930,7 +938,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const pairKey = `${curr.id}::${nextTrack.id}`;
 
       if (
-        posSec >= Math.max(8, plan.mixOutSec - 12) &&
+        posSec >= Math.max(8, plan.mixOutSec - 20) &&
         autoMixPreparedKeyRef.current !== pairKey &&
         autoMixPreparingKeyRef.current !== pairKey
       ) {
@@ -1080,13 +1088,60 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
+          const outgoingTrack = currentTrackRef.current;
           autoMixStartedRef.current = true;
           setIsCrossfading(true);
+          setCrossfadeFromTrack(outgoingTrack && outgoingTrack.id !== targetNext.id ? outgoingTrack : null);
           deckB.volume = 0;
           deckB.playbackRate = playbackRateRef.current || 1;
           void deckB.play().catch(() => {
             cancelAutoMix();
           });
+
+          // Upfront Deck Switch: promote Deck B & switch Player UI immediately while Deck A melts out smoothly
+          isSettingSourceRef.current = true;
+          try {
+            deckA.id = "soundify-crossfade-audio";
+            deckB.id = "soundify-global-audio";
+            swapSingletonAudioDeck(deckB);
+          } catch {} finally {
+            isSettingSourceRef.current = false;
+          }
+
+          const promoted = autoMixTargetTrackRef.current || targetNext;
+          lyricsRef.current = [];
+          setLyrics([]);
+          setLyricsSource("none");
+          lyricsSourceRef.current = "none";
+          recordedPlayForIdRef.current = null;
+          currentTrackRef.current = promoted;
+          setCurrentTrack(promoted);
+
+          const posB = Number.isFinite(deckB.currentTime) ? deckB.currentTime : 0;
+          const durB =
+            Number.isFinite(deckB.duration) && deckB.duration > 0
+              ? deckB.duration
+              : promoted.durationSec || 0;
+          currentTimeRef.current = posB;
+          setCurrentTime(posB);
+          durationRef.current = durB;
+          setDuration(durB);
+          setCurrentlyPlayingTrackId(promoted.id);
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          setIsBuffering(false);
+          isBufferingRef.current = false;
+          void updateAndroidPlaybackState({
+            isPlaying: true,
+            position: posB,
+            duration: durB,
+            playbackRate: deckB.playbackRate || playbackRateRef.current || 1,
+          });
+          setAudioDeckVersion((v) => v + 1);
+          void loadLyricsForTrack(promoted.id, false);
+          savePlayerState(posB);
+          broadcastLeaderState();
+          broadcastCurrentState();
 
           const startMs = performance.now();
           const actualRemainingMs =
@@ -1095,11 +1150,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               : plan.crossfadeSec * 1000;
           const fadeMs = Math.max(1200, Math.min(plan.crossfadeSec * 1000, actualRemainingMs));
 
-          let promotedOnce = false;
-          const promoteWebDeckB = () => {
-            if (promotedOnce) return;
-            promotedOnce = true;
+          let finished = false;
+          const finishWebCrossfade = () => {
+            if (finished) return;
+            finished = true;
 
+            if (autoMixRafRef.current !== null && typeof window !== "undefined") {
+              cancelAnimationFrame(autoMixRafRef.current);
+              autoMixRafRef.current = null;
+            }
             if (autoMixTimerRef.current) {
               clearInterval(autoMixTimerRef.current);
               autoMixTimerRef.current = null;
@@ -1109,11 +1168,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             const baseVol = mutedRef.current ? 0 : volumeRef.current;
             isSettingSourceRef.current = true;
             try {
-              deckA.id = "soundify-crossfade-audio";
-              deckB.id = "soundify-global-audio";
-              swapSingletonAudioDeck(deckB);
               deckB.volume = baseVol;
-              if (deckB.paused) {
+              if (deckB.paused && !userPausedIntentRef.current) {
                 void deckB.play().catch(() => {});
               }
               deckA.pause();
@@ -1123,7 +1179,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               isSettingSourceRef.current = false;
             }
 
-            const promoted = autoMixTargetTrackRef.current || targetNext;
             autoMixStartedRef.current = false;
             autoMixPreparedKeyRef.current = null;
             autoMixPreparingKeyRef.current = null;
@@ -1131,68 +1186,54 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             autoMixPlanRef.current = null;
             autoMixModeRef.current = null;
             setIsCrossfading(false);
-
-            lyricsRef.current = [];
-            setLyrics([]);
-            setLyricsSource("none");
-            lyricsSourceRef.current = "none";
-            recordedPlayForIdRef.current = null;
-            currentTrackRef.current = promoted;
-            setCurrentTrack(promoted);
-
-            const posB = Number.isFinite(deckB.currentTime) ? deckB.currentTime : 0;
-            const durB =
-              Number.isFinite(deckB.duration) && deckB.duration > 0
-                ? deckB.duration
-                : promoted.durationSec || 0;
-            currentTimeRef.current = posB;
-            setCurrentTime(posB);
-            durationRef.current = durB;
-            setDuration(durB);
-            setCurrentlyPlayingTrackId(promoted.id);
-            setIsPlaying(true);
-            isPlayingRef.current = true;
-            setIsBuffering(false);
-            isBufferingRef.current = false;
-            void updateAndroidPlaybackState({
-              isPlaying: true,
-              position: posB,
-              duration: durB,
-              playbackRate: deckB.playbackRate || playbackRateRef.current || 1,
-            });
-            setAudioDeckVersion((v) => v + 1);
-
-            void loadLyricsForTrack(promoted.id, false);
-            savePlayerState(posB);
-            broadcastLeaderState();
-            broadcastCurrentState();
+            setCrossfadeFromTrack(null);
           };
 
-          finalizeWebAutoMixRef.current = promoteWebDeckB;
-          if (autoMixTimerRef.current) {
-            clearInterval(autoMixTimerRef.current);
-          }
-          autoMixTimerRef.current = setInterval(() => {
+          finalizeWebAutoMixRef.current = finishWebCrossfade;
+
+          const stepWebBlend = () => {
+            if (finished) return false;
             if (userPausedIntentRef.current) {
               cancelAutoMix();
-              return;
+              return false;
             }
             if (deckB.error) {
               cancelAutoMix();
-              return;
+              return false;
             }
             const p = Math.max(0, Math.min(1, (performance.now() - startMs) / fadeMs));
             const baseVol = mutedRef.current ? 0 : volumeRef.current;
-            const { outGain, inGain } = equalPowerGains(p);
+            const { outGain, inGain } = djCrossfadeGains(p);
             try {
               deckA.volume = Math.max(0, outGain * baseVol);
               deckB.volume = Math.max(0, inGain * baseVol);
             } catch {}
 
-            if (p < 1 && !deckA.ended) return;
+            if (p >= 1 || deckA.ended || deckA.paused) {
+              finishWebCrossfade();
+              return false;
+            }
+            return true;
+          };
 
-            promoteWebDeckB();
-          }, 50);
+          if (typeof window !== "undefined" && typeof requestAnimationFrame === "function") {
+            const rafTick = () => {
+              if (!stepWebBlend()) {
+                autoMixRafRef.current = null;
+                return;
+              }
+              autoMixRafRef.current = requestAnimationFrame(rafTick);
+            };
+            autoMixRafRef.current = requestAnimationFrame(rafTick);
+          }
+
+          if (autoMixTimerRef.current) {
+            clearInterval(autoMixTimerRef.current);
+          }
+          // 30ms interval guarantees smooth background blending even when screen is off and rAF pauses
+          autoMixTimerRef.current = setInterval(() => {
+            void stepWebBlend();
+          }, 30);
         }
       }
     };
@@ -4139,7 +4180,38 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (!nativeAudioActiveRef.current) return;
 
       if (state.event === "crossfadeStarted") {
+        const outgoingTrack = currentTrackRef.current;
+        const promoted = autoMixTargetTrackRef.current;
         setIsCrossfading(true);
+        setCrossfadeFromTrack(outgoingTrack && promoted && outgoingTrack.id !== promoted.id ? outgoingTrack : null);
+        if (promoted && currentTrackRef.current?.id !== promoted.id) {
+          lyricsRef.current = [];
+          setLyrics([]);
+          setLyricsSource("none");
+          lyricsSourceRef.current = "none";
+          recordedPlayForIdRef.current = null;
+          currentTrackRef.current = promoted;
+          setCurrentTrack(promoted);
+
+          const newPos = typeof state.position === "number" && Number.isFinite(state.position) ? state.position : 0;
+          const newDur =
+            typeof state.duration === "number" && Number.isFinite(state.duration) && state.duration > 0
+              ? state.duration
+              : promoted.durationSec || 0;
+          currentTimeRef.current = newPos;
+          setCurrentTime(newPos);
+          durationRef.current = newDur;
+          setDuration(newDur);
+          setCurrentlyPlayingTrackId(promoted.id);
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          setIsBuffering(Boolean(state.isBuffering));
+          isBufferingRef.current = Boolean(state.isBuffering);
+          void loadLyricsForTrack(promoted.id, false);
+          savePlayerState(newPos);
+          broadcastLeaderState();
+          broadcastCurrentState();
+        }
         return;
       }
 
@@ -4151,6 +4223,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         autoMixPlanRef.current = null;
         autoMixModeRef.current = null;
         setIsCrossfading(false);
+        setCrossfadeFromTrack(null);
         if (
           !state.isPlaying &&
           durationRef.current > 0 &&
@@ -4170,8 +4243,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         autoMixPlanRef.current = null;
         autoMixModeRef.current = null;
         setIsCrossfading(false);
+        setCrossfadeFromTrack(null);
 
-        if (promoted) {
+        if (promoted && currentTrackRef.current?.id !== promoted.id) {
           lyricsRef.current = [];
           setLyrics([]);
           setLyricsSource("none");
@@ -4451,6 +4525,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       ),
       isBuffering,
       isCrossfading,
+      crossfadeFromTrack,
     }),
     [
       effectiveCurrentTrack,
@@ -4493,6 +4568,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       downloadVersion,
       isBuffering,
       isCrossfading,
+      crossfadeFromTrack,
     ],
   );
 

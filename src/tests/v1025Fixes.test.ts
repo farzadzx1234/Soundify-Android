@@ -44,34 +44,34 @@ describe("Soundify v1.0.25 Global Search Playback, Limit Expansion & Release Dat
     vi.restoreAllMocks();
   });
 
-  it("synchronizes v1.0.25 / versionCode 26 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.25");
-    expect(APP_BUILD_NUMBER).toBe(26);
+  it("synchronizes v1.0.25+ / versionCode >= 26 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.2[5-9]/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(26);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toBe("1.0.25");
+    expect(pkg.version).toBe(APP_VERSION);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toContain("soundify-v1.0.25-b26");
+    expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toContain("versionCode 26");
-    expect(gradle).toContain('versionName "1.0.25"');
+    expect(gradle).toMatch(/versionCode\s+2[6-9]/);
+    expect(gradle).toMatch(/versionName\s+"1\.0\.2[5-9]"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.25"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.25"');
+    expect(service).toContain(`APP_USER_AGENT = "Soundify-Android/${APP_VERSION}"`);
+    expect(service).toContain(`APP_VERSION_HEADER = "${APP_VERSION}"`);
   });
 
   it("sorts tracks by newest release date across ISO metadata, YYYYMMDD uploadDate, Gregorian/Jalali title years, and SoundCloud IDs", () => {

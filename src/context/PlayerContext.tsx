@@ -48,7 +48,9 @@ import {
   initAndroidMediaSession,
   updateAndroidMediaMetadata,
   updateAndroidPlaybackState,
+  blobUrlToJpegDataUrl,
 } from "@/lib/androidMediaSession";
+import { recordListeningEvent } from "@/lib/listeningPersonalization";
 import { assertNever, isRecord, parseRemoteCommand } from "@/lib/typeGuards";
 import { WarningCircleIcon, XIcon } from "@phosphor-icons/react";
 import type { DeviceInfo, LyricLine, Track } from "@/lib/types";
@@ -2182,14 +2184,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       } catch {
         artworkSrc = resolvedCover && !resolvedCover.startsWith("blob:") ? resolvedCover : "";
       }
-      void updateAndroidMediaMetadata({
-        title: normalizedTrack.title,
-        artist: normalizedTrack.artistName,
-        album: normalizedTrack.album,
-        coverUrl: artworkSrc,
-        duration: syncState.duration || normalizedTrack.durationSec || 0,
-        trackId: normalizedTrack.id,
-      });
+      void (async () => {
+        const localBlobCover =
+          normalizedTrack.coverUrl && normalizedTrack.coverUrl.startsWith("blob:")
+            ? normalizedTrack.coverUrl
+            : getCachedCoverBlobUrl(normalizedTrack.id) || (await getDownloadedCoverBlobUrl(normalizedTrack.id).catch(() => null));
+        const inlineArtwork = localBlobCover ? await blobUrlToJpegDataUrl(localBlobCover, 256) : null;
+        await updateAndroidMediaMetadata({
+          title: normalizedTrack.title,
+          artist: normalizedTrack.artistName,
+          album: normalizedTrack.album,
+          coverUrl: inlineArtwork || artworkSrc,
+          duration: syncState.duration || normalizedTrack.durationSec || 0,
+          trackId: normalizedTrack.id,
+        });
+      })();
       void updateAndroidPlaybackState({
         isPlaying: syncState.isPlaying,
         position: syncState.currentTime,
@@ -2776,6 +2785,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const curr = currentTrackRef.current;
       if (curr && playbackPos >= 3 && recordedPlayForIdRef.current !== curr.id) {
         recordedPlayForIdRef.current = curr.id;
+        recordListeningEvent(curr);
         void api
           .recordPlay(curr.id)
           .then((res) => {
@@ -3360,6 +3370,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   // Synchronize Metadata whenever currentTrack changes
   useEffect(() => {
     if (!currentTrack) return;
+    let active = true;
     const rawNonBlobCover =
       currentTrack.coverUrl && !currentTrack.coverUrl.startsWith("blob:")
         ? currentTrack.coverUrl
@@ -3374,14 +3385,36 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       artworkSrc = resolvedCover && !resolvedCover.startsWith("blob:") ? resolvedCover : "";
     }
 
-    void updateAndroidMediaMetadata({
-      title: currentTrack.title,
-      artist: currentTrack.artistName,
-      album: currentTrack.album,
-      coverUrl: artworkSrc,
-      duration: currentTrack.durationSec || duration,
-      trackId: currentTrack.id,
-    });
+    const syncMetadata = async () => {
+      // Prefer offline downloaded cover artwork (converted to compact JPEG data URI)
+      // so downloaded tracks display album art reliably in Android notification shade even offline.
+      let finalArtwork = artworkSrc;
+      const blobCover =
+        currentTrack.coverUrl && currentTrack.coverUrl.startsWith("blob:")
+          ? currentTrack.coverUrl
+          : getCachedCoverBlobUrl(currentTrack.id) || (await getDownloadedCoverBlobUrl(currentTrack.id).catch(() => null));
+      if (blobCover) {
+        const inlineData = await blobUrlToJpegDataUrl(blobCover, 256);
+        if (inlineData) {
+          finalArtwork = inlineData;
+        }
+      }
+      if (!active) return;
+
+      void updateAndroidMediaMetadata({
+        title: currentTrack.title,
+        artist: currentTrack.artistName,
+        album: currentTrack.album,
+        coverUrl: finalArtwork,
+        duration: currentTrack.durationSec || duration,
+        trackId: currentTrack.id,
+      });
+    };
+
+    void syncMetadata();
+    return () => {
+      active = false;
+    };
   }, [currentTrack, duration]);
 
   // Synchronize Playback State whenever isPlaying, duration, or playbackRate changes

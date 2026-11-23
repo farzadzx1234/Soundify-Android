@@ -135,7 +135,7 @@ export const TrackCard = memo(function TrackCard({
 
   return (
     <article
-      className={`group relative rounded-2xl p-3 pb-3.5 flex flex-col gap-2.5 bg-white/85 hover:bg-white dark:bg-white/[0.035] dark:hover:bg-white/[0.065] border border-black/[0.06] hover:border-black/[0.1] dark:border-white/[0.05] dark:hover:border-white/[0.09] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.25)] transition-all duration-200 ${
+      className={`group relative rounded-2xl p-2 sm:p-3 pb-2.5 sm:pb-3.5 flex flex-col gap-1.5 sm:gap-2.5 bg-white/85 hover:bg-white dark:bg-white/[0.035] dark:hover:bg-white/[0.065] border border-black/[0.06] hover:border-black/[0.1] dark:border-white/[0.05] dark:hover:border-white/[0.09] shadow-[0_4px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.25)] transition-all duration-200 ${
         isCurrentPlaying ? "ring-1 ring-indigo-400/40 dark:ring-white/20 shadow-[0_4px_20px_rgba(0,0,0,0.4)]" : ""
       }`}
     >
@@ -191,14 +191,14 @@ export const TrackCard = memo(function TrackCard({
         />
 
         {/* Play Button & Integrated Live Equalizer Docked to Bottom-End of Artwork */}
-        <div className="absolute bottom-2.5 end-2.5 z-20 flex items-center pointer-events-auto">
+        <div className="absolute bottom-2 end-2 sm:bottom-2.5 sm:end-2.5 z-20 flex items-center pointer-events-auto">
           {isCurrent && isBuffering ? (
             <button
               type="button"
               aria-label={pickText("Buffering...", "در حال بارگذاری...")}
-              className="sf-press flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white bg-black/82 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-wait"
+              className="sf-press flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white bg-black/82 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-wait"
             >
-              <CircleNotchIcon size={20} className="animate-spin text-white" aria-hidden="true" />
+              <CircleNotchIcon size={18} className="animate-spin text-white" aria-hidden="true" />
             </button>
           ) : isCurrentPlaying ? (
             <button
@@ -209,14 +209,14 @@ export const TrackCard = memo(function TrackCard({
                 void triggerHapticFeedback("playPause");
                 playTrack(activeTrack, queue);
               }}
-              className="sf-press flex h-10 items-center gap-2 px-3 rounded-full text-white bg-black/82 hover:bg-black/90 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-pointer group/btn"
+              className="sf-press flex h-9 sm:h-10 items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 rounded-full text-white bg-black/82 hover:bg-black/90 shadow-[0_6px_18px_rgba(0,0,0,0.4)] border border-white/[0.14] cursor-pointer group/btn"
             >
               <span aria-hidden="true" className="flex items-end gap-0.5 h-3.5 shrink-0">
                 <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-400 rounded-full" />
                 <span className="sf-eq-bar w-0.5 h-3.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.2s" }} />
                 <span className="sf-eq-bar w-0.5 h-2 bg-emerald-400 rounded-full" style={{ animationDelay: "0.4s" }} />
               </span>
-              <PauseIcon size={16} weight="fill" className="text-white" aria-hidden="true" />
+              <PauseIcon size={15} weight="fill" className="text-white" aria-hidden="true" />
             </button>
           ) : (
             <button
@@ -227,12 +227,12 @@ export const TrackCard = memo(function TrackCard({
                 void triggerHapticFeedback("playPause");
                 playTrack(activeTrack, queue);
               }}
-              className="sf-press flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)] cursor-pointer opacity-95 group-hover:opacity-100"
+              className="sf-press flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)] cursor-pointer opacity-95 group-hover:opacity-100"
               style={{
                 backgroundColor: activeTrack.accentColor || "#6366f1",
               }}
             >
-              <PlayIcon size={20} weight="fill" className="translate-x-[1px]" aria-hidden="true" />
+              <PlayIcon size={17} weight="fill" className="translate-x-[1px] sm:scale-110" aria-hidden="true" />
             </button>
           )}
         </div>
@@ -251,39 +251,39 @@ export const TrackCard = memo(function TrackCard({
             }}
             className="w-full text-start cursor-pointer focus:outline-none"
           >
-            <span className="block truncate font-bold text-base text-[var(--sf-text)] hover:underline">
+            <span className="block truncate font-bold text-[13px] sm:text-base leading-snug text-[var(--sf-text)] hover:underline">
               {title}
             </span>
-            <span className="block truncate text-xs text-[var(--sf-muted)]">{artist}</span>
+            <span className="block truncate text-[11px] sm:text-xs text-[var(--sf-muted)]">{artist}</span>
           </button>
         ) : (
           <>
             <Link
               href={getTrackDetailHref(activeTrack.id)}
-              className="block truncate font-bold text-base text-[var(--sf-text)] hover:underline focus-visible:underline"
+              className="block truncate font-bold text-[13px] sm:text-base leading-snug text-[var(--sf-text)] hover:underline focus-visible:underline"
             >
               {title}
             </Link>
-            <p className="truncate text-xs text-[var(--sf-muted)]">{artist}</p>
+            <p className="truncate text-[11px] sm:text-xs text-[var(--sf-muted)]">{artist}</p>
           </>
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-1 pt-0.5">
-        <div className="flex items-center gap-1">
+      <div className="flex items-center justify-between gap-0.5 sm:gap-1 pt-0.5">
+        <div className="flex items-center gap-0.5 sm:gap-1 min-w-0">
           <button
             type="button"
             onClick={handleLike}
             aria-label={activeTrack.likedByMe ? t("liked") : t("like")}
             aria-pressed={activeTrack.likedByMe}
-            className={`sf-btn inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs cursor-pointer min-h-[40px] sm:min-h-[36px] ${
+            className={`sf-btn inline-flex items-center gap-1 rounded-full px-2 sm:px-3 py-1 text-[11px] sm:text-xs cursor-pointer min-h-[34px] sm:min-h-[36px] ${
               activeTrack.likedByMe
                 ? "sf-spring-pop text-rose-600 dark:text-rose-400 bg-rose-500/12 font-semibold"
                 : "text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
             }`}
           >
-            <HeartIcon size={15} weight={activeTrack.likedByMe ? "fill" : "regular"} aria-hidden="true" />
-            <span>{formatNum(activeTrack.likesCount)}</span>
+            <HeartIcon size={14} weight={activeTrack.likedByMe ? "fill" : "regular"} aria-hidden="true" />
+            <span className="tabular-nums">{formatNum(activeTrack.likesCount)}</span>
           </button>
 
           <button
@@ -291,7 +291,7 @@ export const TrackCard = memo(function TrackCard({
             onClick={handleRepost}
             aria-label={activeTrack.repostedByMe ? t("reposted") : t("repost")}
             aria-pressed={activeTrack.repostedByMe}
-            className={`sf-btn inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs cursor-pointer min-h-[40px] sm:min-h-[36px] ${
+            className={`sf-btn hidden sm:inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs cursor-pointer min-h-[36px] ${
               activeTrack.repostedByMe
                 ? "sf-spring-pop text-emerald-700 dark:text-emerald-400 bg-emerald-500/12 font-semibold"
                 : "text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
@@ -304,13 +304,13 @@ export const TrackCard = memo(function TrackCard({
           <Link
             href={getTrackDetailHref(activeTrack.id)}
             aria-label={`${t("openTrackPage")}: ${title}`}
-            className="sf-btn inline-flex items-center justify-center rounded-full p-2 text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] min-h-[40px] min-w-[40px] sm:min-h-[36px] sm:min-w-[36px]"
+            className="sf-btn hidden sm:inline-flex items-center justify-center rounded-full p-2 text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] min-h-[36px] min-w-[36px]"
           >
             <ChatCircleTextIcon size={15} aria-hidden="true" />
           </Link>
         </div>
 
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 shrink-0">
           <DownloadButton track={activeTrack} size="sm" />
           <Menu aria-label={`${title} options`} align="end" items={menuItems} />
         </div>

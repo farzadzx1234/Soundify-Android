@@ -36,13 +36,11 @@ export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
   const updateLayoutMetrics = useCallback(() => {
     if (typeof window === "undefined") return;
     const width = containerRef.current?.offsetWidth || window.innerWidth;
-    let cols = 1;
+    let cols = 2;
     if (width >= 1280) {
       cols = 4;
     } else if (width >= 768) {
       cols = 3;
-    } else if (width >= 640) {
-      cols = 2;
     }
     setItemsPerRow(cols);
     setViewportHeight(window.innerHeight || 800);
@@ -89,7 +87,7 @@ export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
     return (
       <div
         ref={containerRef}
-        className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 ${className}`}
+        className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-4 ${className}`}
       >
         {tracks.map((track, idx) => (
           <TrackCard
@@ -129,7 +127,7 @@ export const VirtualizedTrackGrid = memo(function VirtualizedTrackGrid({
       {topSpacerHeight > 0 && <div style={{ height: topSpacerHeight }} aria-hidden="true" />}
 
       {/* Visible Windowed Items Grid */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 ${className}`}>
+      <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-4 ${className}`}>
         {visibleTracks.map((track, index) => {
           const globalIndex = startIndex + index;
           return (

@@ -629,7 +629,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         <main id="main-content" tabIndex={-1} className="flex-1 px-3 sm:px-6 pt-3 pb-[max(15.5rem,calc(13rem+var(--sab,env(safe-area-inset-bottom,0px))))] md:pb-48 lg:pb-32">
-          <div key={pathname} className="mx-auto w-full max-w-[1600px]">
+          <div key={pathname} className="sf-page-enter mx-auto w-full max-w-[1600px]">
             {children}
           </div>
         </main>

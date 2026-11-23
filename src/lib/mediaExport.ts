@@ -15,6 +15,7 @@ import type { Track } from "./types";
 
 export interface ExportResult {
   success: boolean;
+  alreadyExists?: boolean;
   path?: string;
   method: "native-mediastore" | "web-download";
   error?: string;
@@ -182,6 +183,16 @@ export async function exportTrackToDeviceStorage(
 
   const fileName = getExportFileName(track);
 
+  // Prevent duplicate exports if this track has already been saved to device storage
+  if (isTrackExported(track.id)) {
+    return {
+      success: true,
+      alreadyExists: true,
+      method: isAndroidNative() ? "native-mediastore" : "web-download",
+      path: `Music/Soundify/${fileName}`,
+    };
+  }
+
   // 1. Resolve Audio Blob
   let audioBlob: Blob | undefined = providedBlob;
   if (!audioBlob) {
@@ -221,7 +232,11 @@ export async function exportTrackToDeviceStorage(
           : (globalThis as unknown as { window?: Window & typeof globalThis }).window;
       const plugins = win?.Capacitor?.Plugins as Record<string, unknown> | undefined;
       const mediaStorePlugin = plugins?.MediaStorePlugin as
-        | { saveAudioToDevice: (options: Record<string, unknown>) => Promise<{ success: boolean; path?: string }> }
+        | {
+            saveAudioToDevice: (
+              options: Record<string, unknown>,
+            ) => Promise<{ success: boolean; alreadyExists?: boolean; path?: string }>;
+          }
         | undefined;
 
       if (mediaStorePlugin && typeof mediaStorePlugin.saveAudioToDevice === "function") {
@@ -237,9 +252,12 @@ export async function exportTrackToDeviceStorage(
 
         if (result && result.success) {
           markTrackAsExported(track.id);
-          void triggerHapticFeedback("downloadComplete");
+          if (!result.alreadyExists) {
+            void triggerHapticFeedback("downloadComplete");
+          }
           return {
             success: true,
+            alreadyExists: Boolean(result.alreadyExists),
             method: "native-mediastore",
             path: result.path || `Music/Soundify/${fileName}`,
           };

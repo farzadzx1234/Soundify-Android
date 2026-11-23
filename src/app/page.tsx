@@ -28,12 +28,15 @@ import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
+import { useDownloadedTracks } from "@/lib/downloadManager";
+import { buildPersonalizedMixes } from "@/lib/listeningPersonalization";
 import type { Playlist, Track } from "@/lib/types";
 
 export default function HomePage() {
   const { user } = useAuth();
-  const { t, pickText, formatNum } = useI18n();
+  const { t, pickText, formatNum, lang } = useI18n();
   const { currentTrack, isPlaying, playTrack } = usePlayer();
+  const { downloadedTracks } = useDownloadedTracks();
 
   // Initialize from cached live server catalog immediately so real tracks & artwork paint instantaneously
   const [tracks, setTracks] = useState<Track[]>(() => getCachedCatalogTracks() ?? FALLBACK_TRACKS);
@@ -85,6 +88,12 @@ export default function HomePage() {
     return [...tracks].sort((a, b) => (b.playsCount ?? 0) - (a.playsCount ?? 0))[0] ?? tracks[0];
   }, [tracks]);
   const featuredPlaying = featured && currentTrack?.id === featured.id && isPlaying;
+
+  const personalizedMixes = useMemo(() => {
+    const dlTrackObjects = downloadedTracks.map((d) => d.track);
+    const likedOnly = tracks.filter((tr) => Boolean(tr.likedByMe));
+    return buildPersonalizedMixes(tracks, dlTrackObjects, likedOnly, lang);
+  }, [downloadedTracks, lang, tracks]);
 
   const handleRefresh = async () => {
     try {
@@ -202,6 +211,71 @@ export default function HomePage() {
                   </div>
                 </div>
               </div>
+            </div>
+          </section>
+        )}
+
+        {/* Personalized Spotify-style Mixes Built from User Taste */}
+        {personalizedMixes.length > 0 && (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-slate-900 dark:text-white">
+                <SparkleIcon size={20} weight="duotone" className="text-emerald-500 dark:text-emerald-400" aria-hidden="true" />
+                <span>{pickText("Made For You", "ساخته‌شده اختصاصی برای شما")}</span>
+              </h2>
+              <span className="text-[11px] font-semibold text-[var(--sf-muted)]">
+                {pickText("Based on your plays", "بر اساس سلیقه شنیداری شما")}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-4">
+              {personalizedMixes.map((mix) => {
+                const isMixPlaying =
+                  isPlaying && currentTrack && mix.tracks.some((tr) => tr.id === currentTrack.id);
+                return (
+                  <button
+                    key={mix.id}
+                    type="button"
+                    onClick={() => {
+                      if (mix.tracks.length === 0) return;
+                      void triggerHapticFeedback("playPause");
+                      playTrack(mix.tracks[0], mix.tracks);
+                    }}
+                    className="group sf-press sf-content-card text-start rounded-2xl p-2 sm:p-3 flex flex-col gap-2 cursor-pointer transition-transform"
+                  >
+                    <div className="relative aspect-square w-full overflow-hidden rounded-xl shadow-md bg-black/20">
+                      <PlaylistMosaic coverUrls={mix.coverUrls} className="h-full w-full rounded-xl" lazy />
+                      <span
+                        className="absolute top-2 start-2 rounded-full bg-black/72 border border-white/15 px-2 py-0.5 text-[10px] font-bold text-white"
+                      >
+                        {lang === "fa" ? mix.badgeFa : mix.badge}
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className="absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full text-slate-950 shadow-[0_6px_16px_rgba(0,0,0,0.45)] transition-transform duration-200 group-hover:scale-105"
+                        style={{ backgroundColor: isMixPlaying ? "#10b981" : "#ffffff" }}
+                      >
+                        {isMixPlaying ? (
+                          <PauseIcon size={16} weight="fill" />
+                        ) : (
+                          <PlayIcon size={16} weight="fill" className="translate-x-[0.5px]" />
+                        )}
+                      </span>
+                    </div>
+                    <div className="min-w-0 space-y-0.5 px-0.5 w-full">
+                      <h3 className="font-bold text-[13px] sm:text-sm truncate text-slate-950 dark:text-white">
+                        {lang === "fa" ? mix.titleFa : mix.title}
+                      </h3>
+                      <p className="text-[11px] text-[var(--sf-muted)] dark:text-slate-400 truncate">
+                        {lang === "fa" ? mix.subtitleFa : mix.subtitle}
+                      </p>
+                      <span className="inline-block text-[10.5px] font-semibold text-emerald-600 dark:text-emerald-400 pt-0.5 tabular-nums">
+                        {formatNum(mix.tracks.length)} {t("tracksCount")}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </section>
         )}

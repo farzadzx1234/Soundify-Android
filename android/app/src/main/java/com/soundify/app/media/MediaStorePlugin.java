@@ -3,6 +3,7 @@ package com.soundify.app.media;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -70,6 +71,39 @@ public class MediaStorePlugin extends Plugin {
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                Uri collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                File publicFile = new File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                    "Soundify" + File.separator + fileName
+                );
+
+                // Prevent duplicate entries in Music/Soundify if track was already saved
+                boolean alreadySaved = false;
+                try (Cursor cursor = resolver.query(
+                    collection,
+                    new String[]{MediaStore.Audio.Media._ID, MediaStore.Audio.Media.SIZE},
+                    MediaStore.Audio.Media.DISPLAY_NAME + " = ? AND " + MediaStore.Audio.Media.RELATIVE_PATH + " LIKE ?",
+                    new String[]{fileName, "%Soundify%"},
+                    null
+                )) {
+                    if (cursor != null && cursor.moveToFirst()) {
+                        int sizeCol = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE);
+                        long existingSize = sizeCol >= 0 ? cursor.getLong(sizeCol) : 1L;
+                        if (existingSize > 0) {
+                            alreadySaved = true;
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                if (alreadySaved) {
+                    JSObject ret = new JSObject();
+                    ret.put("success", true);
+                    ret.put("alreadyExists", true);
+                    ret.put("path", publicFile.getAbsolutePath());
+                    call.resolve(ret);
+                    return;
+                }
+
                 // Modern Android 10+ (API 29+) Scoped Storage MediaStore insertion
                 ContentValues values = new ContentValues();
                 values.put(MediaStore.Audio.Media.DISPLAY_NAME, fileName);
@@ -80,7 +114,6 @@ public class MediaStorePlugin extends Plugin {
                 values.put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_MUSIC + "/Soundify");
                 values.put(MediaStore.Audio.Media.IS_PENDING, 1);
 
-                Uri collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
                 Uri itemUri = resolver.insert(collection, values);
 
                 if (itemUri == null) {
@@ -102,10 +135,6 @@ public class MediaStorePlugin extends Plugin {
                 resolver.update(itemUri, values, null, null);
 
                 // Force MediaScanner indexing with absolute filesystem path
-                File publicFile = new File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
-                    "Soundify" + File.separator + fileName
-                );
                 MediaScannerConnection.scanFile(
                     context,
                     new String[]{publicFile.getAbsolutePath()},
@@ -115,6 +144,7 @@ public class MediaStorePlugin extends Plugin {
 
                 JSObject ret = new JSObject();
                 ret.put("success", true);
+                ret.put("alreadyExists", false);
                 ret.put("uri", itemUri.toString());
                 ret.put("path", publicFile.getAbsolutePath());
                 call.resolve(ret);
@@ -129,6 +159,14 @@ public class MediaStorePlugin extends Plugin {
                     musicDir.mkdirs();
                 }
                 File outFile = new File(musicDir, fileName);
+                if (outFile.exists() && outFile.length() > 0) {
+                    JSObject ret = new JSObject();
+                    ret.put("success", true);
+                    ret.put("alreadyExists", true);
+                    ret.put("path", outFile.getAbsolutePath());
+                    call.resolve(ret);
+                    return;
+                }
                 try (FileOutputStream fos = new FileOutputStream(outFile)) {
                     fos.write(audioBytes);
                     fos.flush();
@@ -143,6 +181,7 @@ public class MediaStorePlugin extends Plugin {
 
                 JSObject ret = new JSObject();
                 ret.put("success", true);
+                ret.put("alreadyExists", false);
                 ret.put("path", outFile.getAbsolutePath());
                 call.resolve(ret);
             }

@@ -617,13 +617,14 @@ function SearchPageInner() {
           </div>
         ) : (
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-t border-[var(--sf-border)]/50 pt-3">
-            <div className="w-full sm:w-auto flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="w-full sm:flex-1 flex flex-col sm:flex-row sm:items-center gap-2 min-w-0">
               <span className="text-[11px] font-bold text-[var(--sf-muted)] shrink-0">
                 {pickText("Source:", "منبع:")}
               </span>
               <GlassSegmented
                 aria-label="External Channel"
                 size="sm"
+                fullWidth
                 value={extSubSource}
                 onValueChange={handleExtSubSourceChange}
                 items={[

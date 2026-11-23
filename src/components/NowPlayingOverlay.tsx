@@ -1738,7 +1738,9 @@ export function NowPlayingOverlay() {
                   />
                   <div
                     key={currentTrack.id}
-                    className="sf-track-swap relative h-full w-full rounded-[22px] min-[375px]:rounded-[26px] overflow-hidden shadow-[0_28px_64px_rgba(0,0,0,0.78)] ring-1 ring-white/15 bg-white/[0.05]"
+                    className={`sf-track-swap relative h-full w-full rounded-[22px] min-[375px]:rounded-[26px] overflow-hidden shadow-[0_28px_64px_rgba(0,0,0,0.78)] ring-1 ring-white/15 bg-white/[0.05] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                      isPlaying ? "scale-100" : "scale-[0.92]"
+                    }`}
                   >
                     <OptimizedTrackImage
                       src={currentTrack.coverUrl}

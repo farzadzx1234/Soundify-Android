@@ -887,7 +887,13 @@ export const api = {
       const res = await apiFetch<{ tracks: Track[] }>(`/api/mobile/v1/tracks${suffix}`);
       if (res?.tracks && Array.isArray(res.tracks)) {
         const normalized = res.tracks.map(normalizeTrack);
-        const filtered = filterSensitiveTracks(normalized);
+        let filtered = filterSensitiveTracks(normalized);
+        if (params?.liked) {
+          filtered = filtered.filter((t) => Boolean(t.likedByMe));
+        }
+        if (params?.reposted) {
+          filtered = filtered.filter((t) => Boolean(t.repostedByMe));
+        }
         if (!suffix && filtered.length > 0) {
           writeCatalogCache("tracks", filtered);
         }
@@ -905,6 +911,12 @@ export const api = {
     }
 
     let filtered = [...FALLBACK_TRACKS];
+    if (params?.liked) {
+      filtered = filtered.filter((t) => Boolean(t.likedByMe));
+    }
+    if (params?.reposted) {
+      filtered = filtered.filter((t) => Boolean(t.repostedByMe));
+    }
     if (params?.q) {
       const q = params.q.toLowerCase().trim();
       filtered = filtered.filter(

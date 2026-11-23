@@ -10,7 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
-import { exportTrackToDeviceStorage } from "@/lib/mediaExport";
+import { exportTrackToDeviceStorage, isTrackExported } from "@/lib/mediaExport";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { calculateDampedDrag, calculateVelocity } from "@/lib/touchGestures";
 import { OptimizedTrackImage } from "./OptimizedTrackImage";
@@ -44,6 +44,7 @@ export function DownloadActionSheet({
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [exportStatusMsg, setExportStatusMsg] = useState<string | null>(null);
   const [prevOpenKey, setPrevOpenKey] = useState<string | null>(null);
 
   const openKey = isOpen && track ? `${track.id}` : null;
@@ -52,6 +53,7 @@ export function DownloadActionSheet({
     if (openKey !== null) {
       setIsClosing(false);
       setDragY(0);
+      setExportStatusMsg(null);
     }
   }
 
@@ -134,7 +136,23 @@ export function DownloadActionSheet({
   const handleExport = async (e: React.MouseEvent) => {
     e.stopPropagation();
     void triggerHapticFeedback("tap");
-    await exportTrackToDeviceStorage(track);
+    if (isTrackExported(track.id)) {
+      setExportStatusMsg(
+        lang === "fa"
+          ? "این آهنگ قبلاً در پوشه Music/Soundify ذخیره شده است."
+          : "This track is already saved in Music/Soundify.",
+      );
+      return;
+    }
+    const res = await exportTrackToDeviceStorage(track);
+    if (res.alreadyExists) {
+      setExportStatusMsg(
+        lang === "fa"
+          ? "این آهنگ قبلاً در پوشه Music/Soundify ذخیره شده است."
+          : "This track is already saved in Music/Soundify.",
+      );
+      return;
+    }
     onClose();
   };
 
@@ -313,7 +331,11 @@ export function DownloadActionSheet({
                 {lang === "fa" ? "ذخیره در حافظه دستگاه" : "Save to Device Storage"}
               </p>
               <p className="text-xs text-[var(--sf-muted)] leading-relaxed mt-0.5">
-                {lang === "fa" ? "انتقال به پوشه موزیک گوشی جهت پخش در برنامه‌های دیگر" : "Export to public Music folder for external apps"}
+                {exportStatusMsg
+                  ? exportStatusMsg
+                  : isTrackExported(track.id)
+                    ? (lang === "fa" ? "قبلاً در پوشه Music/Soundify ذخیره شده" : "Already saved in Music/Soundify")
+                    : (lang === "fa" ? "انتقال به پوشه موزیک گوشی جهت پخش در برنامه‌های دیگر" : "Export to public Music folder for external apps")}
               </p>
             </div>
           </button>

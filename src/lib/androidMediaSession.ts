@@ -267,6 +267,70 @@ export function initAndroidMediaSession(handler: MediaSessionActionHandler): () 
 }
 
 /**
+ * Converts a local blob: URL (such as an offline cached album cover) into a compact
+ * JPEG data URI so Android MediaSessionService can decode it directly without network
+ * or WebView-isolated blob:// restrictions.
+ */
+export async function blobUrlToJpegDataUrl(blobUrl: string, maxDim = 256): Promise<string | null> {
+  if (!blobUrl || !blobUrl.startsWith("blob:") || typeof window === "undefined") {
+    return null;
+  }
+
+  // Primary path: scale cleanly onto a tiny offscreen canvas (<20 KB JPEG, safe for Binder IPC)
+  try {
+    if (typeof Image !== "undefined" && typeof document !== "undefined") {
+      const scaledDataUrl = await new Promise<string | null>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const w = img.naturalWidth || img.width || maxDim;
+            const h = img.naturalHeight || img.height || maxDim;
+            const scale = Math.min(1, maxDim / Math.max(w, h, 1));
+            const targetW = Math.max(1, Math.round(w * scale));
+            const targetH = Math.max(1, Math.round(h * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(null);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, targetW, targetH);
+            const encoded = canvas.toDataURL("image/jpeg", 0.82);
+            resolve(encoded && encoded.startsWith("data:image/") ? encoded : null);
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = blobUrl;
+      });
+      if (scaledDataUrl) return scaledDataUrl;
+    }
+  } catch {}
+
+  // Fallback path: read raw blob bytes directly when small (< 400 KB)
+  try {
+    const res = await fetch(blobUrl);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (blob.size > 400 * 1024 || typeof FileReader === "undefined") return null;
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const out = typeof reader.result === "string" ? reader.result : null;
+        resolve(out && out.startsWith("data:image/") ? out : null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Updates track metadata in the native MediaSession & Notification shade,
  * and syncs with browser navigator.mediaSession.
  */

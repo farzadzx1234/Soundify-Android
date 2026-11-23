@@ -9,7 +9,6 @@ import {
   CheckSquareIcon,
   CircleNotchIcon,
   ClockCounterClockwiseIcon,
-  DotsThreeVerticalIcon,
   HeartIcon,
   HardDriveIcon,
   ListDashesIcon,
@@ -32,9 +31,9 @@ import { useI18n, type TranslationKey } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { useDownloadedTracks, useActiveDownloads } from "@/lib/downloadManager";
 import { exportTrackToDeviceStorage, getExportedTrackIds } from "@/lib/mediaExport";
+import { buildPersonalizedMixes } from "@/lib/listeningPersonalization";
 import { formatDuration } from "@/lib/lrc";
 import { Button, Glass, Input } from "@/components/GlassControls";
-import { DownloadActionSheet } from "@/components/DownloadActionSheet";
 import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
@@ -60,7 +59,7 @@ function formatStorageSize(
 
 export default function LibraryPage() {
   const { user, openAuthDialog } = useAuth();
-  const { t, pickText, formatNum } = useI18n();
+  const { t, pickText, formatNum, lang } = useI18n();
   const { playTrack, currentTrack, isPlaying, isBuffering, togglePlay } = usePlayer();
   const {
     downloadedTracks,
@@ -69,7 +68,7 @@ export default function LibraryPage() {
   } = useDownloadedTracks();
   const activeDownloads = useActiveDownloads();
 
-  const [tab, setTab] = useState<LibraryTab>(() => (user ? "liked" : "downloaded"));
+  const [tab, setTab] = useState<LibraryTab>("downloaded");
   const hasManuallySwitchedTab = useRef(false);
   const [likedTracks, setLikedTracks] = useState<Track[]>([]);
   const [repostedTracks, setRepostedTracks] = useState<Track[]>([]);
@@ -88,13 +87,7 @@ export default function LibraryPage() {
   const [exportedTrackIds, setExportedTrackIds] = useState<Set<string>>(() => getExportedTrackIds());
   const [exportAllRunning, setExportAllRunning] = useState(false);
   const [exportToast, setExportToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [selectedActionTrack, setSelectedActionTrack] = useState<Track | null>(null);
-
-  useEffect(() => {
-    if (user && !hasManuallySwitchedTab.current && downloadedTracks.length === 0) {
-      setTab("liked");
-    }
-  }, [user, downloadedTracks.length]);
+  const [trackPendingDelete, setTrackPendingDelete] = useState<Track | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -186,19 +179,33 @@ export default function LibraryPage() {
   const handleExportAll = async () => {
     if (exportAllRunning || filteredDownloadedTracks.length === 0) return;
     setExportAllRunning(true);
-    let successCount = 0;
+    let newlySavedCount = 0;
+    let alreadySavedCount = 0;
     try {
       for (const rec of filteredDownloadedTracks) {
         try {
           const res = await exportTrackToDeviceStorage(rec.track, rec.audioBlob);
           if (res.success) {
-            successCount++;
+            if (res.alreadyExists) {
+              alreadySavedCount++;
+            } else {
+              newlySavedCount++;
+            }
             setExportedTrackIds((prev) => new Set(prev).add(rec.trackId));
           }
         } catch {}
       }
-      if (successCount > 0) {
+      if (newlySavedCount > 0) {
         setExportToast({ message: t("exportAllSuccess"), type: "success" });
+        setTimeout(() => setExportToast(null), 4000);
+      } else if (alreadySavedCount > 0) {
+        setExportToast({
+          message: pickText(
+            "All tracks are already saved in your Music/Soundify folder",
+            "همه آهنگ‌ها قبلاً در پوشه Music/Soundify گوشی ذخیره شده‌اند و نسخه تکراری ایجاد نشد.",
+          ),
+          type: "success",
+        });
         setTimeout(() => setExportToast(null), 4000);
       } else {
         setExportToast({ message: t("saveToDeviceError"), type: "error" });
@@ -212,20 +219,34 @@ export default function LibraryPage() {
   const handleExportSelected = async () => {
     if (exportAllRunning || selectedTrackIds.size === 0) return;
     setExportAllRunning(true);
-    let successCount = 0;
+    let newlySavedCount = 0;
+    let alreadySavedCount = 0;
     try {
       const targets = filteredDownloadedTracks.filter((r) => selectedTrackIds.has(r.trackId));
       for (const rec of targets) {
         try {
           const res = await exportTrackToDeviceStorage(rec.track, rec.audioBlob);
           if (res.success) {
-            successCount++;
+            if (res.alreadyExists) {
+              alreadySavedCount++;
+            } else {
+              newlySavedCount++;
+            }
             setExportedTrackIds((prev) => new Set(prev).add(rec.trackId));
           }
         } catch {}
       }
-      if (successCount > 0) {
+      if (newlySavedCount > 0) {
         setExportToast({ message: t("exportAllSuccess"), type: "success" });
+        setTimeout(() => setExportToast(null), 4000);
+      } else if (alreadySavedCount > 0) {
+        setExportToast({
+          message: pickText(
+            "Selected tracks are already saved on device storage",
+            "آهنگ‌های انتخاب‌شده قبلاً یک‌بار روی گوشی ذخیره شده‌اند.",
+          ),
+          type: "success",
+        });
         setTimeout(() => setExportToast(null), 4000);
       } else {
         setExportToast({ message: t("saveToDeviceError"), type: "error" });
@@ -271,6 +292,17 @@ export default function LibraryPage() {
       });
 
   const filteredDownloadedTrackObjects = filteredDownloadedTracks.map((r) => r.track);
+
+  const personalizedMixes = React.useMemo(
+    () =>
+      buildPersonalizedMixes(
+        [],
+        downloadedTracks.map((r) => r.track),
+        likedTracks,
+        lang,
+      ),
+    [downloadedTracks, lang, likedTracks],
+  );
 
   const activeTracks: Track[] =
     tab === "downloaded"
@@ -872,18 +904,18 @@ export default function LibraryPage() {
                         </div>
                       </div>
 
-                      {/* Trailing: Single Apple 3-Dots Action Button (Opens ActionSheet) */}
+                      {/* Trailing: Direct Delete Button (Opens Confirmation Dialog) */}
                       <div className="flex items-center shrink-0">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedActionTrack(record.track);
+                            setTrackPendingDelete(record.track);
                           }}
-                          aria-label={`Options for ${trackTitle}`}
-                          className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-full flex items-center justify-center text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.05] dark:hover:bg-white/[0.1] active:scale-95 transition-all cursor-pointer"
+                          aria-label={`${pickText("Remove download", "حذف دانلود")} ${trackTitle}`}
+                          className="h-11 w-11 min-h-[44px] min-w-[44px] rounded-full flex items-center justify-center text-rose-500/80 hover:text-rose-500 hover:bg-rose-500/10 active:scale-95 transition-all cursor-pointer"
                         >
-                          <DotsThreeVerticalIcon size={20} weight="bold" />
+                          <TrashIcon size={19} weight="bold" aria-hidden="true" />
                         </button>
                       </div>
                     </div>
@@ -903,6 +935,45 @@ export default function LibraryPage() {
         ) : tab === "playlists" ? (
         /* Playlists Section */
         <div className="space-y-6">
+          {personalizedMixes.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm sm:text-base font-extrabold text-[var(--sf-text)]">
+                  {pickText("Made For You", "ساخته‌شده اختصاصی برای شما")}
+                </h2>
+                <span className="text-[11px] font-medium text-[var(--sf-muted)]">
+                  {pickText("Auto Mixes", "میکس هوشمند")}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {personalizedMixes.map((mix) => (
+                  <button
+                    key={mix.id}
+                    type="button"
+                    onClick={() => mix.tracks.length > 0 && playTrack(mix.tracks[0], mix.tracks)}
+                    className="sf-press sf-content-card text-start rounded-2xl p-3 flex items-center gap-3.5 cursor-pointer border border-black/[0.05] dark:border-white/[0.08]"
+                  >
+                    <PlaylistMosaic coverUrls={mix.coverUrls} className="h-16 w-16 rounded-xl shrink-0 shadow" lazy />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold text-emerald-500">
+                        {lang === "fa" ? mix.badgeFa : mix.badge}
+                      </span>
+                      <h3 className="font-bold text-sm truncate text-[var(--sf-text)]">
+                        {lang === "fa" ? mix.titleFa : mix.title}
+                      </h3>
+                      <p className="text-[11px] text-[var(--sf-muted)] truncate">
+                        {formatNum(mix.tracks.length)} {t("tracksCount")}
+                      </p>
+                    </div>
+                    <span className="h-9 w-9 rounded-full bg-indigo-500 text-white flex items-center justify-center shrink-0">
+                      <PlayIcon size={15} weight="fill" />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
           <Glass className="rounded-3xl p-4 sm:p-5">
             <form onSubmit={handleCreatePlaylist} className="flex flex-col sm:flex-row gap-3">
               <div className="flex-1">
@@ -993,23 +1064,56 @@ export default function LibraryPage() {
           <span>{exportToast.message}</span>
         </div>
       )}
-      {/* Apple HIG Download Action Sheet */}
-      {selectedActionTrack && (
-        <DownloadActionSheet
-          track={selectedActionTrack}
-          isOpen={Boolean(selectedActionTrack)}
-          onClose={() => setSelectedActionTrack(null)}
-          onRemove={async () => {
-            const trackId = selectedActionTrack.id;
-            setSelectedActionTrack(null);
-            await batchDeleteTracks([trackId]);
-          }}
-          onPlayOffline={() => {
-            const t = selectedActionTrack;
-            setSelectedActionTrack(null);
-            handlePlayDownloadedTrack(t);
-          }}
-        />
+      {/* Direct Remove Download Confirmation Dialog */}
+      {trackPendingDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-remove-download-title"
+          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
+          onClick={() => setTrackPendingDelete(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="sf-sheet-up w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.45)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+          >
+            <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/25 mx-auto -mt-1 sm:hidden" />
+            <div className="text-center space-y-2 pt-1">
+              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center ring-1 ring-rose-500/25">
+                <TrashIcon size={24} weight="bold" aria-hidden="true" />
+              </div>
+              <h3 id="confirm-remove-download-title" className="text-base font-bold text-[var(--sf-text)]">
+                {pickText("Remove Downloaded Track?", "حذف آهنگ از دانلودهای برنامه؟")}
+              </h3>
+              <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
+                {pickText(
+                  `"${trackPendingDelete.title}" will be removed from Soundify offline list. Your exported copy in Music/Soundify remains safe.`,
+                  `آهنگ «${pickText(trackPendingDelete.title, trackPendingDelete.titleFa)}» از لیست دانلودهای داخل برنامه حذف می‌شود.`,
+                )}
+              </p>
+            </div>
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  const idToRemove = trackPendingDelete.id;
+                  setTrackPendingDelete(null);
+                  await batchDeleteTracks([idToRemove]);
+                }}
+                className="sf-press w-full min-h-[48px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm cursor-pointer shadow-sm"
+              >
+                {pickText("Yes, Remove", "بله، حذف شود")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrackPendingDelete(null)}
+                className="sf-press w-full min-h-[48px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
+              >
+                {pickText("Cancel", "لغو")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
     </PullToRefresh>

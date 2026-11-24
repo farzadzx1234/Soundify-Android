@@ -1,5 +1,8 @@
 package com.soundify.app.media;
 
+import android.app.Activity;
+import android.app.PendingIntent;
+import android.app.RecoverableSecurityException;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
@@ -12,6 +15,10 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -28,7 +35,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -39,6 +48,31 @@ import java.util.Set;
  */
 @CapacitorPlugin(name = "MediaStorePlugin")
 public class MediaStorePlugin extends Plugin {
+
+    private static final String[] SUPPORTED_AUDIO_EXTS = {
+        ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"
+    };
+
+    private ActivityResultLauncher<IntentSenderRequest> deleteRequestLauncher;
+    private PluginCall pendingDeleteCall;
+
+    @Override
+    public void load() {
+        super.load();
+        deleteRequestLauncher = getBridge().registerForActivityResult(
+            new ActivityResultContracts.StartIntentSenderForResult(),
+            result -> {
+                PluginCall c = pendingDeleteCall;
+                pendingDeleteCall = null;
+                if (c != null) {
+                    JSObject ret = new JSObject();
+                    ret.put("success", result.getResultCode() == Activity.RESULT_OK);
+                    ret.put("prompted", true);
+                    c.resolve(ret);
+                }
+            }
+        );
+    }
 
     private static File getPrivateOfflineDir(Context context) {
         File dir = new File(context.getFilesDir(), "soundify_offline");
@@ -619,23 +653,363 @@ public class MediaStorePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    private static String normalizeMatchToken(String input) {
+        if (input == null) return "";
+        return input.toLowerCase(Locale.US)
+            .replace('\u064A', '\u06CC')
+            .replace('\u0643', '\u06A9')
+            .replaceAll("[\\\\/:*?\"<>|_\\-\\.]+", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+    }
+
+    private static String sanitizeFilePart(String input) {
+        if (input == null) return "";
+        return input.trim().replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    private static void deletePrivateBaseFiles(File dir, String baseName) {
+        if (dir == null || baseName == null || baseName.trim().isEmpty()) return;
+        for (String ext : SUPPORTED_AUDIO_EXTS) {
+            File af = new File(dir, baseName + ext);
+            if (af.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                af.delete();
+            }
+        }
+        for (String sideExt : new String[]{".jpg", ".meta.json", ".lrc.json"}) {
+            File sf = new File(dir, baseName + sideExt);
+            if (sf.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                sf.delete();
+            }
+        }
+    }
+
+    private static boolean deleteFileUriIfMatched(String uriStr) {
+        if (uriStr == null || !uriStr.startsWith("file://")) return false;
+        try {
+            String path = Uri.parse(uriStr).getPath();
+            if (path != null && !path.isEmpty()) {
+                File f = new File(path);
+                if (f.exists() && f.isFile()) {
+                    return f.delete();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private boolean tryDeleteContentUri(ContentResolver resolver, Uri contentUri, List<Uri> consentUris) {
+        if (resolver == null || contentUri == null) return false;
+        try {
+            int deleted = resolver.delete(contentUri, null, null);
+            return deleted > 0;
+        } catch (SecurityException secEx) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                consentUris.add(contentUri);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && secEx instanceof RecoverableSecurityException) {
+                consentUris.add(contentUri);
+            }
+            return false;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void launchConsentDeleteIfNeeded(PluginCall call, List<Uri> consentUris) {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !consentUris.isEmpty() &&
+            deleteRequestLauncher != null
+        ) {
+            try {
+                PendingIntent pi = MediaStore.createDeleteRequest(getContext().getContentResolver(), consentUris);
+                if (pendingDeleteCall != null) {
+                    JSObject fallback = new JSObject();
+                    fallback.put("success", false);
+                    pendingDeleteCall.resolve(fallback);
+                }
+                pendingDeleteCall = call;
+                deleteRequestLauncher.launch(new IntentSenderRequest.Builder(pi.getIntentSender()).build());
+                return;
+            } catch (Exception ignored) {
+                pendingDeleteCall = null;
+            }
+        }
+        JSObject ret = new JSObject();
+        ret.put("success", true);
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void deleteOfflineFiles(PluginCall call) {
         String trackId = call.getString("trackId", "");
+        String audioUri = call.getString("audioUri", "");
+        String fileName = call.getString("fileName", "");
+        String title = call.getString("title", "");
+        String artist = call.getString("artist", "");
+        JSArray extraIdsArr = call.getArray("extraTrackIds");
+
+        Set<String> targetTrackIds = new HashSet<>();
+        if (trackId != null && !trackId.trim().isEmpty()) {
+            targetTrackIds.add(trackId.trim());
+        }
+        if (extraIdsArr != null) {
+            for (int i = 0; i < extraIdsArr.length(); i++) {
+                String eid = extraIdsArr.optString(i, "").trim();
+                if (!eid.isEmpty()) {
+                    targetTrackIds.add(eid);
+                }
+            }
+        }
+
+        Set<String> targetFileNamesLower = new HashSet<>();
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            targetFileNamesLower.add(fileName.trim().toLowerCase(Locale.US));
+        }
+        if (title != null && !title.trim().isEmpty()) {
+            String safeArtist = sanitizeFilePart(artist != null && !artist.trim().isEmpty() ? artist : "Soundify");
+            String safeTitle = sanitizeFilePart(title);
+            for (String ext : SUPPORTED_AUDIO_EXTS) {
+                targetFileNamesLower.add((safeArtist + " - " + safeTitle + ext).toLowerCase(Locale.US));
+            }
+        }
+
+        String normTitle = normalizeMatchToken(title);
+        String normArtist = normalizeMatchToken(artist);
+        Set<String> deviceSlugs = new HashSet<>();
+        for (String tid : targetTrackIds) {
+            if (tid.startsWith("device-")) {
+                deviceSlugs.add(normalizeMatchToken(tid.substring("device-".length())));
+            }
+        }
+
         Context context = getContext();
+
+        // 1. Delete matching app-private soundify_offline files (audio + artwork + metadata + lyrics)
         try {
-            if (trackId != null && !trackId.trim().isEmpty()) {
-                File dir = getPrivateOfflineDir(context);
-                String safeId = sanitizeIdForFile(trackId);
-                for (String ext : new String[]{".mp3", ".jpg", ".meta.json", ".lrc.json"}) {
-                    File f = new File(dir, safeId + ext);
-                    if (f.exists()) {
+            File privateDir = getPrivateOfflineDir(context);
+            for (String tid : targetTrackIds) {
+                deletePrivateBaseFiles(privateDir, sanitizeIdForFile(tid));
+            }
+
+            File[] children = privateDir.listFiles();
+            if (children != null) {
+                for (File f : children) {
+                    if (!f.isFile()) continue;
+                    String name = f.getName();
+                    if (name.endsWith(".meta.json")) {
+                        String baseName = name.substring(0, name.length() - ".meta.json".length());
+                        byte[] metaBytes = readAllBytesLimited(f, 64 * 1024);
+                        if (metaBytes != null) {
+                            try {
+                                JSONObject meta = new JSONObject(new String(metaBytes, StandardCharsets.UTF_8));
+                                String mId = meta.optString("trackId", "").trim();
+                                String mFileName = meta.optString("fileName", "").trim();
+                                String mTitle = normalizeMatchToken(meta.optString("title", ""));
+                                String mArtist = normalizeMatchToken(meta.optString("artist", ""));
+                                boolean matchedMeta =
+                                    (!mId.isEmpty() && targetTrackIds.contains(mId)) ||
+                                    (!mFileName.isEmpty() && targetFileNamesLower.contains(mFileName.toLowerCase(Locale.US))) ||
+                                    (!normTitle.isEmpty() && normTitle.equals(mTitle) && (normArtist.isEmpty() || normArtist.equals(mArtist)));
+                                if (matchedMeta) {
+                                    if (!mFileName.isEmpty()) {
+                                        targetFileNamesLower.add(mFileName.toLowerCase(Locale.US));
+                                    }
+                                    deletePrivateBaseFiles(privateDir, baseName);
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    } else if (isSupportedAudioFileName(name)) {
+                        String stem = name.replaceFirst("\\.[^.]+$", "");
+                        if (
+                            targetFileNamesLower.contains(name.toLowerCase(Locale.US)) ||
+                            deviceSlugs.contains(normalizeMatchToken(stem))
+                        ) {
+                            deletePrivateBaseFiles(privateDir, stem);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 2. Delete direct file:// URI if supplied
+        deleteFileUriIfMatched(audioUri);
+
+        // 3. Delete matching entries in Android MediaStore (Music/Soundify)
+        List<Uri> consentUris = new ArrayList<>();
+        Set<Uri> deletedUris = new HashSet<>();
+        ContentResolver resolver = context.getContentResolver();
+
+        if (audioUri != null && audioUri.startsWith("content://")) {
+            try {
+                Uri directUri = Uri.parse(audioUri);
+                deletedUris.add(directUri);
+                tryDeleteContentUri(resolver, directUri, consentUris);
+            } catch (Exception ignored) {}
+        }
+
+        try {
+            Uri collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                : MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+            String selection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? MediaStore.Audio.Media.RELATIVE_PATH + " LIKE ?"
+                : MediaStore.Audio.Media.DATA + " LIKE ?";
+            String[] selectionArgs = new String[]{
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? "%Soundify%" : "%/Soundify/%"
+            };
+            String[] projection = new String[]{
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.DISPLAY_NAME,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST
+            };
+
+            try (Cursor cursor = resolver.query(collection, projection, selection, selectionArgs, null)) {
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        long id = cursor.getLong(0);
+                        String displayName = cursor.getString(1);
+                        String rowTitle = cursor.getString(2);
+                        String rowArtist = cursor.getString(3);
+
+                        String displayLower = displayName != null ? displayName.toLowerCase(Locale.US) : "";
+                        String stemNorm = displayName != null ? normalizeMatchToken(displayName.replaceFirst("\\.[^.]+$", "")) : "";
+                        String rowTitleNorm = normalizeMatchToken(rowTitle);
+                        String rowArtistNorm = normalizeMatchToken(rowArtist);
+
+                        boolean matched =
+                            (!displayLower.isEmpty() && targetFileNamesLower.contains(displayLower)) ||
+                            (!stemNorm.isEmpty() && deviceSlugs.contains(stemNorm)) ||
+                            (!normTitle.isEmpty() && normTitle.equals(rowTitleNorm) &&
+                                (normArtist.isEmpty() || rowArtistNorm.isEmpty() || "unknown".equals(rowArtistNorm) || normArtist.equals(rowArtistNorm))) ||
+                            (!normTitle.isEmpty() && !normArtist.isEmpty() &&
+                                (stemNorm.equals((normArtist + " " + normTitle).trim()) ||
+                                 stemNorm.equals((normTitle + " " + normArtist).trim())));
+
+                        if (matched) {
+                            Uri rowUri = ContentUris.withAppendedId(collection, id);
+                            if (!deletedUris.contains(rowUri)) {
+                                deletedUris.add(rowUri);
+                                tryDeleteContentUri(resolver, rowUri, consentUris);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 4. Direct filesystem cleanup in public Music/Soundify fallback
+        try {
+            File musicSoundifyDir = new File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                "Soundify"
+            );
+            if (musicSoundifyDir.exists() && musicSoundifyDir.isDirectory()) {
+                File[] publicFiles = musicSoundifyDir.listFiles();
+                if (publicFiles != null) {
+                    List<String> deletedPaths = new ArrayList<>();
+                    for (File pf : publicFiles) {
+                        if (!pf.isFile()) continue;
+                        String pfName = pf.getName();
+                        String pfLower = pfName.toLowerCase(Locale.US);
+                        String stemNorm = normalizeMatchToken(pfName.replaceFirst("\\.[^.]+$", ""));
+                        boolean matched =
+                            targetFileNamesLower.contains(pfLower) ||
+                            deviceSlugs.contains(stemNorm) ||
+                            (!normTitle.isEmpty() && !normArtist.isEmpty() &&
+                                (stemNorm.equals((normArtist + " " + normTitle).trim()) ||
+                                 stemNorm.equals((normTitle + " " + normArtist).trim()))) ||
+                            (!normTitle.isEmpty() && normArtist.isEmpty() && stemNorm.endsWith(normTitle));
+                        if (matched && pf.delete()) {
+                            deletedPaths.add(pf.getAbsolutePath());
+                        }
+                    }
+                    if (!deletedPaths.isEmpty()) {
+                        MediaScannerConnection.scanFile(
+                            context,
+                            deletedPaths.toArray(new String[0]),
+                            null,
+                            null
+                        );
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        launchConsentDeleteIfNeeded(call, consentUris);
+    }
+
+    @PluginMethod
+    public void deleteAllOfflineFiles(PluginCall call) {
+        Context context = getContext();
+
+        // 1. Wipe all app-private soundify_offline files
+        try {
+            File privateDir = getPrivateOfflineDir(context);
+            File[] children = privateDir.listFiles();
+            if (children != null) {
+                for (File f : children) {
+                    if (f.isFile()) {
                         //noinspection ResultOfMethodCallIgnored
                         f.delete();
                     }
                 }
             }
         } catch (Exception ignored) {}
-        call.resolve();
+
+        // 2. Delete all MediaStore entries under Music/Soundify
+        List<Uri> consentUris = new ArrayList<>();
+        ContentResolver resolver = context.getContentResolver();
+        try {
+            Uri collection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                : MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+            String selection = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? MediaStore.Audio.Media.RELATIVE_PATH + " LIKE ?"
+                : MediaStore.Audio.Media.DATA + " LIKE ?";
+            String[] selectionArgs = new String[]{
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? "%Soundify%" : "%/Soundify/%"
+            };
+            try (Cursor cursor = resolver.query(collection, new String[]{MediaStore.Audio.Media._ID}, selection, selectionArgs, null)) {
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        Uri rowUri = ContentUris.withAppendedId(collection, cursor.getLong(0));
+                        tryDeleteContentUri(resolver, rowUri, consentUris);
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 3. Delete direct filesystem files in Music/Soundify
+        try {
+            File musicSoundifyDir = new File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                "Soundify"
+            );
+            if (musicSoundifyDir.exists() && musicSoundifyDir.isDirectory()) {
+                File[] publicFiles = musicSoundifyDir.listFiles();
+                if (publicFiles != null) {
+                    List<String> deletedPaths = new ArrayList<>();
+                    for (File pf : publicFiles) {
+                        if (pf.isFile() && pf.delete()) {
+                            deletedPaths.add(pf.getAbsolutePath());
+                        }
+                    }
+                    if (!deletedPaths.isEmpty()) {
+                        MediaScannerConnection.scanFile(
+                            context,
+                            deletedPaths.toArray(new String[0]),
+                            null,
+                            null
+                        );
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        launchConsentDeleteIfNeeded(call, consentUris);
     }
 }

@@ -3,8 +3,8 @@
  * Automatically kept in sync with package.json, android/app/build.gradle, and public/sw.js
  * via `scripts/bump-version.mjs`.
  */
-export const APP_VERSION = "1.0.40";
-export const APP_BUILD_NUMBER = 41;
+export const APP_VERSION = "1.0.41";
+export const APP_BUILD_NUMBER = 42;
 export const APP_CHANNEL = "Android";
 
 /**

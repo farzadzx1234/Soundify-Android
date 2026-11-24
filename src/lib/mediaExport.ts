@@ -48,7 +48,15 @@ function getMediaStorePluginNative(): {
   saveLocalCover?: (options: { trackId: string; coverBase64: string }) => Promise<{ success?: boolean; coverUri?: string }>;
   saveLocalLyrics?: (options: { trackId: string; lyricsJson: string }) => Promise<{ success?: boolean }>;
   getLocalLyrics?: (options: { trackId: string }) => Promise<{ lyricsJson?: string | null }>;
-  deleteOfflineFiles?: (options: { trackId: string }) => Promise<void>;
+  deleteOfflineFiles?: (options: {
+    trackId: string;
+    extraTrackIds?: string[];
+    audioUri?: string;
+    fileName?: string;
+    title?: string;
+    artist?: string;
+  }) => Promise<{ success?: boolean; prompted?: boolean } | void>;
+  deleteAllOfflineFiles?: () => Promise<{ success?: boolean; prompted?: boolean } | void>;
 } | null {
   if (!isAndroidNative()) return null;
   const win =
@@ -154,14 +162,53 @@ export async function getLocalDeviceLyrics<T>(trackId: string): Promise<T | null
   }
 }
 
-export async function deleteNativeOfflineFiles(trackId: string): Promise<void> {
-  if (!trackId) return;
+export async function deleteNativeOfflineFiles(
+  target:
+    | string
+    | {
+        trackId: string;
+        extraTrackIds?: string[];
+        audioUri?: string;
+        fileName?: string;
+        title?: string;
+        artist?: string;
+      },
+): Promise<boolean> {
+  const payload =
+    typeof target === "string"
+      ? { trackId: target }
+      : target;
+  if (!payload || (!payload.trackId && !payload.audioUri && !payload.fileName)) {
+    return false;
+  }
+  if (payload.trackId) {
+    localCoverDataUrlCache.delete(payload.trackId);
+  }
+  if (Array.isArray(payload.extraTrackIds)) {
+    for (const eid of payload.extraTrackIds) {
+      if (eid) localCoverDataUrlCache.delete(eid);
+    }
+  }
   try {
     const plugin = getMediaStorePluginNative();
     if (plugin?.deleteOfflineFiles) {
-      await plugin.deleteOfflineFiles({ trackId });
+      const res = await plugin.deleteOfflineFiles(payload);
+      return res && typeof res === "object" && "success" in res ? res.success !== false : true;
     }
   } catch {}
+  return false;
+}
+
+export async function deleteAllNativeOfflineFiles(): Promise<boolean> {
+  localCoverDataUrlCache.clear();
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (plugin?.deleteAllOfflineFiles) {
+      const res = await plugin.deleteAllOfflineFiles();
+      return res && typeof res === "object" && "success" in res ? res.success !== false : true;
+    }
+  } catch {}
+  return false;
 }
 
 const EXPORTED_TRACKS_STORAGE_KEY = "soundify_exported_track_ids";
@@ -207,6 +254,22 @@ export function markTrackAsExported(trackId: string): void {
       const set = getExportedTrackIds();
       set.add(trackId);
       localStorage.setItem(EXPORTED_TRACKS_STORAGE_KEY, JSON.stringify(Array.from(set)));
+    }
+  } catch {}
+}
+
+/**
+ * Removes a track ID from the exported tracking set so future downloads/exports work cleanly.
+ */
+export function unmarkTrackAsExported(trackId: string): void {
+  if (!trackId) return;
+  memoryExportedSet.delete(trackId);
+  try {
+    if (typeof localStorage !== "undefined") {
+      const set = getExportedTrackIds();
+      if (set.delete(trackId)) {
+        localStorage.setItem(EXPORTED_TRACKS_STORAGE_KEY, JSON.stringify(Array.from(set)));
+      }
     }
   } catch {}
 }

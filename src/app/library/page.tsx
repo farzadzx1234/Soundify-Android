@@ -1337,12 +1337,12 @@ export default function LibraryPage() {
                   <TrashIcon size={24} weight="bold" aria-hidden="true" />
                 </div>
                 <h3 id="confirm-remove-download-title" className="text-base font-bold text-[var(--sf-text)]">
-                  {pickText("Remove Downloaded Track?", "حذف آهنگ از دانلودهای برنامه؟")}
+                  {pickText("Remove Downloaded Track?", "حذف آهنگ از دانلودها و گوشی؟")}
                 </h3>
                 <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
                   {pickText(
-                    `"${trackPendingDelete.track.title}" will be removed from Soundify offline list. Your exported copy in Music/Soundify remains safe.`,
-                    `آهنگ «${pickText(trackPendingDelete.track.title, trackPendingDelete.track.titleFa)}» از لیست دانلودهای داخل برنامه حذف می‌شود.`,
+                    `"${trackPendingDelete.track.title}" will be permanently removed from Soundify offline downloads and your phone's Music/Soundify storage.`,
+                    `آهنگ «${pickText(trackPendingDelete.track.title, trackPendingDelete.track.titleFa)}» از لیست دانلودهای برنامه و حافظه گوشی (پوشه Music/Soundify) حذف می‌شود.`,
                   )}
                 </p>
               </div>

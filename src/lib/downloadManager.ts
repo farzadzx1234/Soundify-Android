@@ -4,10 +4,13 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { triggerHapticFeedback } from "./hapticFeedback";
 import { parseLrc } from "./lrc";
 import {
+  clearExportedTrackMemory,
+  deleteAllNativeOfflineFiles,
   deleteNativeOfflineFiles,
   exportTrackToDeviceStorage,
   getLocalDeviceCoverDataUrl,
   listDeviceSoundifyAudioFiles,
+  unmarkTrackAsExported,
   type DeviceSoundifyAudioFile,
 } from "./mediaExport";
 import {
@@ -31,6 +34,7 @@ import {
   estimateStorageUsage,
   getAllDownloadedTrackMeta,
   getAllDownloadedTracks,
+  getDownloadedTrack,
   getDownloadedCoverBlobUrl,
   getStorageBudgetInfo,
   isTrackDownloaded,
@@ -232,16 +236,31 @@ function registerDownloadedTrackIndex(
 
 function unregisterDownloadedTrackIndex(trackId: string): void {
   if (!trackId) return;
+  const knownUri = deviceAudioUriByTrackId.get(trackId);
   downloadedTrackIds.delete(trackId);
   deviceAudioUriByTrackId.delete(trackId);
   deviceCoverUriByTrackId.delete(trackId);
+  snapshotCache.delete(trackId);
+  canonicalSnapshotCache.delete(trackId);
+  const meta = downloadedMetaById.get(trackId);
+  const metaFpSet = new Set(meta?.fingerprints || []);
   for (let i = discoveredDeviceFiles.length - 1; i >= 0; i--) {
-    const parsed = parseDeviceFileMeta(discoveredDeviceFiles[i]);
-    if (discoveredDeviceFiles[i].trackId === trackId || parsed.canonicalId === trackId) {
+    const df = discoveredDeviceFiles[i];
+    const parsed = parseDeviceFileMeta(df);
+    const dfMatchesFp =
+      metaFpSet.size > 0 &&
+      computeTrackDownloadFingerprints({ title: parsed.title, artistName: parsed.artist }).some((fp) =>
+        metaFpSet.has(fp),
+      );
+    if (
+      df.trackId === trackId ||
+      parsed.canonicalId === trackId ||
+      (knownUri && df.uri === knownUri) ||
+      dfMatchesFp
+    ) {
       discoveredDeviceFiles.splice(i, 1);
     }
   }
-  const meta = downloadedMetaById.get(trackId);
   if (meta) {
     if (meta.pageUrlKey && downloadedByPageUrl.get(meta.pageUrlKey) === trackId) {
       downloadedByPageUrl.delete(meta.pageUrlKey);
@@ -1287,48 +1306,211 @@ export function cancelTrackDownload(trackId: string): void {
   processDownloadQueue();
 }
 
-/**
- * Removes a downloaded track from offline storage and cache.
- */
-export async function removeTrackDownload(trackId: string): Promise<boolean> {
-  cancelTrackDownload(trackId);
-  errorStates.delete(trackId);
-  pausedTrackIds.delete(trackId);
+interface NativeDeletePayload {
+  trackId: string;
+  extraTrackIds: string[];
+  audioUri?: string;
+  fileName?: string;
+  title?: string;
+  artist?: string;
+}
 
-  const success = await removeDownloadedTrack(trackId);
-  void deleteNativeOfflineFiles(trackId);
-  unregisterDownloadedTrackIndex(trackId);
+async function resolveNativeDeleteMetadata(
+  seedIds: string[],
+  trackHint?: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null,
+): Promise<{ allIds: string[]; nativeTargets: NativeDeletePayload[] }> {
+  const allIdSet = new Set<string>();
+  const collectedMeta: Array<{
+    id: string;
+    audioUri?: string;
+    fileName?: string;
+    title?: string;
+    artist?: string;
+  }> = [];
+
+  for (const rawId of seedIds) {
+    const id = (rawId || "").trim();
+    if (!id) continue;
+    allIdSet.add(id);
+    const resolvedCanonical = resolveDownloadedTrackId(
+      trackHint && trackHint.id === id
+        ? trackHint
+        : {
+            id,
+            title: downloadedMetaById.get(id)?.title || "",
+            artistName: downloadedMetaById.get(id)?.artistName || "",
+            pageUrl: downloadedMetaById.get(id)?.pageUrl,
+          },
+    );
+    if (resolvedCanonical) {
+      allIdSet.add(resolvedCanonical);
+    }
+  }
+
+  if (trackHint?.id) {
+    allIdSet.add(trackHint.id);
+    const resolvedHint = resolveDownloadedTrackId(trackHint);
+    if (resolvedHint) allIdSet.add(resolvedHint);
+  }
+
+  // Also expand aliases across fingerprints/pageUrls in downloadedMetaById and discoveredDeviceFiles
+  const seedFingerprints = new Set<string>();
+  if (trackHint) {
+    for (const fp of computeTrackDownloadFingerprints(trackHint)) seedFingerprints.add(fp);
+  }
+  for (const id of Array.from(allIdSet)) {
+    const m = downloadedMetaById.get(id);
+    if (m) {
+      for (const fp of m.fingerprints) seedFingerprints.add(fp);
+    }
+  }
+  if (seedFingerprints.size > 0) {
+    for (const [candidateId, meta] of downloadedMetaById.entries()) {
+      if (meta.fingerprints.some((fp) => seedFingerprints.has(fp))) {
+        allIdSet.add(candidateId);
+      }
+    }
+    for (const df of discoveredDeviceFiles) {
+      const parsed = parseDeviceFileMeta(df);
+      const fps = computeTrackDownloadFingerprints({ title: parsed.title, artistName: parsed.artist });
+      if (fps.some((fp) => seedFingerprints.has(fp))) {
+        if (df.trackId) allIdSet.add(df.trackId);
+        allIdSet.add(parsed.canonicalId);
+      }
+    }
+  }
+
+  const allIds = Array.from(allIdSet);
+  for (const id of allIds) {
+    const meta = downloadedMetaById.get(id);
+    const deviceFile = discoveredDeviceFiles.find((d) => {
+      const parsed = parseDeviceFileMeta(d);
+      return d.trackId === id || parsed.canonicalId === id || d.uri === deviceAudioUriByTrackId.get(id);
+    });
+    let audioUri =
+      deviceAudioUriByTrackId.get(id) ||
+      deviceFile?.uri ||
+      resolveLocalDeviceAudioUri({
+        id,
+        title: meta?.title || trackHint?.title || "",
+        artistName: meta?.artistName || trackHint?.artistName || "",
+        pageUrl: meta?.pageUrl || trackHint?.pageUrl,
+      }) ||
+      undefined;
+    let fileName = deviceFile?.fileName || undefined;
+    let title = meta?.title || (trackHint?.id === id ? trackHint.title : "") || deviceFile?.title || undefined;
+    let artist = meta?.artistName || (trackHint?.id === id ? trackHint.artistName : "") || deviceFile?.artist || undefined;
+
+    if (!title || !artist) {
+      try {
+        const storedRec = await getDownloadedTrack(id);
+        if (storedRec?.track) {
+          title = title || storedRec.track.title || storedRec.track.titleFa;
+          artist = artist || storedRec.track.artistName || storedRec.track.artistNameFa;
+        }
+      } catch {}
+    }
+
+    if (!audioUri && deviceFile?.uri) audioUri = deviceFile.uri;
+    if (!fileName && audioUri && audioUri.startsWith("file://")) {
+      const seg = decodeURIComponent(audioUri.split("/").pop() || "");
+      if (seg) fileName = seg;
+    }
+
+    collectedMeta.push({ id, audioUri, fileName, title, artist });
+  }
+
+  const nativeTargets: NativeDeletePayload[] = [];
+  const metaById = new Map(collectedMeta.map((c) => [c.id, c]));
+  const targetsToEmit = seedIds.length > 0 ? seedIds : allIds.slice(0, 1);
+  for (const seedId of targetsToEmit) {
+    const cleanSeed = (seedId || "").trim();
+    if (!cleanSeed) continue;
+    const item = metaById.get(cleanSeed) || collectedMeta[0];
+    if (!item) continue;
+    nativeTargets.push({
+      trackId: cleanSeed,
+      extraTrackIds: allIds.filter((x) => x !== cleanSeed),
+      audioUri: item.audioUri || collectedMeta.find((c) => c.audioUri)?.audioUri,
+      fileName: item.fileName || collectedMeta.find((c) => c.fileName)?.fileName,
+      title: item.title || collectedMeta.find((c) => c.title)?.title,
+      artist: item.artist || collectedMeta.find((c) => c.artist)?.artist,
+    });
+  }
+
+  return { allIds, nativeTargets };
+}
+
+/**
+ * Removes a downloaded track from offline storage, device Music/Soundify storage, and cache.
+ */
+export async function removeTrackDownload(
+  trackId: string,
+  trackHint?: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null,
+): Promise<boolean> {
+  const { allIds, nativeTargets } = await resolveNativeDeleteMetadata([trackId], trackHint);
+  for (const id of allIds) {
+    cancelTrackDownload(id);
+    errorStates.delete(id);
+    pausedTrackIds.delete(id);
+  }
+
+  let success = false;
+  for (const id of allIds) {
+    if (await removeDownloadedTrack(id)) {
+      success = true;
+    }
+  }
+  for (const payload of nativeTargets) {
+    await deleteNativeOfflineFiles(payload);
+  }
+  for (const id of allIds) {
+    unmarkTrackAsExported(id);
+    unregisterDownloadedTrackIndex(id);
+  }
+  canonicalSnapshotCache.clear();
   persistDownloadedIndexToLocalStorage();
   notifyStoreChangeListeners();
   return success;
 }
 
 /**
- * Atomically deletes a list of track IDs from offline storage and cache.
+ * Atomically deletes a list of track IDs from offline storage, device storage, and cache.
  */
 export async function batchDeleteTracks(trackIds: string[]): Promise<boolean> {
   if (!Array.isArray(trackIds) || trackIds.length === 0) return true;
 
-  for (const id of trackIds) {
+  const { allIds, nativeTargets } = await resolveNativeDeleteMetadata(trackIds);
+  for (const id of allIds) {
     cancelTrackDownload(id);
     errorStates.delete(id);
     pausedTrackIds.delete(id);
   }
 
   let allSuccess = true;
-  for (const id of trackIds) {
+  for (const id of allIds) {
     const ok = await removeDownloadedTrack(id);
     if (!ok) allSuccess = false;
+  }
+
+  // Delete native app-private + public Music/Soundify files per track BEFORE notifying store listeners
+  for (const payload of nativeTargets) {
+    await deleteNativeOfflineFiles(payload);
+  }
+
+  for (const id of allIds) {
+    unmarkTrackAsExported(id);
     unregisterDownloadedTrackIndex(id);
   }
 
+  canonicalSnapshotCache.clear();
   persistDownloadedIndexToLocalStorage();
   notifyStoreChangeListeners();
   return allSuccess;
 }
 
 /**
- * Clears all downloaded tracks and resets all download manager state.
+ * Clears all downloaded tracks (including native app-private & Music/Soundify files) and resets state.
  */
 export async function clearAllDownloads(): Promise<void> {
   for (const session of activeDownloads.values()) {
@@ -1354,6 +1536,9 @@ export async function clearAllDownloads(): Promise<void> {
   deviceCoverUriByTrackId.clear();
   deviceCoverUriByFingerprint.clear();
   discoveredDeviceFiles.length = 0;
+  snapshotCache.clear();
+  canonicalSnapshotCache.clear();
+  clearExportedTrackMemory();
   try {
     if (typeof window !== "undefined") {
       window.localStorage?.removeItem(DOWNLOADED_INDEX_LS_KEY);
@@ -1361,6 +1546,7 @@ export async function clearAllDownloads(): Promise<void> {
   } catch {}
   errorStates.clear();
   await clearAllDownloadedTracks();
+  await deleteAllNativeOfflineFiles();
   notifyStoreChangeListeners();
 }
 
@@ -1405,7 +1591,7 @@ export function useTrackDownload(track: Track | null | undefined) {
 
   const remove = async (): Promise<boolean> => {
     if (!trackId) return false;
-    return removeTrackDownload(trackId);
+    return removeTrackDownload(trackId, track);
   };
 
   const cancel = (): void => {
@@ -1462,6 +1648,7 @@ export function useDownloadedTracks() {
         listDeviceSoundifyAudioFiles().catch(() => [] as DeviceSoundifyAudioFile[]),
       ]);
 
+      discoveredDeviceFiles.length = 0;
       for (const df of liveDeviceFiles) {
         registerDeviceLocalAudioFile(df);
       }

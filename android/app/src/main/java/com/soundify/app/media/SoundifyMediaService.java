@@ -33,6 +33,7 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
@@ -81,8 +82,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.33";
-    private static final String APP_VERSION_HEADER = "1.0.33";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.34";
+    private static final String APP_VERSION_HEADER = "1.0.34";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -1801,7 +1802,7 @@ public class SoundifyMediaService extends Service {
         };
         return new ExoPlayer.Builder(this, renderersFactory)
             .setLoadControl(buildLoadControl())
-            .setMediaSourceFactory(new DefaultMediaSourceFactory(nativeHttpFactory, buildExtractorsFactory()))
+            .setMediaSourceFactory(new DefaultMediaSourceFactory(new DefaultDataSource.Factory(this, nativeHttpFactory), buildExtractorsFactory()))
             .build();
     }
 
@@ -2018,6 +2019,7 @@ public class SoundifyMediaService extends Service {
                 if (!captureAUrl.isEmpty() && !captureBUrl.isEmpty()) {
                     autoMixAnalyzerExecutor.execute(() -> {
                         AutoMixPcmAnalyzer.AutoMixPlanNative analyzedPlan = AutoMixPcmAnalyzer.analyzeStreamPair(
+                            getApplicationContext(),
                             captureAId,
                             captureAUrl,
                             captureDurA,

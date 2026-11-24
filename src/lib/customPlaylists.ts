@@ -314,6 +314,36 @@ export function removeTrackFromCustomPlaylist(playlistId: string, trackId: strin
   return updated;
 }
 
+export function updateTrackCoverInCustomPlaylist(
+  playlistId: string,
+  trackId: string,
+  coverUrl: string,
+): void {
+  if (!playlistId || !trackId || !coverUrl || isCorruptedOrBlobCover(trackId, coverUrl)) return;
+  const current = readCustomPlaylists();
+  const idx = current.findIndex((p) => p.id === playlistId);
+  if (idx === -1) return;
+
+  const existing = current[idx];
+  let changed = false;
+  const nextTracks = existing.tracks.map((tr) => {
+    if (tr.id === trackId && isCorruptedOrBlobCover(tr.id, tr.coverUrl)) {
+      changed = true;
+      return { ...tr, coverUrl };
+    }
+    return tr;
+  });
+  if (!changed) return;
+
+  const nextList = [...current];
+  nextList[idx] = {
+    ...existing,
+    updatedAt: new Date().toISOString(),
+    tracks: nextTracks,
+  };
+  writeCustomPlaylists(nextList);
+}
+
 export function savePersonalizedMixAsCustomPlaylist(
   mix: PersonalizedMix,
   lang: "fa" | "en" = "fa",

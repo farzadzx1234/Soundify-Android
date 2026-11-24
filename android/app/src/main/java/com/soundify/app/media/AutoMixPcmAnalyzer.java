@@ -1,8 +1,10 @@
 package com.soundify.app.media;
 
+import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
+import android.net.Uri;
 import android.os.Build;
 
 import java.nio.ByteBuffer;
@@ -134,14 +136,26 @@ public final class AutoMixPcmAnalyzer {
         String urlB,
         Map<String, String> headers
     ) {
+        return analyzeStreamPair(null, trackAId, urlA, knownDurationSecA, trackBId, urlB, headers);
+    }
+
+    public static AutoMixPlanNative analyzeStreamPair(
+        Context context,
+        String trackAId,
+        String urlA,
+        double knownDurationSecA,
+        String trackBId,
+        String urlB,
+        Map<String, String> headers
+    ) {
         if (urlA == null || urlA.isEmpty() || urlB == null || urlB.isEmpty()) {
             return null;
         }
-        DecodedSegment segA = decodeWindow(urlA, headers, true, knownDurationSecA);
+        DecodedSegment segA = decodeWindow(context, urlA, headers, true, knownDurationSecA);
         if (segA == null || segA.pcm.length < segA.sampleRate * 8) {
             return null;
         }
-        DecodedSegment segB = decodeWindow(urlB, headers, false, 0.0);
+        DecodedSegment segB = decodeWindow(context, urlB, headers, false, 0.0);
         if (segB == null || segB.pcm.length < segB.sampleRate * 4) {
             return null;
         }
@@ -152,6 +166,7 @@ public final class AutoMixPcmAnalyzer {
     }
 
     private static DecodedSegment decodeWindow(
+        Context context,
         String url,
         Map<String, String> headers,
         boolean outro,
@@ -162,7 +177,12 @@ public final class AutoMixPcmAnalyzer {
         long deadlineMs = android.os.SystemClock.elapsedRealtime() + DECODE_TIMEOUT_MS;
         try {
             extractor = new MediaExtractor();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && headers != null) {
+            if (url.startsWith("content://") && context != null) {
+                extractor.setDataSource(context, Uri.parse(url), null);
+            } else if (url.startsWith("file://")) {
+                String path = Uri.parse(url).getPath();
+                extractor.setDataSource(path != null ? path : url);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && headers != null) {
                 extractor.setDataSource(url, headers);
             } else {
                 extractor.setDataSource(url);

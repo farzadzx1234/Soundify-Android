@@ -161,6 +161,37 @@ export function isMatchingExternalFallback(
     return false;
   }
 
+  // Strict artist identity check: never play a random song from a completely unrelated artist
+  // when targetArtist is a real artist name (not a generic platform tag).
+  const candidateIdentityHaystack = `${normCandidateArtist} ${foldDiacriticsAndTurkish(candidateTitle)}`.trim();
+  const candidateCompact = candidateIdentityHaystack.replace(/\s+/g, "");
+  const expectedArtistPhrases = [normTargetArtist, sharedDashPrefix]
+    .concat(
+      targetDash.length >= 2 && foldDiacriticsAndTurkish(targetDash[0]).length >= 2
+        ? [foldDiacriticsAndTurkish(targetDash[0])]
+        : [],
+    )
+    .filter((p) => p.length >= 2 && !/^(?:spotify|spotify artist|artist|youtube|soundcloud)$/.test(p));
+
+  if (expectedArtistPhrases.length > 0 && candidateIdentityHaystack) {
+    const artistTokens = new Set<string>();
+    for (const phrase of expectedArtistPhrases) {
+      for (const tok of phrase.split(/\s+/)) {
+        if (tok.length >= 2 && !FALLBACK_NOISE_TOKENS.has(tok)) {
+          artistTokens.add(tok);
+        }
+      }
+    }
+    const longTokens = Array.from(artistTokens).filter((t) => t.length >= 3);
+    const tokensToCheck = longTokens.length > 0 ? longTokens : Array.from(artistTokens);
+    const matchesArtist =
+      expectedArtistPhrases.some((p) => candidateCompact.includes(p.replace(/\s+/g, ""))) ||
+      tokensToCheck.some((tok) => candidateIdentityHaystack.includes(tok));
+    if (!matchesArtist) {
+      return false;
+    }
+  }
+
   const artistTokenSet = new Set<string>();
   for (const aStr of [normTargetArtist, normCandidateArtist, sharedDashPrefix]) {
     if (!aStr) continue;

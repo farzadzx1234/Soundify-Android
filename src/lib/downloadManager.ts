@@ -3,7 +3,12 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { triggerHapticFeedback } from "./hapticFeedback";
 import { parseLrc } from "./lrc";
-import { exportTrackToDeviceStorage } from "./mediaExport";
+import {
+  deleteNativeOfflineFiles,
+  exportTrackToDeviceStorage,
+  listDeviceSoundifyAudioFiles,
+  type DeviceSoundifyAudioFile,
+} from "./mediaExport";
 import {
   APP_VERSION,
   MIN_SERVER_SUPPORTED_VERSION,
@@ -91,6 +96,11 @@ const downloadedMetaById = new Map<
   string,
   { id: string; title: string; artistName: string; pageUrl?: string; pageUrlKey?: string; fingerprints: string[] }
 >();
+const deviceAudioUriByTrackId = new Map<string, string>();
+const deviceAudioUriByFingerprint = new Map<string, string>();
+const deviceCoverUriByTrackId = new Map<string, string>();
+const deviceCoverUriByFingerprint = new Map<string, string>();
+const discoveredDeviceFiles: DeviceSoundifyAudioFile[] = [];
 const DOWNLOADED_INDEX_LS_KEY = "soundify_downloaded_index_v2";
 const errorStates = new Map<string, string>();
 const pendingDeferreds = new Map<string, DeferredDownload>();
@@ -219,6 +229,8 @@ function registerDownloadedTrackIndex(
 function unregisterDownloadedTrackIndex(trackId: string): void {
   if (!trackId) return;
   downloadedTrackIds.delete(trackId);
+  deviceAudioUriByTrackId.delete(trackId);
+  deviceCoverUriByTrackId.delete(trackId);
   const meta = downloadedMetaById.get(trackId);
   if (meta) {
     if (meta.pageUrlKey && downloadedByPageUrl.get(meta.pageUrlKey) === trackId) {
@@ -228,9 +240,102 @@ function unregisterDownloadedTrackIndex(trackId: string): void {
       if (downloadedByFingerprint.get(fp) === trackId) {
         downloadedByFingerprint.delete(fp);
       }
+      deviceAudioUriByFingerprint.delete(fp);
+      deviceCoverUriByFingerprint.delete(fp);
     }
     downloadedMetaById.delete(trackId);
   }
+}
+
+export function registerDeviceLocalAudioFile(file: DeviceSoundifyAudioFile): void {
+  if (!file || !file.uri) return;
+  const stem = (file.fileName || "")
+    .replace(/\.(?:mp3|m4a|aac|ogg|opus|wav|flac)$/i, "")
+    .trim();
+  let parsedArtist = file.artist || "";
+  let parsedTitle = file.title || stem;
+  const dashIdx = stem.indexOf(" - ");
+  if (dashIdx > 0) {
+    parsedArtist = stem.slice(0, dashIdx).trim();
+    parsedTitle = stem.slice(dashIdx + 3).trim();
+  }
+  const canonicalId =
+    file.trackId && file.trackId.trim()
+      ? file.trackId.trim()
+      : `device-${foldDownloadKeyPart(stem || file.fileName).replace(/\s+/g, "-") || "track"}`;
+
+  if (!discoveredDeviceFiles.some((d) => d.uri === file.uri)) {
+    discoveredDeviceFiles.push(file);
+  }
+
+  registerDownloadedTrackIndex({
+    id: canonicalId,
+    title: parsedTitle || stem,
+    artistName: parsedArtist,
+  });
+
+  deviceAudioUriByTrackId.set(canonicalId, file.uri);
+  if (file.coverUri) {
+    deviceCoverUriByTrackId.set(canonicalId, file.coverUri);
+  }
+
+  const allFingerprints = new Set<string>(
+    computeTrackDownloadFingerprints({
+      title: parsedTitle || stem,
+      artistName: parsedArtist,
+    }),
+  );
+  if (file.title || file.artist) {
+    for (const fp of computeTrackDownloadFingerprints({
+      title: file.title || stem,
+      artistName: file.artist || parsedArtist,
+    })) {
+      allFingerprints.add(fp);
+    }
+  }
+  for (const fp of allFingerprints) {
+    downloadedByFingerprint.set(fp, canonicalId);
+    deviceAudioUriByFingerprint.set(fp, file.uri);
+    if (file.coverUri) {
+      deviceCoverUriByFingerprint.set(fp, file.coverUri);
+    }
+  }
+}
+
+export function resolveLocalDeviceAudioUri(
+  track: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null | undefined,
+): string | null {
+  if (!track) return null;
+  if (track.id && deviceAudioUriByTrackId.has(track.id)) {
+    return deviceAudioUriByTrackId.get(track.id) || null;
+  }
+  const dlId = resolveDownloadedTrackId(track);
+  if (dlId && deviceAudioUriByTrackId.has(dlId)) {
+    return deviceAudioUriByTrackId.get(dlId) || null;
+  }
+  for (const fp of computeTrackDownloadFingerprints(track)) {
+    const uri = deviceAudioUriByFingerprint.get(fp);
+    if (uri) return uri;
+  }
+  return null;
+}
+
+export function resolveLocalDeviceCoverUri(
+  track: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null | undefined,
+): string | null {
+  if (!track) return null;
+  if (track.id && deviceCoverUriByTrackId.has(track.id)) {
+    return deviceCoverUriByTrackId.get(track.id) || null;
+  }
+  const dlId = resolveDownloadedTrackId(track);
+  if (dlId && deviceCoverUriByTrackId.has(dlId)) {
+    return deviceCoverUriByTrackId.get(dlId) || null;
+  }
+  for (const fp of computeTrackDownloadFingerprints(track)) {
+    const uri = deviceCoverUriByFingerprint.get(fp);
+    if (uri) return uri;
+  }
+  return null;
 }
 
 export function resolveDownloadedTrackId(
@@ -334,6 +439,11 @@ export function resetDownloadManagerState(): void {
   downloadedByPageUrl.clear();
   downloadedByFingerprint.clear();
   downloadedMetaById.clear();
+  deviceAudioUriByTrackId.clear();
+  deviceAudioUriByFingerprint.clear();
+  deviceCoverUriByTrackId.clear();
+  deviceCoverUriByFingerprint.clear();
+  discoveredDeviceFiles.length = 0;
   try {
     if (typeof window !== "undefined") {
       window.localStorage?.removeItem(DOWNLOADED_INDEX_LS_KEY);
@@ -356,8 +466,11 @@ export async function initializeDownloadManager(force = false): Promise<void> {
 
   initPromise = (async () => {
     try {
-      const metas = await getAllDownloadedTrackMeta();
-      if (metas.length === 0 && downloadedTrackIds.size > 0) {
+      const [metas, deviceFiles] = await Promise.all([
+        getAllDownloadedTrackMeta(),
+        listDeviceSoundifyAudioFiles().catch(() => [] as DeviceSoundifyAudioFile[]),
+      ]);
+      if (metas.length === 0 && deviceFiles.length === 0 && downloadedTrackIds.size > 0) {
         const sampleId = downloadedTrackIds.values().next().value;
         const confirmedPresent = sampleId ? await isTrackDownloaded(sampleId).catch(() => true) : false;
         if (confirmedPresent) {
@@ -370,6 +483,11 @@ export async function initializeDownloadManager(force = false): Promise<void> {
       downloadedByPageUrl.clear();
       downloadedByFingerprint.clear();
       downloadedMetaById.clear();
+      deviceAudioUriByTrackId.clear();
+      deviceAudioUriByFingerprint.clear();
+      deviceCoverUriByTrackId.clear();
+      deviceCoverUriByFingerprint.clear();
+      discoveredDeviceFiles.length = 0;
       for (const meta of metas) {
         if (meta.trackId) {
           registerDownloadedTrackIndex({
@@ -379,6 +497,9 @@ export async function initializeDownloadManager(force = false): Promise<void> {
             pageUrl: meta.pageUrl,
           });
         }
+      }
+      for (const df of deviceFiles) {
+        registerDeviceLocalAudioFile(df);
       }
       persistDownloadedIndexToLocalStorage();
       initialized = true;
@@ -892,9 +1013,21 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     notifyStoreChangeListeners();
     void triggerHapticFeedback("downloadComplete");
 
-    // Export to device public Music/Soundify storage immediately after UI checkmark locks
+    // Export to device public Music/Soundify + permanent private offline dir immediately
     try {
-      await exportTrackToDeviceStorage(track, audioBlob);
+      const expRes = await exportTrackToDeviceStorage(track, audioBlob, coverBlob);
+      const localUri = expRes.privateUri || expRes.uri;
+      if (expRes.success && localUri) {
+        registerDeviceLocalAudioFile({
+          uri: localUri,
+          fileName: `${track.artistName || "Soundify"} - ${track.title || track.id}.mp3`,
+          title: track.title || "",
+          artist: track.artistName || "",
+          trackId: track.id,
+          durationSec: track.durationSec,
+          sizeBytes: audioBlob.size,
+        });
+      }
     } catch (autoExpErr) {
       console.warn("Auto-export to device storage non-fatal error:", autoExpErr);
     }
@@ -1101,6 +1234,7 @@ export async function removeTrackDownload(trackId: string): Promise<boolean> {
   pausedTrackIds.delete(trackId);
 
   const success = await removeDownloadedTrack(trackId);
+  void deleteNativeOfflineFiles(trackId);
   unregisterDownloadedTrackIndex(trackId);
   persistDownloadedIndexToLocalStorage();
   notifyStoreChangeListeners();
@@ -1153,6 +1287,11 @@ export async function clearAllDownloads(): Promise<void> {
   downloadedByPageUrl.clear();
   downloadedByFingerprint.clear();
   downloadedMetaById.clear();
+  deviceAudioUriByTrackId.clear();
+  deviceAudioUriByFingerprint.clear();
+  deviceCoverUriByTrackId.clear();
+  deviceCoverUriByFingerprint.clear();
+  discoveredDeviceFiles.length = 0;
   try {
     if (typeof window !== "undefined") {
       window.localStorage?.removeItem(DOWNLOADED_INDEX_LS_KEY);
@@ -1285,7 +1424,7 @@ export function useDownloadedTracks() {
       );
       setTracks(enriched);
 
-      // Keep canonical download index in sync (ID, pageUrl, and artist+title fingerprints)
+      // Keep canonical download index in sync (ID, pageUrl, device Music/Soundify files, and artist+title fingerprints)
       downloadedTrackIds.clear();
       downloadedByPageUrl.clear();
       downloadedByFingerprint.clear();
@@ -1294,6 +1433,9 @@ export function useDownloadedTracks() {
         if (rec.trackId) {
           registerDownloadedTrackIndex(rec.track);
         }
+      }
+      for (const df of discoveredDeviceFiles) {
+        registerDeviceLocalAudioFile(df);
       }
       persistDownloadedIndexToLocalStorage();
 

@@ -24,12 +24,17 @@ import { VirtualizedTrackTable } from "@/components/VirtualizedTrackTable";
 import {
   customRecordToPlaylist,
   deleteCustomPlaylist,
+  isCorruptedOrBlobCover,
   removeTrackFromCustomPlaylist,
   savePersonalizedMixAsCustomPlaylist,
   updateCustomPlaylist,
+  updateTrackCoverInCustomPlaylist,
   useCustomPlaylists,
 } from "@/lib/customPlaylists";
 import { useDownloadedTracks } from "@/lib/downloadManager";
+import { extractCleanTitleAndArtist } from "@/lib/lyricsCleaner";
+import { isMatchingExternalFallback } from "@/lib/externalFallbackMatcher";
+import { getDownloadedTrack } from "@/lib/offlineAudioStorage";
 import {
   buildPersonalizedMixes,
   getCachedPersonalizedMix,
@@ -97,6 +102,58 @@ export default function PlaylistClient() {
       active = false;
     };
   }, [id, isCustomPlaylist, isMixPlaylist]);
+
+  // Auto-heal missing/erased covers in custom playlists using offline records or strict mirror artwork lookup
+  useEffect(() => {
+    if (!isCustomPlaylist || !customRecord || customRecord.tracks.length === 0) return;
+    const missingTracks = customRecord.tracks.filter((tr) => isCorruptedOrBlobCover(tr.id, tr.coverUrl));
+    if (missingTracks.length === 0) return;
+
+    let active = true;
+    void (async () => {
+      for (const tr of missingTracks.slice(0, 12)) {
+        if (!active) break;
+        try {
+          const dlRec = await getDownloadedTrack(tr.id).catch(() => null);
+          if (dlRec?.track?.coverUrl && !isCorruptedOrBlobCover(tr.id, dlRec.track.coverUrl)) {
+            updateTrackCoverInCustomPlaylist(customRecord.id, tr.id, dlRec.track.coverUrl);
+            continue;
+          }
+          if (typeof navigator !== "undefined" && navigator.onLine === false) continue;
+
+          const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(tr.title, tr.artistName);
+          const q = `${cleanA ? `${cleanA} ` : ""}${cleanT}`.trim();
+          if (!q) continue;
+
+          const primarySrc = tr.source === "youtube" ? "youtube" : "soundcloud";
+          const res = await api.searchExternal(q, primarySrc, 3).catch(() => ({ results: [] as Track[] }));
+          let match = res.results?.find(
+            (cand) =>
+              cand.coverUrl &&
+              !isCorruptedOrBlobCover(tr.id, cand.coverUrl) &&
+              isMatchingExternalFallback(tr.title, tr.artistName, cand.title, cand.artistName, tr.durationSec, cand.durationSec),
+          );
+          if (!match) {
+            const altSrc = primarySrc === "youtube" ? "soundcloud" : "youtube";
+            const altRes = await api.searchExternal(q, altSrc, 3).catch(() => ({ results: [] as Track[] }));
+            match = altRes.results?.find(
+              (cand) =>
+                cand.coverUrl &&
+                !isCorruptedOrBlobCover(tr.id, cand.coverUrl) &&
+                isMatchingExternalFallback(tr.title, tr.artistName, cand.title, cand.artistName, tr.durationSec, cand.durationSec),
+            );
+          }
+          if (active && match?.coverUrl) {
+            updateTrackCoverInCustomPlaylist(customRecord.id, tr.id, match.coverUrl);
+          }
+        } catch {}
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [customRecord, isCustomPlaylist]);
 
   const playlist: Playlist | null = isCustomPlaylist
     ? customRecord

@@ -17,8 +17,79 @@ export interface ExportResult {
   success: boolean;
   alreadyExists?: boolean;
   path?: string;
+  uri?: string;
+  privateUri?: string;
   method: "native-mediastore" | "web-download";
   error?: string;
+}
+
+export interface DeviceSoundifyAudioFile {
+  uri: string;
+  fileName: string;
+  title: string;
+  artist: string;
+  trackId?: string;
+  durationSec?: number;
+  sizeBytes?: number;
+  coverUri?: string;
+  source?: string;
+}
+
+function getMediaStorePluginNative(): {
+  saveAudioToDevice?: (options: Record<string, unknown>) => Promise<{
+    success: boolean;
+    alreadyExists?: boolean;
+    path?: string;
+    uri?: string;
+    privateUri?: string;
+  }>;
+  listDeviceSoundifyAudio?: () => Promise<{ files?: DeviceSoundifyAudioFile[] }>;
+  getLocalCoverDataUrl?: (options: { trackId?: string; audioUri?: string }) => Promise<{ dataUrl?: string | null }>;
+  deleteOfflineFiles?: (options: { trackId: string }) => Promise<void>;
+} | null {
+  if (!isAndroidNative()) return null;
+  const win =
+    typeof window !== "undefined"
+      ? window
+      : (globalThis as unknown as { window?: Window & typeof globalThis }).window;
+  const plugins = win?.Capacitor?.Plugins as Record<string, unknown> | undefined;
+  return (plugins?.MediaStorePlugin as ReturnType<typeof getMediaStorePluginNative>) || null;
+}
+
+export async function listDeviceSoundifyAudioFiles(): Promise<DeviceSoundifyAudioFile[]> {
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (!plugin?.listDeviceSoundifyAudio) return [];
+    const res = await plugin.listDeviceSoundifyAudio();
+    return Array.isArray(res?.files) ? res.files.filter((f) => Boolean(f?.uri && f?.fileName)) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getLocalDeviceCoverDataUrl(opts: {
+  trackId?: string;
+  audioUri?: string;
+}): Promise<string | null> {
+  if (!opts.trackId && !opts.audioUri) return null;
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (!plugin?.getLocalCoverDataUrl) return null;
+    const res = await plugin.getLocalCoverDataUrl(opts);
+    return typeof res?.dataUrl === "string" && res.dataUrl.startsWith("data:image/") ? res.dataUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteNativeOfflineFiles(trackId: string): Promise<void> {
+  if (!trackId) return;
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (plugin?.deleteOfflineFiles) {
+      await plugin.deleteOfflineFiles({ trackId });
+    }
+  } catch {}
 }
 
 const EXPORTED_TRACKS_STORAGE_KEY = "soundify_exported_track_ids";
@@ -177,6 +248,7 @@ function triggerWebBlobDownload(blob: Blob, fileName: string): boolean {
 export async function exportTrackToDeviceStorage(
   track: Track,
   providedBlob?: Blob,
+  providedCoverBlob?: Blob,
 ): Promise<ExportResult> {
   if (!track || !track.id) {
     return { success: false, method: "web-download", error: "Invalid track data" };
@@ -184,8 +256,8 @@ export async function exportTrackToDeviceStorage(
 
   const fileName = getExportFileName(track);
 
-  // Prevent duplicate exports if this track has already been saved to device storage
-  if (isTrackExported(track.id)) {
+  // Prevent duplicate exports only if NOT saving initial permanent offline copy or if already exported cleanly
+  if (isTrackExported(track.id) && !providedCoverBlob) {
     return {
       success: true,
       alreadyExists: true,
@@ -224,27 +296,24 @@ export async function exportTrackToDeviceStorage(
     };
   }
 
-  // 2. If running in native Android APK, attempt direct MediaStore insertion
+  // 2. If running in native Android APK, attempt direct MediaStore + permanent app-private insertion
   if (isAndroidNative()) {
     try {
-      const win =
-        typeof window !== "undefined"
-          ? window
-          : (globalThis as unknown as { window?: Window & typeof globalThis }).window;
-      const plugins = win?.Capacitor?.Plugins as Record<string, unknown> | undefined;
-      const mediaStorePlugin = plugins?.MediaStorePlugin as
-        | {
-            saveAudioToDevice: (
-              options: Record<string, unknown>,
-            ) => Promise<{ success: boolean; alreadyExists?: boolean; path?: string }>;
-          }
-        | undefined;
+      const mediaStorePlugin = getMediaStorePluginNative();
 
       if (mediaStorePlugin && typeof mediaStorePlugin.saveAudioToDevice === "function") {
         const base64Data = await blobToBase64(audioBlob);
+        let coverBase64 = "";
+        if (providedCoverBlob instanceof Blob && providedCoverBlob.size > 0 && providedCoverBlob.size <= 1.5 * 1024 * 1024) {
+          try {
+            coverBase64 = await blobToBase64(providedCoverBlob);
+          } catch {}
+        }
         const result = await mediaStorePlugin.saveAudioToDevice({
           base64: base64Data,
           fileName,
+          trackId: track.id,
+          coverBase64,
           title: track.title || "",
           artist: track.artistName || "",
           album: "Soundify",
@@ -261,6 +330,8 @@ export async function exportTrackToDeviceStorage(
             alreadyExists: Boolean(result.alreadyExists),
             method: "native-mediastore",
             path: result.path || `Music/Soundify/${fileName}`,
+            uri: result.uri,
+            privateUri: result.privateUri,
           };
         }
       }

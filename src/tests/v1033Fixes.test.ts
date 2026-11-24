@@ -114,19 +114,19 @@ describe("Soundify v1.0.33 Offline Covers, Strict Offline Playback & 5-Stage Aut
     resetDownloadManagerState();
   });
 
-  it("synchronizes v1.0.33 / versionCode 34 across all version manifests", () => {
-    expect(APP_VERSION).toBe("1.0.33");
-    expect(APP_BUILD_NUMBER).toBe(34);
+  it("synchronizes v1.0.33+ / versionCode >= 34 across all version manifests", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.3[3-9]\d*$/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(34);
 
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));
-    expect(pkg.version).toBe("1.0.33");
+    expect(pkg.version).toBe(APP_VERSION);
 
     const swJs = fs.readFileSync(path.resolve(__dirname, "../../public/sw.js"), "utf8");
-    expect(swJs).toContain("soundify-v1.0.33-b34");
+    expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
 
     const gradle = fs.readFileSync(path.resolve(__dirname, "../../android/app/build.gradle"), "utf8");
-    expect(gradle).toContain("versionCode 34");
-    expect(gradle).toContain('versionName "1.0.33"');
+    expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+    expect(gradle).toContain(`versionName "${APP_VERSION}"`);
   });
 
   it("fixes Capacitor WebView fetch false-positive and serves downloaded cover blobs even if device security state toggles", async () => {

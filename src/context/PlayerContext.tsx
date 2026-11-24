@@ -46,8 +46,11 @@ import {
 import {
   resolveDownloadedTrackId,
   resolveDownloadedTrackIdAsync,
+  resolveLocalDeviceAudioUri,
+  resolveLocalDeviceCoverUri,
   subscribeToDownloads,
 } from "@/lib/downloadManager";
+import { getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
 import { prebufferTrack, recordPlaybackSessionStep } from "@/lib/audioBufferManager";
 import {
   initAndroidMediaSession,
@@ -1053,7 +1056,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             }
 
             const prepareNativeIncoming = async (mode: "native" | "web-to-native"): Promise<boolean> => {
+              const localDeviceInUri = resolveLocalDeviceAudioUri(resolvedNext);
               if (
+                !localDeviceInUri &&
                 resolvedNext.source === "spotify" &&
                 (!resolvedNext.audioUrl || resolvedNext.audioUrl.includes("open.spotify.com"))
               ) {
@@ -1062,23 +1067,46 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 } catch {}
               }
               if (currentTrackRef.current?.id !== curr.id || autoMixStartedRef.current) return false;
-              const streamUrl = stripFastStartParam(resolveMediaUrl(resolvedNext.audioUrl));
-              if (!streamUrl || (!streamUrl.startsWith("http://") && !streamUrl.startsWith("https://"))) {
+              const streamUrl = localDeviceInUri || stripFastStartParam(resolveMediaUrl(resolvedNext.audioUrl));
+              if (
+                !streamUrl ||
+                (!streamUrl.startsWith("http://") &&
+                  !streamUrl.startsWith("https://") &&
+                  !streamUrl.startsWith("content://") &&
+                  !streamUrl.startsWith("file://"))
+              ) {
                 autoMixPreparingKeyRef.current = null;
                 return false;
               }
-              const resolvedCover =
-                resolvedNext.coverUrl && !resolvedNext.coverUrl.startsWith("blob:")
-                  ? resolveMediaUrl(resolvedNext.coverUrl)
-                  : originalCoverUrlsRef.current[resolvedNext.id]
-                    ? resolveMediaUrl(originalCoverUrlsRef.current[resolvedNext.id])
-                    : "";
-              let artworkUrl = resolvedCover;
-              try {
-                if (resolvedCover) {
-                  artworkUrl = new URL(resolvedCover, window.location.origin).toString();
+              let artworkUrl = "";
+              if (isNextDownloaded || localDeviceInUri) {
+                const cachedCover =
+                  getCachedCoverBlobUrl(offlineNextStorageId) ||
+                  (await getDownloadedCoverBlobUrl(offlineNextStorageId).catch(() => null));
+                if (cachedCover) {
+                  artworkUrl = (await blobUrlToJpegDataUrl(cachedCover, 256)) || "";
+                } else {
+                  artworkUrl =
+                    (await getLocalDeviceCoverDataUrl({
+                      trackId: offlineNextStorageId,
+                      audioUri: localDeviceInUri || undefined,
+                    })) || "";
                 }
-              } catch {}
+              }
+              if (!artworkUrl) {
+                const resolvedCover =
+                  resolvedNext.coverUrl && !resolvedNext.coverUrl.startsWith("blob:")
+                    ? resolveMediaUrl(resolvedNext.coverUrl)
+                    : originalCoverUrlsRef.current[resolvedNext.id]
+                      ? resolveMediaUrl(originalCoverUrlsRef.current[resolvedNext.id])
+                      : "";
+                artworkUrl = resolvedCover;
+                try {
+                  if (resolvedCover) {
+                    artworkUrl = new URL(resolvedCover, window.location.origin).toString();
+                  }
+                } catch {}
+              }
               autoMixTargetTrackRef.current = resolvedNext;
               autoMixModeRef.current = mode;
               autoMixPreparedKeyRef.current = pairKey;
@@ -1097,14 +1125,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               return true;
             };
 
-            // 1. Native -> Native (both online streams on ExoPlayer)
-            if (nativeAudioActiveRef.current && !isNextDownloaded) {
+            const nextLocalDeviceUri = resolveLocalDeviceAudioUri(resolvedNext);
+            // 1. Native -> Native (both online HTTP streams OR local content:// / file:// offline files on ExoPlayer)
+            if (nativeAudioActiveRef.current && (!isNextDownloaded || Boolean(nextLocalDeviceUri))) {
               await prepareNativeIncoming("native");
               return;
             }
 
-            // 2. Web -> Native (outgoing downloaded/web track fading out, incoming online track buffering in ExoPlayer)
-            if (!nativeAudioActiveRef.current && !isNextDownloaded && isNativeAudioAvailable()) {
+            // 2. Web -> Native (outgoing Web/blob fading out, incoming online or local device file on ExoPlayer)
+            if (!nativeAudioActiveRef.current && (!isNextDownloaded || Boolean(nextLocalDeviceUri)) && isNativeAudioAvailable()) {
               const ok = await prepareNativeIncoming("web-to-native");
               if (ok) return;
             }
@@ -1832,12 +1861,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       // Fast path on Android: route remote HTTP streams directly through Media3 ExoPlayer
       // instead of WebView's HTML5 <audio> element for rapid startup and rock-solid buffering.
       const candidateStreamUrl = baseAudioSource || resolveMediaUrl(track.audioUrl);
+      const isLocalNativeFile =
+        Boolean(candidateStreamUrl) &&
+        (candidateStreamUrl.startsWith("content://") || candidateStreamUrl.startsWith("file://"));
       if (
         !forceWebAudio &&
         isNativeAudioAvailable() &&
-        !isDownloaded &&
+        (!isDownloaded || isLocalNativeFile) &&
         candidateStreamUrl &&
-        (candidateStreamUrl.startsWith("http://") || candidateStreamUrl.startsWith("https://"))
+        (candidateStreamUrl.startsWith("http://") ||
+          candidateStreamUrl.startsWith("https://") ||
+          isLocalNativeFile)
       ) {
         try {
           isRetryingPlayRef.current = false;
@@ -2203,7 +2237,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
 
       const matchedDownloadedId = await resolveDownloadedTrackIdAsync(normalizedTrack);
-      const isDownloaded = Boolean(matchedDownloadedId);
+      const localDeviceUri = resolveLocalDeviceAudioUri(normalizedTrack);
+      const isDownloaded = Boolean(matchedDownloadedId || localDeviceUri);
       const offlineStorageId = matchedDownloadedId || normalizedTrack.id;
 
       setCurrentlyPlayingTrackId(offlineStorageId);
@@ -2313,26 +2348,43 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (isDownloaded) {
         try {
           const [blobUrlRaw, coverBlobUrl] = await Promise.all([
-            getDownloadedTrackBlobUrl(offlineStorageId),
-            getDownloadedCoverBlobUrl(offlineStorageId),
+            matchedDownloadedId ? getDownloadedTrackBlobUrl(offlineStorageId) : Promise.resolve(null),
+            matchedDownloadedId ? getDownloadedCoverBlobUrl(offlineStorageId) : Promise.resolve(null),
           ]);
           let resolvedBlobUrl = blobUrlRaw;
-          if (!resolvedBlobUrl) {
+          if (!resolvedBlobUrl && matchedDownloadedId) {
             const directRec = await getDownloadedTrack(offlineStorageId).catch(() => null);
             if (directRec?.audioBlob && directRec.audioBlob.size > 0 && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
               resolvedBlobUrl = URL.createObjectURL(directRec.audioBlob);
             }
           }
-          if (resolvedBlobUrl) {
+          if (localDeviceUri && isNativeAudioAvailable()) {
+            audioSource = localDeviceUri;
+          } else if (resolvedBlobUrl) {
             audioSource = resolvedBlobUrl;
           }
           if (coverBlobUrl) {
             trackToPlay = { ...trackToPlay, coverUrl: coverBlobUrl };
+          } else {
+            const localCoverUri = resolveLocalDeviceCoverUri(normalizedTrack);
+            const fallbackCover =
+              localCoverUri ||
+              (await getLocalDeviceCoverDataUrl({
+                trackId: offlineStorageId,
+                audioUri: localDeviceUri || undefined,
+              }));
+            if (fallbackCover) {
+              trackToPlay = { ...trackToPlay, coverUrl: fallbackCover };
+            }
           }
         } catch {}
 
         const isDeviceOffline = typeof navigator !== "undefined" && navigator.onLine === false;
-        if (isDeviceOffline && !audioSource.startsWith("blob:")) {
+        const hasLocalAudio =
+          audioSource.startsWith("blob:") ||
+          audioSource.startsWith("content://") ||
+          audioSource.startsWith("file://");
+        if (isDeviceOffline && !hasLocalAudio) {
           setOfflineNotice(
             t
               ? t("downloadFailed")
@@ -2353,11 +2405,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       };
 
+      const isLocalNativeStream =
+        Boolean(audioSource) &&
+        (audioSource.startsWith("content://") || audioSource.startsWith("file://"));
       const willUseNativeStream =
         isNativeAudioAvailable() &&
-        !isDownloaded &&
         Boolean(audioSource) &&
-        (audioSource.startsWith("http://") || audioSource.startsWith("https://"));
+        ((!isDownloaded && (audioSource.startsWith("http://") || audioSource.startsWith("https://"))) ||
+          isLocalNativeStream);
 
       if (currentTrackRef.current?.id === track.id) {
         if (!willUseNativeStream) {
@@ -2389,7 +2444,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
           if (
             nativeAudioActiveRef.current &&
-            !isDownloaded &&
+            (!isDownloaded || isLocalNativeStream) &&
             typeof startTime !== "number" &&
             !isPlayingRef.current &&
             !isBufferingRef.current
@@ -2712,7 +2767,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     // Ensure audio element has source loaded (e.g. after page refresh)
     const matchedOfflineId = await resolveDownloadedTrackIdAsync(curr);
-    const isDownloadedSync = Boolean(matchedOfflineId);
+    const localDeviceUri = resolveLocalDeviceAudioUri(curr);
+    const isDownloadedSync = Boolean(matchedOfflineId || localDeviceUri);
     const offlineId = matchedOfflineId || curr.id;
 
     const shouldStartPlaying =
@@ -2740,10 +2796,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setOfflineNotice(null);
         setCurrentlyPlayingTrackId(offlineId);
         let cachedBlob = getCachedAudioBlobUrl(offlineId);
-        if (!cachedBlob) {
+        if (!cachedBlob && matchedOfflineId) {
           cachedBlob = await getDownloadedTrackBlobUrl(offlineId);
         }
-        if (cachedBlob && audio.src !== cachedBlob) {
+        if (localDeviceUri && isNativeAudioAvailable()) {
+          // Local Music/Soundify or private offline file plays natively on ExoPlayer
+        } else if (cachedBlob && audio.src !== cachedBlob) {
           const curT = audio.currentTime;
           isSettingSourceRef.current = true;
           audio.src = cachedBlob;
@@ -2754,8 +2812,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
         }
         let cachedCover = getCachedCoverBlobUrl(offlineId);
-        if (!cachedCover) {
+        if (!cachedCover && matchedOfflineId) {
           cachedCover = await getDownloadedCoverBlobUrl(offlineId);
+        }
+        if (!cachedCover) {
+          cachedCover =
+            resolveLocalDeviceCoverUri(curr) ||
+            (await getLocalDeviceCoverDataUrl({
+              trackId: offlineId,
+              audioUri: localDeviceUri || undefined,
+            }));
         }
         if (cachedCover && curr.coverUrl !== cachedCover) {
           if (curr.coverUrl && !curr.coverUrl.startsWith("blob:")) {
@@ -2804,11 +2870,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           shuffle: shuffleRef.current,
         });
       }
-      if (nativeAudioActiveRef.current && !isDownloadedSync) {
+      if (nativeAudioActiveRef.current && (!isDownloadedSync || Boolean(localDeviceUri))) {
         userPausedIntentRef.current = false;
         setIsPlaying(true);
         isPlayingRef.current = true;
         await nativeAudioPlay();
+      } else if (localDeviceUri) {
+        await attemptPlayWithRetry(audio, curr, isDownloadedSync, localDeviceUri);
       } else {
         await attemptPlayWithRetry(audio, curr, isDownloadedSync);
       }

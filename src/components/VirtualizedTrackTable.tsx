@@ -107,10 +107,12 @@ export const VirtualizedTrackTable = memo(function VirtualizedTrackTable({
           <div className="relative h-11 w-11 rounded-xl overflow-hidden shrink-0 shadow-sm">
             <OptimizedTrackImage
               src={tr.coverUrl}
-              alt=""
+              alt={pickText(tr.title, tr.titleFa)}
               accentColor={tr.accentColor}
               pageUrl={tr.pageUrl}
               trackId={tr.id}
+              trackTitle={tr.title}
+              artistName={tr.artistName}
             />
             <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               {isPlayingNow ? (

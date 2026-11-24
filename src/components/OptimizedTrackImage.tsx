@@ -2,7 +2,13 @@
 
 import React, { memo, useEffect, useRef, useState } from "react";
 import { extractYouTubeIdClient, resolveMediaUrl } from "@/lib/api";
-import { getTrackDownloadSnapshot, resolveDownloadedTrackId } from "@/lib/downloadManager";
+import {
+  getTrackDownloadSnapshot,
+  resolveDownloadedTrackId,
+  resolveLocalDeviceAudioUri,
+  resolveLocalDeviceCoverUri,
+} from "@/lib/downloadManager";
+import { getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
 import { getCachedCoverUrl } from "@/lib/coverCacheManager";
 import { getCachedCoverBlobUrl, getDownloadedCoverBlobUrl } from "@/lib/offlineAudioStorage";
 
@@ -14,6 +20,8 @@ interface OptimizedTrackImageProps {
   priority?: boolean;
   pageUrl?: string;
   trackId?: string;
+  trackTitle?: string;
+  artistName?: string;
   sizes?: string;
   onError?: () => void;
 }
@@ -43,11 +51,16 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
   priority = false,
   pageUrl = "",
   trackId = "",
+  trackTitle = "",
+  artistName = "",
   onError,
 }: OptimizedTrackImageProps) {
-  const resolvedOfflineTrackId = trackId
-    ? resolveDownloadedTrackId({ id: trackId, title: alt, artistName: "", pageUrl }) ||
-      (getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
+  const lookupTrack = trackId || trackTitle || artistName
+    ? { id: trackId, title: trackTitle || alt, artistName, pageUrl }
+    : null;
+  const resolvedOfflineTrackId = lookupTrack
+    ? resolveDownloadedTrackId(lookupTrack) ||
+      (trackId && getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
     : "";
   const resolvedTarget = resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
   const cachedOfflineSync = resolvedOfflineTrackId ? getCachedCoverBlobUrl(resolvedOfflineTrackId) : null;
@@ -62,12 +75,16 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
   useEffect(() => {
     let active = true;
     coverBlobRecoveryAttemptedRef.current = "";
-    const offlineId = trackId
-      ? resolveDownloadedTrackId({ id: trackId, title: alt, artistName: "", pageUrl }) ||
-        (getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
+    const trackMeta = trackId || trackTitle || artistName
+      ? { id: trackId, title: trackTitle || alt, artistName, pageUrl }
+      : null;
+    const offlineId = trackMeta
+      ? resolveDownloadedTrackId(trackMeta) ||
+        (trackId && getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
       : "";
     const offlineSync = offlineId ? getCachedCoverBlobUrl(offlineId) : null;
-    const target = offlineSync || resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
+    const localSavedCover = trackMeta ? resolveLocalDeviceCoverUri(trackMeta) : null;
+    const target = offlineSync || localSavedCover || resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
     setCurrentSrc(target);
     setHasError(false);
 
@@ -80,12 +97,24 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
       setIsLoaded(false);
     }
 
-    // Only open IndexedDB cover store if track is actually marked downloaded locally
+    // Check IndexedDB cover blob or embedded MP3 artwork in Music/Soundify when downloaded locally
     if (offlineId && !offlineSync) {
-      void getDownloadedCoverBlobUrl(offlineId).then((blobUrl) => {
+      void getDownloadedCoverBlobUrl(offlineId).then(async (blobUrl) => {
         if (active && blobUrl) {
           setCurrentSrc(blobUrl);
           setIsLoaded(true);
+          return;
+        }
+        const localAudioUri = trackMeta ? resolveLocalDeviceAudioUri(trackMeta) : null;
+        if (localAudioUri || offlineId) {
+          const dataUrl = await getLocalDeviceCoverDataUrl({
+            trackId: offlineId,
+            audioUri: localAudioUri || undefined,
+          });
+          if (active && dataUrl) {
+            setCurrentSrc(dataUrl);
+            setIsLoaded(true);
+          }
         }
       });
     } else if (
@@ -107,7 +136,7 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
     return () => {
       active = false;
     };
-  }, [src, trackId, pageUrl, alt]);
+  }, [src, trackId, pageUrl, alt, trackTitle, artistName]);
 
   const handleLoad = () => {
     rememberDecodedCover(currentSrc);

@@ -19,10 +19,17 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
 
     private final double[] z1 = new double[MAX_CHANNELS];
     private final double[] z2 = new double[MAX_CHANNELS];
+    private double bassLp = 0.0;
+    private double midLowLp = 0.0;
+    private double midHighLp = 0.0;
 
     private volatile float targetHighPassHz = 0.0f;
     private volatile float liveRms = 0.0f;
     private volatile float bodyRms = 0.0f;
+    private volatile float bassRms = 0.0f;
+    private volatile float bodyBassRms = 0.0f;
+    private volatile float vocalMidRms = 0.0f;
+    private volatile float bodyVocalRms = 0.0f;
 
     private float smoothedHighPassHz = 0.0f;
     private float hpWet = 0.0f;
@@ -43,6 +50,10 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         this.hpWet = 0.0f;
         this.liveRms = 0.0f;
         this.bodyRms = 0.0f;
+        this.bassRms = 0.0f;
+        this.bodyBassRms = 0.0f;
+        this.vocalMidRms = 0.0f;
+        this.bodyVocalRms = 0.0f;
         this.lastCoeffHz = -1.0;
         clearBiquadState();
     }
@@ -55,11 +66,30 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         return bodyRms;
     }
 
+    public float getBassRms() {
+        return bassRms;
+    }
+
+    public float getBodyBassRms() {
+        return bodyBassRms;
+    }
+
+    public float getVocalMidRms() {
+        return vocalMidRms;
+    }
+
+    public float getBodyVocalRms() {
+        return bodyVocalRms;
+    }
+
     private void clearBiquadState() {
         for (int i = 0; i < MAX_CHANNELS; i++) {
             z1[i] = 0.0;
             z2[i] = 0.0;
         }
+        bassLp = 0.0;
+        midLowLp = 0.0;
+        midHighLp = 0.0;
     }
 
     private void updateCoefficients(double cutoffHz, double sampleRate) {
@@ -103,9 +133,19 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         int frameCount = remaining / bytesPerFrame;
         int startPos = inputBuffer.position();
 
-        // Sample every 8th frame (~0.05% CPU) to measure live acoustic energy and sustained track loudness
+        // Sample every 8th frame (~0.08% CPU) for 3-band acoustic RMS (full, bass <= 160Hz, vocal-mid 300-3000Hz)
         if (frameCount > 0) {
+            double dt = 8.0 / sampleRate;
+            double omegaBass = 2.0 * Math.PI * 160.0 * dt;
+            double alphaBass = Math.max(0.04, Math.min(0.85, omegaBass / (1.0 + omegaBass)));
+            double omegaMidLow = 2.0 * Math.PI * 300.0 * dt;
+            double alphaMidLow = Math.max(0.05, Math.min(0.90, omegaMidLow / (1.0 + omegaMidLow)));
+            double omegaMidHigh = 2.0 * Math.PI * 3000.0 * dt;
+            double alphaMidHigh = Math.max(0.10, Math.min(0.96, omegaMidHigh / (1.0 + omegaMidHigh)));
+
             double sumSq = 0.0;
+            double sumBassSq = 0.0;
+            double sumVocalSq = 0.0;
             int counted = 0;
             for (int f = 0; f < frameCount; f += 8) {
                 int byteOffset = startPos + f * bytesPerFrame;
@@ -116,12 +156,20 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
                 }
                 frameMono /= channels;
                 sumSq += frameMono * frameMono;
+
+                bassLp += alphaBass * (frameMono - bassLp);
+                sumBassSq += bassLp * bassLp;
+
+                midLowLp += alphaMidLow * (frameMono - midLowLp);
+                midHighLp += alphaMidHigh * (frameMono - midHighLp);
+                double vocalSample = midHighLp - midLowLp;
+                sumVocalSq += vocalSample * vocalSample;
+
                 counted++;
             }
             if (counted > 0) {
                 float blockRms = (float) Math.sqrt(sumSq / counted);
-                float nextLive = liveRms * 0.65f + blockRms * 0.35f;
-                liveRms = nextLive;
+                liveRms = liveRms * 0.65f + blockRms * 0.35f;
                 if (blockRms > 0.03f) {
                     if (bodyRms <= 0.001f) {
                         bodyRms = blockRms;
@@ -129,6 +177,30 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
                         bodyRms = bodyRms * 0.96f + blockRms * 0.04f;
                     } else {
                         bodyRms = bodyRms * 0.996f + blockRms * 0.004f;
+                    }
+                }
+
+                float blockBass = (float) Math.sqrt(sumBassSq / counted);
+                bassRms = bassRms * 0.65f + blockBass * 0.35f;
+                if (blockBass > 0.02f) {
+                    if (bodyBassRms <= 0.001f) {
+                        bodyBassRms = blockBass;
+                    } else if (blockBass > bodyBassRms) {
+                        bodyBassRms = bodyBassRms * 0.96f + blockBass * 0.04f;
+                    } else {
+                        bodyBassRms = bodyBassRms * 0.996f + blockBass * 0.004f;
+                    }
+                }
+
+                float blockVocal = (float) Math.sqrt(sumVocalSq / counted);
+                vocalMidRms = vocalMidRms * 0.65f + blockVocal * 0.35f;
+                if (blockVocal > 0.02f) {
+                    if (bodyVocalRms <= 0.001f) {
+                        bodyVocalRms = blockVocal;
+                    } else if (blockVocal > bodyVocalRms) {
+                        bodyVocalRms = bodyVocalRms * 0.96f + blockVocal * 0.04f;
+                    } else {
+                        bodyVocalRms = bodyVocalRms * 0.996f + blockVocal * 0.004f;
                     }
                 }
             }
@@ -196,6 +268,10 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         hpWet = 0.0f;
         liveRms = 0.0f;
         bodyRms = 0.0f;
+        bassRms = 0.0f;
+        bodyBassRms = 0.0f;
+        vocalMidRms = 0.0f;
+        bodyVocalRms = 0.0f;
         lastCoeffHz = -1.0;
     }
 }

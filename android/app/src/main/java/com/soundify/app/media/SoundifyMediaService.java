@@ -81,8 +81,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.30";
-    private static final String APP_VERSION_HEADER = "1.0.30";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.31";
+    private static final String APP_VERSION_HEADER = "1.0.31";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -125,6 +125,18 @@ public class SoundifyMediaService extends Service {
     private volatile boolean isCrossfading = false;
     private volatile boolean isSwitchingNativeTrack = false;
     private int quietOutroTicks = 0;
+    private int silenceOutroTicks = 0;
+    private int instrumentalOutroTicks = 0;
+    private int vocalDipTicks = 0;
+    private volatile boolean nextDeckIntroScanning = false;
+    private volatile boolean nextDeckIntroScanDone = false;
+    private volatile boolean nextDeckIntroScanStartedPlayback = false;
+    private long nextDeckIntroScanPrepWallMs = 0L;
+    private long nextDeckIntroScanStartWallMs = 0L;
+    private long nextDeckFirstAudibleMs = -1L;
+    private long nextDeckFirstMusicBodyMs = -1L;
+    private int nextDeckAudibleTicks = 0;
+    private float nextDeckTargetPlaybackRate = 1.0f;
     private String nextDeckTrackId = "";
     private String nextDeckStreamUrl = "";
     private String nextDeckTitle = "Soundify";
@@ -162,6 +174,146 @@ public class SoundifyMediaService extends Service {
     private double crossfadeNextDurationSec = 0.0;
     private String crossfadeNextTrackId = "";
 
+    private void resetOutroCounters() {
+        quietOutroTicks = 0;
+        silenceOutroTicks = 0;
+        instrumentalOutroTicks = 0;
+        vocalDipTicks = 0;
+    }
+
+    private long computeSmartScannedCueMs() {
+        long cueMs = nextDeckStartMs;
+        if (nextDeckFirstMusicBodyMs > 1200L) {
+            long leadAnchor = nextDeckFirstAudibleMs >= 0L
+                ? Math.max(nextDeckFirstAudibleMs, nextDeckFirstMusicBodyMs - 2200L)
+                : Math.max(0L, nextDeckFirstMusicBodyMs - 900L);
+            cueMs = Math.max(0L, Math.min(nextDeckFirstMusicBodyMs - 550L, leadAnchor));
+        } else if (nextDeckFirstAudibleMs > 450L) {
+            cueMs = Math.max(0L, nextDeckFirstAudibleMs - 250L);
+        }
+        if (nextDeckDurationSec > 0.0) {
+            long maxSafeCueMs = Math.max(0L, (long) (nextDeckDurationSec * 400.0));
+            cueMs = Math.min(cueMs, maxSafeCueMs);
+        }
+        return Math.max(0L, Math.min(14000L, cueMs));
+    }
+
+    private void finishNextDeckIntroScanOnMainThread(long cueMs) {
+        mainHandler.removeCallbacks(nextDeckIntroScanTicker);
+        nextDeckIntroScanning = false;
+        nextDeckIntroScanDone = true;
+        nextDeckIntroScanStartedPlayback = false;
+        if (nextDeckPlayer != null) {
+            try {
+                nextDeckPlayer.setPlayWhenReady(false);
+                nextDeckPlayer.pause();
+                nextDeckPlayer.setVolume(0.0f);
+                nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(nextDeckTargetPlaybackRate > 0 ? nextDeckTargetPlaybackRate : 1.0f));
+                if (nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE && nextDeckPlayer.isCurrentMediaItemSeekable()) {
+                    nextDeckPlayer.seekTo(Math.max(0L, cueMs));
+                }
+            } catch (Exception ignored) {}
+        }
+        nextDeckStartMs = Math.max(0L, cueMs);
+        if (nextDeckDsp != null) {
+            nextDeckDsp.resetTrackStats();
+        }
+    }
+
+    private void abortNextDeckIntroScanOnMainThread() {
+        mainHandler.removeCallbacks(nextDeckIntroScanTicker);
+        if (!nextDeckIntroScanning && !nextDeckIntroScanStartedPlayback) {
+            return;
+        }
+        long resolvedCue = nextDeckStartMs;
+        if (nextDeckFirstAudibleMs >= 0L || nextDeckFirstMusicBodyMs >= 0L) {
+            resolvedCue = computeSmartScannedCueMs();
+        }
+        finishNextDeckIntroScanOnMainThread(resolvedCue);
+    }
+
+    private final Runnable nextDeckIntroScanTicker = new Runnable() {
+        @Override
+        public void run() {
+            if (!nextDeckIntroScanning || isCrossfading || pendingCrossfade || !nativeAudioActive) {
+                nextDeckIntroScanning = false;
+                mainHandler.removeCallbacks(this);
+                return;
+            }
+            if (nextDeckPlayer == null || nextDeckTrackId.isEmpty() || nextDeckDsp == null) {
+                nextDeckIntroScanning = false;
+                return;
+            }
+            PlaybackException err = nextDeckPlayer.getPlayerError();
+            int st = nextDeckPlayer.getPlaybackState();
+            if (err != null) {
+                nextDeckIntroScanning = false;
+                return;
+            }
+            long now = SystemClock.elapsedRealtime();
+
+            if (!nextDeckIntroScanStartedPlayback) {
+                if (st == Player.STATE_READY) {
+                    if (!nextDeckPlayer.isCurrentMediaItemSeekable()) {
+                        nextDeckIntroScanning = false;
+                        nextDeckIntroScanDone = true;
+                        try {
+                            nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(nextDeckTargetPlaybackRate > 0 ? nextDeckTargetPlaybackRate : 1.0f));
+                        } catch (Exception ignored) {}
+                        return;
+                    }
+                    nextDeckIntroScanStartedPlayback = true;
+                    nextDeckIntroScanStartWallMs = now;
+                    nextDeckAudibleTicks = 0;
+                    nextDeckFirstAudibleMs = -1L;
+                    nextDeckFirstMusicBodyMs = -1L;
+                    try {
+                        nextDeckPlayer.setAudioAttributes(buildMediaAudioAttributes(), false);
+                        nextDeckPlayer.setVolume(0.0f);
+                        nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(4.0f));
+                        nextDeckPlayer.setPlayWhenReady(true);
+                        nextDeckPlayer.play();
+                    } catch (Exception ignored) {
+                        finishNextDeckIntroScanOnMainThread(nextDeckStartMs);
+                        return;
+                    }
+                    mainHandler.postDelayed(this, 40L);
+                    return;
+                }
+                if (now - nextDeckIntroScanPrepWallMs >= 10_000L) {
+                    nextDeckIntroScanning = false;
+                    return;
+                }
+                mainHandler.postDelayed(this, 60L);
+                return;
+            }
+
+            long posMs = Math.max(0L, nextDeckPlayer.getCurrentPosition());
+            float live = nextDeckDsp.getLiveRms();
+            float bass = nextDeckDsp.getBassRms();
+
+            if (live >= 0.028f || bass >= 0.016f) {
+                nextDeckAudibleTicks++;
+                if (nextDeckAudibleTicks >= 2 && nextDeckFirstAudibleMs < 0L) {
+                    nextDeckFirstAudibleMs = Math.max(0L, posMs - 160L);
+                }
+            } else {
+                nextDeckAudibleTicks = 0;
+            }
+
+            if (live >= 0.068f || bass >= 0.042f) {
+                nextDeckFirstMusicBodyMs = posMs;
+            }
+
+            boolean timedOut = (now - nextDeckIntroScanStartWallMs) >= 3200L;
+            if (nextDeckFirstMusicBodyMs >= 0L || posMs >= 14000L || timedOut || st == Player.STATE_ENDED) {
+                finishNextDeckIntroScanOnMainThread(computeSmartScannedCueMs());
+                return;
+            }
+            mainHandler.postDelayed(this, 40L);
+        }
+    };
+
     private final Runnable nativeProgressTicker = new Runnable() {
         @Override
         public void run() {
@@ -175,7 +327,7 @@ public class SoundifyMediaService extends Service {
                 applyPlaybackState();
                 emitNativeState("state", null);
 
-                // Real-time live PCM acoustic outro trigger (detects actual musical outro drop on ANY stream)
+                // Real-time multi-band PCM acoustic outro detector (dead silence, quiet fade, drums+vocal drop, end phrase)
                 if (
                     !isCrossfading &&
                     !pendingCrossfade &&
@@ -183,38 +335,80 @@ public class SoundifyMediaService extends Service {
                     nativeDeckDsp != null &&
                     nextDeckPlayer != null &&
                     !nextDeckTrackId.isEmpty() &&
+                    !nextDeckIntroScanning &&
                     nextDeckPlayer.getPlaybackState() == Player.STATE_READY &&
                     currentDurationSec >= 24.0
                 ) {
                     double remSec = currentDurationSec - currentPositionSec;
-                    if (remSec <= 14.0 && remSec >= 7.2) {
-                        float body = nativeDeckDsp.getBodyRms();
-                        float live = nativeDeckDsp.getLiveRms();
-                        if (body > 0.06f && live < body * 0.40f) {
-                            quietOutroTicks++;
-                            if (quietOutroTicks >= 2) {
-                                quietOutroTicks = 0;
-                                executeReadyNativeCrossfade(
-                                    7500L,
-                                    currentNativeVolume,
-                                    nextDeckTitle,
-                                    nextDeckArtist,
-                                    nextDeckAlbum,
-                                    nextDeckCoverUrl,
-                                    nextDeckDurationSec,
-                                    nextDeckTrackId,
-                                    false
-                                );
-                                return;
-                            }
-                        } else {
-                            quietOutroTicks = 0;
-                        }
+                    float body = nativeDeckDsp.getBodyRms();
+                    float live = nativeDeckDsp.getLiveRms();
+                    float bodyBass = nativeDeckDsp.getBodyBassRms();
+                    float bass = nativeDeckDsp.getBassRms();
+                    float bodyVocal = nativeDeckDsp.getBodyVocalRms();
+                    float vocal = nativeDeckDsp.getVocalMidRms();
+
+                    // 1. Dead silence trim at end (skips empty YouTube outro screens immediately)
+                    if (remSec <= 26.0 && remSec >= 1.5 && live < 0.012f) {
+                        silenceOutroTicks++;
+                    } else {
+                        silenceOutroTicks = 0;
+                    }
+
+                    // 2. Sustained quiet fade-out (ignores < 1s vocal breaths)
+                    if (remSec <= 22.0 && remSec >= 5.5 && body > 0.055f && live < body * 0.36f) {
+                        quietOutroTicks++;
                     } else {
                         quietOutroTicks = 0;
                     }
+
+                    // 3. Drums & vocals dropped out -> clean instrumental tail for DJ bass-swap
+                    if (
+                        remSec <= 17.0 &&
+                        remSec >= 6.0 &&
+                        bodyBass > 0.025f &&
+                        bass < bodyBass * 0.30f &&
+                        (bodyVocal <= 0.02f || vocal < bodyVocal * 0.48f)
+                    ) {
+                        instrumentalOutroTicks++;
+                    } else {
+                        instrumentalOutroTicks = 0;
+                    }
+
+                    // 4. Vocal-safe tail phrase when loud beats continue right near the end
+                    if (remSec <= 9.5 && remSec >= 5.0 && bodyVocal > 0.025f && vocal < bodyVocal * 0.40f) {
+                        vocalDipTicks++;
+                    } else {
+                        vocalDipTicks = 0;
+                    }
+
+                    long triggerCrossfadeMs = -1L;
+                    if (silenceOutroTicks >= 3) {
+                        triggerCrossfadeMs = 3200L;
+                    } else if (quietOutroTicks >= 5) {
+                        triggerCrossfadeMs = 6800L;
+                    } else if (instrumentalOutroTicks >= 6) {
+                        triggerCrossfadeMs = 7500L;
+                    } else if (vocalDipTicks >= 3) {
+                        triggerCrossfadeMs = Math.max(4500L, Math.min(7200L, (long) ((remSec - 0.5) * 1000.0)));
+                    }
+
+                    if (triggerCrossfadeMs > 0L) {
+                        resetOutroCounters();
+                        executeReadyNativeCrossfade(
+                            triggerCrossfadeMs,
+                            currentNativeVolume,
+                            nextDeckTitle,
+                            nextDeckArtist,
+                            nextDeckAlbum,
+                            nextDeckCoverUrl,
+                            nextDeckDurationSec,
+                            nextDeckTrackId,
+                            false
+                        );
+                        return;
+                    }
                 } else {
-                    quietOutroTicks = 0;
+                    resetOutroCounters();
                 }
 
                 mainHandler.postDelayed(this, 250L);
@@ -552,6 +746,8 @@ public class SoundifyMediaService extends Service {
         mainHandler.removeCallbacks(crossfadeTicker);
         mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
         mainHandler.removeCallbacks(nativeFadeOutTicker);
+        mainHandler.removeCallbacks(nextDeckIntroScanTicker);
+        nextDeckIntroScanning = false;
         pendingCrossfade = false;
         isCrossfading = false;
         nativeAudioActive = false;
@@ -1400,11 +1596,12 @@ public class SoundifyMediaService extends Service {
             mainHandler.removeCallbacks(nativeProgressTicker);
             mainHandler.removeCallbacks(crossfadeTicker);
             mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
+            abortNextDeckIntroScanOnMainThread();
             pendingCrossfade = false;
             isCrossfading = false;
             crossfadeIncomingReady = false;
             crossfadeFadeInOnly = false;
-            quietOutroTicks = 0;
+            resetOutroCounters();
             nextDeckTrackId = "";
             if (nextDeckDsp != null) {
                 nextDeckDsp.setHighPassHz(0.0f);
@@ -1443,11 +1640,12 @@ public class SoundifyMediaService extends Service {
     private void cancelCrossfadeOnMainThread() {
         mainHandler.removeCallbacks(crossfadeTicker);
         mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
+        abortNextDeckIntroScanOnMainThread();
         pendingCrossfade = false;
         isCrossfading = false;
         crossfadeIncomingReady = false;
         crossfadeFadeInOnly = false;
-        quietOutroTicks = 0;
+        resetOutroCounters();
         nextDeckTrackId = "";
         if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(0.0f);
         if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(0.0f);
@@ -1591,7 +1789,7 @@ public class SoundifyMediaService extends Service {
             ensureNativePlayerOnMainThread(authToken);
             currentNativeVolume = Math.max(0.0f, Math.min(1.0f, volume));
             cancelCrossfadeOnMainThread();
-            quietOutroTicks = 0;
+            resetOutroCounters();
             if (nativeDeckDsp != null) {
                 nativeDeckDsp.resetTrackStats();
             }
@@ -1656,6 +1854,14 @@ public class SoundifyMediaService extends Service {
         if (url == null || url.trim().isEmpty()) return;
         mainHandler.post(() -> {
             ensureNativePlayerOnMainThread(authToken);
+            mainHandler.removeCallbacks(nextDeckIntroScanTicker);
+            nextDeckIntroScanning = false;
+            nextDeckIntroScanDone = false;
+            nextDeckIntroScanStartedPlayback = false;
+            nextDeckFirstAudibleMs = -1L;
+            nextDeckFirstMusicBodyMs = -1L;
+            nextDeckAudibleTicks = 0;
+            nextDeckTargetPlaybackRate = playbackRate > 0 ? playbackRate : 1.0f;
             if (nextDeckPlayer == null) {
                 nextDeckDsp = new AutoMixDspProcessor();
                 nextDeckPlayer = buildDspExoPlayer(nextDeckDsp);
@@ -1678,10 +1884,16 @@ public class SoundifyMediaService extends Service {
             nextDeckPlayer.stop();
             nextDeckPlayer.clearMediaItems();
             nextDeckPlayer.setVolume(0.0f);
-            nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
+            nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(nextDeckTargetPlaybackRate));
             nextDeckPlayer.setMediaItem(MediaItem.fromUri(url.trim()));
             nextDeckPlayer.seekTo(nextDeckStartMs);
             nextDeckPlayer.prepare();
+
+            if (nextDeckStartMs <= 1500L && !isCrossfading) {
+                nextDeckIntroScanning = true;
+                nextDeckIntroScanPrepWallMs = SystemClock.elapsedRealtime();
+                mainHandler.postDelayed(nextDeckIntroScanTicker, 60L);
+            }
         });
     }
 
@@ -1701,6 +1913,7 @@ public class SoundifyMediaService extends Service {
             emitNativeState("crossfadeFailed", null);
             return;
         }
+        abortNextDeckIntroScanOnMainThread();
         crossfadeTitle = (title != null && !title.isEmpty()) ? title : "Soundify";
         crossfadeArtist = artist != null ? artist : "";
         crossfadeAlbum = album != null ? album : "";
@@ -1730,7 +1943,7 @@ public class SoundifyMediaService extends Service {
 
         // Promote incoming deck upfront so Player UI, lockscreen metadata & live progress switch immediately,
         // while outgoingDeck keeps Android AudioFocus undisturbed until the crossfade completes.
-        quietOutroTicks = 0;
+        resetOutroCounters();
         ExoPlayer outgoingDeck = nativePlayer;
         ExoPlayer incomingDeck = nextDeckPlayer;
         AutoMixDspProcessor outgoingDsp = nativeDeckDsp;
@@ -1823,6 +2036,7 @@ public class SoundifyMediaService extends Service {
         final String trackId
     ) {
         mainHandler.post(() -> {
+            abortNextDeckIntroScanOnMainThread();
             String safeTrackId = trackId != null ? trackId : "";
             PlaybackException nextErr = nextDeckPlayer != null ? nextDeckPlayer.getPlayerError() : null;
             if (
@@ -1968,7 +2182,7 @@ public class SoundifyMediaService extends Service {
             if (isCrossfading || pendingCrossfade) {
                 cancelCrossfadeOnMainThread();
             }
-            quietOutroTicks = 0;
+            resetOutroCounters();
             double safePos = Math.max(0.0, positionSec);
             if (nativeAudioActive && nativePlayer != null) {
                 long targetMs = (long) (safePos * 1000.0);

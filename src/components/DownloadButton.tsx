@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useState } from "react";
+import React, { memo, useRef, useState } from "react";
 import {
   ArrowClockwiseIcon,
   CheckIcon,
@@ -57,6 +57,7 @@ export const DownloadButton = memo(function DownloadButton({
   const [hovered, setHovered] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showActionSheet, setShowActionSheet] = useState(false);
+  const downloadLockRef = useRef(false);
 
   if (!track || !track.id) {
     return null;
@@ -67,7 +68,7 @@ export const DownloadButton = memo(function DownloadButton({
     e.preventDefault();
 
     void triggerHapticFeedback("tap");
-    if (busy) return;
+    if (busy || downloadLockRef.current) return;
 
     if (isDownloading) {
       pause();
@@ -80,40 +81,46 @@ export const DownloadButton = memo(function DownloadButton({
     }
 
     if (isPaused) {
+      downloadLockRef.current = true;
       setBusy(true);
       try {
         const ok = await resume();
         if (ok) onDownloaded?.();
       } finally {
         setBusy(false);
+        downloadLockRef.current = false;
       }
       return;
     }
 
     if (isFailed) {
+      downloadLockRef.current = true;
       setBusy(true);
       try {
         const ok = await retry();
         if (ok) onDownloaded?.();
       } finally {
         setBusy(false);
+        downloadLockRef.current = false;
       }
       return;
     }
 
     if (isDownloaded) {
-      // Apple HIG: Do NOT delete or re-download immediately; open action sheet with options
+      // Apple HIG: Do NOT delete or re-download; lock download & open read-only offline options sheet
       setShowActionSheet(true);
       return;
     }
 
     // Start download
+    downloadLockRef.current = true;
     setBusy(true);
     try {
       const ok = await download();
       if (ok) onDownloaded?.();
     } finally {
       setBusy(false);
+      downloadLockRef.current = false;
     }
   };
 

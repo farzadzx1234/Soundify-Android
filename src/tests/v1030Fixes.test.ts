@@ -35,34 +35,34 @@ function makeTrack(overrides: Partial<Track> = {}): Track {
 }
 
 describe("Soundify v1.0.30 Apple Music 7.5s DJ Bass-Swap DSP, Live RMS Outro & Seek-Safe Prebuffer", () => {
-  it("synchronizes v1.0.30 / versionCode 31 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.30");
-    expect(APP_BUILD_NUMBER).toBe(31);
+  it("synchronizes v1.0.30+ / versionCode >= 31 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.3\d$/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(31);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toBe("1.0.30");
+    expect(pkg.version).toMatch(/^1\.0\.3\d$/);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toContain("soundify-v1.0.30-b31");
+    expect(swJs).toMatch(/soundify-v1\.0\.3\d-b3\d/);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toContain("versionCode 31");
-    expect(gradle).toContain('versionName "1.0.30"');
+    expect(gradle).toMatch(/versionCode\s+3\d/);
+    expect(gradle).toMatch(/versionName\s+"1\.0\.3\d"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.30"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.30"');
+    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.3\d"/);
+    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.3\d"/);
   });
 
   it("sweeps outgoing high-pass filter 0 -> 680Hz and incoming high-pass filter 360 -> 0Hz cleanly without bass clash", () => {

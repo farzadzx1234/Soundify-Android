@@ -9,7 +9,15 @@ import {
   MIN_SERVER_SUPPORTED_VERSION,
   triggerAppUpdateRequired,
 } from "./appVersion";
-import { api, extractYouTubeIdClient, getApiToken, isExternalTrack, resolveMediaUrl } from "./api";
+import {
+  api,
+  extractCanonicalExternalUrl,
+  extractYouTubeIdClient,
+  getApiToken,
+  isExternalTrack,
+  resolveMediaUrl,
+} from "./api";
+import { extractCleanTitleAndArtist, normalizePersianChars } from "./lyricsCleaner";
 import {
   clearAllDownloadedTracks,
   clearOfflineCache,
@@ -76,6 +84,9 @@ const activeDownloads = new Map<string, ActiveDownloadSession>();
 const downloadQueue: Track[] = [];
 const pausedTrackIds = new Set<string>();
 const downloadedTrackIds = new Set<string>();
+const downloadedByPageUrl = new Map<string, string>();
+const downloadedByFingerprint = new Map<string, string>();
+const downloadedMetaById = new Map<string, { pageUrlKey?: string; fingerprint?: string }>();
 const errorStates = new Map<string, string>();
 const pendingDeferreds = new Map<string, DeferredDownload>();
 const listeners = new Set<() => void>();
@@ -84,6 +95,120 @@ const snapshotCache = new Map<string, TrackDownloadState>();
 const EMPTY_SNAPSHOT: TrackDownloadState = Object.freeze({ trackId: "", status: "idle", progress: 0 });
 let initialized = false;
 let initPromise: Promise<void> | null = null;
+
+function normalizeCanonicalDownloadPageUrl(rawUrl?: string): string {
+  if (!rawUrl || typeof rawUrl !== "string") return "";
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  const ytId = extractYouTubeIdClient(trimmed);
+  if (ytId) return `youtube:${ytId.toLowerCase()}`;
+  const canonical = extractCanonicalExternalUrl(trimmed);
+  return canonical ? canonical.replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase() : "";
+}
+
+export function computeTrackDownloadFingerprint(
+  track: Pick<Track, "title" | "artistName"> | null | undefined,
+): string {
+  if (!track) return "";
+  const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(
+    track.title || "",
+    track.artistName || "",
+  );
+  const fold = (s: string) =>
+    normalizePersianChars(s)
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  const normA = fold(cleanA || track.artistName || "");
+  const normT = fold(cleanT || track.title || "");
+  if (normA.length < 2 || normT.length < 2) return "";
+  return `${normA}::${normT}`;
+}
+
+function registerDownloadedTrackIndex(
+  track: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null | undefined,
+): void {
+  if (!track?.id) return;
+  const trackId = track.id;
+  downloadedTrackIds.add(trackId);
+  const pageUrlKey = normalizeCanonicalDownloadPageUrl(track.pageUrl);
+  const fingerprint = computeTrackDownloadFingerprint(track);
+  downloadedMetaById.set(trackId, {
+    pageUrlKey: pageUrlKey || undefined,
+    fingerprint: fingerprint || undefined,
+  });
+  if (pageUrlKey) {
+    downloadedByPageUrl.set(pageUrlKey, trackId);
+  }
+  if (fingerprint) {
+    downloadedByFingerprint.set(fingerprint, trackId);
+  }
+}
+
+function unregisterDownloadedTrackIndex(trackId: string): void {
+  if (!trackId) return;
+  downloadedTrackIds.delete(trackId);
+  const meta = downloadedMetaById.get(trackId);
+  if (meta) {
+    if (meta.pageUrlKey && downloadedByPageUrl.get(meta.pageUrlKey) === trackId) {
+      downloadedByPageUrl.delete(meta.pageUrlKey);
+    }
+    if (meta.fingerprint && downloadedByFingerprint.get(meta.fingerprint) === trackId) {
+      downloadedByFingerprint.delete(meta.fingerprint);
+    }
+    downloadedMetaById.delete(trackId);
+  }
+}
+
+export function resolveDownloadedTrackId(
+  track: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null | undefined,
+  options: { matchFingerprint?: boolean } = {},
+): string | null {
+  if (!track) return null;
+  if (track.id && downloadedTrackIds.has(track.id)) {
+    return track.id;
+  }
+  const pageUrlKey = normalizeCanonicalDownloadPageUrl(track.pageUrl);
+  if (pageUrlKey) {
+    const matchedByUrl = downloadedByPageUrl.get(pageUrlKey);
+    if (matchedByUrl && downloadedTrackIds.has(matchedByUrl)) {
+      return matchedByUrl;
+    }
+  }
+  if (options.matchFingerprint !== false) {
+    const fingerprint = computeTrackDownloadFingerprint(track);
+    if (fingerprint) {
+      const matchedByFp = downloadedByFingerprint.get(fingerprint);
+      if (matchedByFp && downloadedTrackIds.has(matchedByFp)) {
+        return matchedByFp;
+      }
+    }
+  }
+  return null;
+}
+
+export async function resolveDownloadedTrackIdAsync(
+  track: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null | undefined,
+): Promise<string | null> {
+  if (!track) return null;
+  if (!initialized) {
+    try {
+      await initializeDownloadManager();
+    } catch {}
+  }
+  const cachedMatch = resolveDownloadedTrackId(track);
+  if (cachedMatch) return cachedMatch;
+  if (track.id) {
+    try {
+      if (await isTrackDownloaded(track.id)) {
+        registerDownloadedTrackIndex(track);
+        notifyListeners();
+        return track.id;
+      }
+    } catch {}
+  }
+  return null;
+}
 
 function notifyListeners() {
   for (const listener of listeners) {
@@ -131,6 +256,9 @@ export function resetDownloadManagerState(): void {
   pausedTrackIds.clear();
   activeDownloads.clear();
   downloadedTrackIds.clear();
+  downloadedByPageUrl.clear();
+  downloadedByFingerprint.clear();
+  downloadedMetaById.clear();
   errorStates.clear();
   snapshotCache.clear();
   initialized = false;
@@ -149,9 +277,17 @@ export async function initializeDownloadManager(force = false): Promise<void> {
     try {
       const records = await getAllDownloadedTracks();
       downloadedTrackIds.clear();
+      downloadedByPageUrl.clear();
+      downloadedByFingerprint.clear();
+      downloadedMetaById.clear();
       for (const rec of records) {
         if (rec.trackId) {
-          downloadedTrackIds.add(rec.trackId);
+          registerDownloadedTrackIndex({
+            id: rec.trackId,
+            title: rec.track?.title || "",
+            artistName: rec.track?.artistName || "",
+            pageUrl: rec.track?.pageUrl,
+          });
         }
       }
       initialized = true;
@@ -169,7 +305,7 @@ export async function initializeDownloadManager(force = false): Promise<void> {
 // Listen for storage budget evictions to keep download state strictly synchronized
 registerEvictionListener((evictedTrackIds) => {
   for (const id of evictedTrackIds) {
-    downloadedTrackIds.delete(id);
+    unregisterDownloadedTrackIndex(id);
     activeDownloads.delete(id);
     errorStates.delete(id);
     pausedTrackIds.delete(id);
@@ -251,6 +387,33 @@ export function getTrackDownloadSnapshot(trackId: string): TrackDownloadState {
   };
   snapshotCache.set(trackId, nextSnapshot);
   return nextSnapshot;
+}
+
+export function getTrackDownloadSnapshotForTrack(
+  track: Track | null | undefined,
+): TrackDownloadState {
+  if (!track?.id) {
+    return EMPTY_SNAPSHOT;
+  }
+  const direct = getTrackDownloadSnapshot(track.id);
+  if (direct.status !== "idle") {
+    return direct;
+  }
+  const canonicalId = resolveDownloadedTrackId(track);
+  if (canonicalId && canonicalId !== track.id) {
+    const cached = snapshotCache.get(track.id);
+    if (cached && cached.status === "downloaded" && cached.progress === 100) {
+      return cached;
+    }
+    const nextSnapshot: TrackDownloadState = {
+      trackId: track.id,
+      status: "downloaded",
+      progress: 100,
+    };
+    snapshotCache.set(track.id, nextSnapshot);
+    return nextSnapshot;
+  }
+  return direct;
 }
 
 let activeDownloadsSnapshotCache: ActiveDownloadProgress[] = [];
@@ -344,10 +507,11 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       return false;
     }
 
-    const alreadyStored = await isTrackDownloaded(trackId);
+    const alreadyResolvedId = resolveDownloadedTrackId(track, { matchFingerprint: false });
+    const alreadyStored = Boolean(alreadyResolvedId) || (await isTrackDownloaded(trackId));
     if (alreadyStored) {
       activeDownloads.delete(trackId);
-      downloadedTrackIds.add(trackId);
+      registerDownloadedTrackIndex(track);
       const def = pendingDeferreds.get(trackId);
       if (def) {
         pendingDeferreds.delete(trackId);
@@ -595,6 +759,7 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
 
     // Save record to IndexedDB
     await saveDownloadedTrack(track, audioBlob, lyricsData, coverBlob, license);
+    registerDownloadedTrackIndex(track);
 
     // Automatically export track to device's public storage (MediaStore on Android, download trigger on web)
     // without requiring user prompt or second button tap
@@ -605,7 +770,7 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     }
 
     activeDownloads.delete(trackId);
-    downloadedTrackIds.add(trackId);
+    registerDownloadedTrackIndex(track);
     notifyStoreChangeListeners();
     void triggerHapticFeedback("downloadComplete");
 
@@ -658,8 +823,8 @@ export function startTrackDownload(track: Track): Promise<boolean> {
   if (!track || !track.id) return Promise.resolve(false);
   const trackId = track.id;
 
-  // Already downloaded?
-  if (downloadedTrackIds.has(trackId)) {
+  // Already downloaded (exact ID or canonical pageUrl/artist+title match)?
+  if (resolveDownloadedTrackId(track)) {
     return Promise.resolve(true);
   }
 
@@ -811,7 +976,7 @@ export async function removeTrackDownload(trackId: string): Promise<boolean> {
   pausedTrackIds.delete(trackId);
 
   const success = await removeDownloadedTrack(trackId);
-  downloadedTrackIds.delete(trackId);
+  unregisterDownloadedTrackIndex(trackId);
   notifyStoreChangeListeners();
   return success;
 }
@@ -832,7 +997,7 @@ export async function batchDeleteTracks(trackIds: string[]): Promise<boolean> {
   for (const id of trackIds) {
     const ok = await removeDownloadedTrack(id);
     if (!ok) allSuccess = false;
-    downloadedTrackIds.delete(id);
+    unregisterDownloadedTrackIndex(id);
   }
 
   notifyStoreChangeListeners();
@@ -858,6 +1023,9 @@ export async function clearAllDownloads(): Promise<void> {
   pausedTrackIds.clear();
   activeDownloads.clear();
   downloadedTrackIds.clear();
+  downloadedByPageUrl.clear();
+  downloadedByFingerprint.clear();
+  downloadedMetaById.clear();
   errorStates.clear();
   await clearAllDownloadedTracks();
   notifyStoreChangeListeners();
@@ -872,8 +1040,8 @@ export function useTrackDownload(track: Track | null | undefined) {
   // Subscribe to changes in download manager
   const state = useSyncExternalStore(
     subscribeToDownloads,
-    () => getTrackDownloadSnapshot(trackId),
-    () => getTrackDownloadSnapshot(trackId),
+    () => getTrackDownloadSnapshotForTrack(track),
+    () => getTrackDownloadSnapshotForTrack(track),
   );
 
   const isDownloaded = state.status === "downloaded" || state.status === "completed";

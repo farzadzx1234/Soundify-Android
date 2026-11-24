@@ -53,6 +53,7 @@ import {
   MIN_SERVER_SUPPORTED_VERSION,
   triggerAppUpdateRequired,
 } from "./appVersion";
+import { isMatchingExternalFallback } from "./externalFallbackMatcher";
 import { reportNetworkFailure, reportNetworkSuccess } from "./networkResilience";
 import {
   FALLBACK_ARTISTS,
@@ -438,7 +439,8 @@ export async function resolveSpotifyTrackStream(track: Track): Promise<Track> {
     effectiveTitle.startsWith("ext-spotify-") ||
     effectiveTitle.startsWith("spotify-");
   const isInitiallyGenericArtist =
-    !effectiveArtist || effectiveArtist === "Spotify Artist" || effectiveArtist === "Artist";
+    !effectiveArtist ||
+    /^(?:spotify|spotify\s*artist|artist|youtube|soundcloud)$/i.test(effectiveArtist.trim());
 
   // Try extracting Spotify track URL to query Spotify oEmbed
   let spotifyTrackUrl = "";
@@ -476,9 +478,24 @@ export async function resolveSpotifyTrackStream(track: Track): Promise<Track> {
   if (!query) return track;
 
   try {
-    const searchRes = await api.searchExternal(query, "youtube", 3);
+    const searchRes = await api.searchExternal(query, "youtube", 6);
     if (searchRes.results && searchRes.results.length > 0) {
-      const bestMatch = searchRes.results[0];
+      const hasKnownTitle = Boolean(effectiveTitle) && (!isInitiallyGenericTitle || foundOembedTitle);
+      const bestMatch = hasKnownTitle
+        ? searchRes.results.find((c) =>
+            isMatchingExternalFallback(
+              effectiveTitle,
+              effectiveArtist && !isInitiallyGenericArtist ? effectiveArtist : "",
+              c.title,
+              c.artistName,
+              isInitiallyGenericTitle ? undefined : track.durationSec,
+              c.durationSec,
+            ),
+          )
+        : searchRes.results[0];
+      if (!bestMatch) {
+        return track;
+      }
       const resolved: Track = {
         ...track,
         title: foundOembedTitle || !isInitiallyGenericTitle ? effectiveTitle : bestMatch.title,

@@ -149,7 +149,7 @@ function NowPlayingDockTimeline({
 }
 
 function LiveLyricsPeek({ onOpenLyrics }: { onOpenLyrics: () => void }) {
-  const { lyrics, lyricsLoading } = usePlayer();
+  const { currentTrack, lyrics, lyricsLoading } = usePlayer();
   const { activeLyricIndex } = usePlayerProgress();
   const { t } = useI18n();
 
@@ -204,7 +204,7 @@ function LiveLyricsPeek({ onOpenLyrics }: { onOpenLyrics: () => void }) {
       className="sf-press group w-full max-w-[356px] sm:max-w-md shrink-0 min-h-[38px] px-2 py-0.5 min-[375px]:py-1 rounded-2xl text-center cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 overflow-hidden"
     >
       <div
-        key={centerIdx}
+        key={`${currentTrack?.id || "none"}-${centerIdx}`}
         className="sf-lyric-peek-in space-y-0.5 min-[375px]:space-y-1"
       >
         <p dir="auto" className="truncate text-[11px] min-[375px]:text-[13px] text-white/45 group-hover:text-white/70 transition-opacity duration-300 leading-tight min-h-[0.95rem] min-[375px]:min-h-[1.1rem]">
@@ -1307,6 +1307,7 @@ export function NowPlayingOverlay() {
 
             <main className="relative flex-1 min-h-0 max-w-6xl mx-auto w-full px-3 sm:px-8 z-10 flex flex-col justify-center">
               <LyricsPanel
+                key={currentTrack.id}
                 fullScreen
                 darkSurface
                 borderless
@@ -1670,6 +1671,7 @@ export function NowPlayingOverlay() {
                 {desktopTab === "lyrics" ? (
                   <div className="h-full max-h-[68dvh] min-h-0 flex flex-col">
                     <LyricsPanel
+                      key={currentTrack.id}
                       darkSurface
                       borderless
                       hideToolbar
@@ -1880,7 +1882,7 @@ export function NowPlayingOverlay() {
 
                 <SpectrumVisualizer align="center" className="!h-6 min-[375px]:!h-9 max-w-[348px] sm:max-w-md shrink-0" />
 
-                <LiveLyricsPeek onOpenLyrics={() => setMobileTab("lyrics")} />
+                <LiveLyricsPeek key={currentTrack.id} onOpenLyrics={() => setMobileTab("lyrics")} />
               </div>
             )}
 
@@ -1958,6 +1960,7 @@ export function NowPlayingOverlay() {
 
                 <div className="flex-1 min-h-0 flex flex-col">
                   <LyricsPanel
+                    key={currentTrack.id}
                     darkSurface
                     borderless
                     showFullScreenButton={true}

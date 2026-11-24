@@ -43,7 +43,11 @@ import {
   setCurrentlyPlayingTrackId,
   updateDownloadedLyrics,
 } from "@/lib/offlineAudioStorage";
-import { getTrackDownloadSnapshot, subscribeToDownloads } from "@/lib/downloadManager";
+import {
+  resolveDownloadedTrackId,
+  resolveDownloadedTrackIdAsync,
+  subscribeToDownloads,
+} from "@/lib/downloadManager";
 import { prebufferTrack, recordPlaybackSessionStep } from "@/lib/audioBufferManager";
 import {
   initAndroidMediaSession,
@@ -368,6 +372,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const isRetryingPlayRef = useRef(false);
   const userPausedIntentRef = useRef(false);
   const playRequestIdRef = useRef(0);
+  const lyricsRequestSeqRef = useRef(0);
+  const lyricsTrackIdRef = useRef<string | null>(null);
   const remotePlayStateLockUntilRef = useRef(0);
   const stallProbeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bufferingDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -546,7 +552,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
 
     const liveSrc = audio.getAttribute("src") || audio.src || "";
-    const cachedBlobUrl = getCachedAudioBlobUrl(track.id);
+    const matchedDlId = resolveDownloadedTrackId(track);
+    const cachedBlobUrl = getCachedAudioBlobUrl(matchedDlId || track.id);
 
     if (cachedBlobUrl) {
       if (audio.src !== cachedBlobUrl) {
@@ -555,7 +562,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         isSettingSourceRef.current = false;
       }
     } else {
-      const isDownloadedSync = getTrackDownloadSnapshot(track.id).status === "downloaded";
+      const isDownloadedSync = Boolean(matchedDlId);
       if (!isDownloadedSync) {
         // Set resolved URL synchronously so immediate togglePlay() never calls play() on empty src
         const targetUrl = resolveMediaUrl(track.audioUrl);
@@ -729,21 +736,40 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     });
   }, [broadcastLocalState]);
 
+  const resetLyricsForTrackSwitch = useCallback(() => {
+    lyricsRequestSeqRef.current += 1;
+    lyricsTrackIdRef.current = null;
+    lyricsRef.current = [];
+    setLyrics([]);
+    lyricsSourceRef.current = "none";
+    setLyricsSource("none");
+    setLyricsOffsetMs(0);
+    setLyricsLoading(false);
+  }, []);
+
   const loadLyricsForTrack = useCallback(
     async (
       trackId: string,
       forceFetch = false,
       customQuery?: { queryTitle?: string; queryArtist?: string },
     ): Promise<LyricsRefreshResult> => {
+      const reqSeq = ++lyricsRequestSeqRef.current;
+      const isStaleRequest = () =>
+        reqSeq !== lyricsRequestSeqRef.current || currentTrackRef.current?.id !== trackId;
+      const offlineStorageId =
+        resolveDownloadedTrackId(currentTrackRef.current) || trackId;
+
       setLyricsLoading(true);
       try {
         // 1. Check offline storage first
         if (!forceFetch && !customQuery?.queryTitle && !customQuery?.queryArtist) {
           try {
-            const offlineRecord = await getDownloadedTrack(trackId);
+            const offlineRecord = await getDownloadedTrack(offlineStorageId);
+            if (isStaleRequest()) return { found: false, source: "none" };
             if (offlineRecord?.lyrics?.lines && offlineRecord.lyrics.lines.length > 0) {
               const lns = offlineRecord.lyrics.lines;
               const src = offlineRecord.lyrics.source || "offline";
+              lyricsTrackIdRef.current = trackId;
               setLyrics(lns);
               lyricsRef.current = lns;
               setLyricsSource(src);
@@ -770,14 +796,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             queryArtist: cleanQArtist || rawQArtist,
             durationSec: currentTrackRef.current?.durationSec,
           });
+          if (isStaleRequest()) return { found: false, source: "none" };
           if (res.found && Array.isArray(res.lines) && res.lines.length > 0) {
+            lyricsTrackIdRef.current = trackId;
             setLyrics(res.lines);
             lyricsRef.current = res.lines;
             setLyricsSource(res.source ?? "lrclib");
             lyricsSourceRef.current = res.source ?? "lrclib";
             setLyricsOffsetMs(0);
             broadcastLeaderState();
-            void updateDownloadedLyrics(trackId, {
+            void updateDownloadedLyrics(offlineStorageId, {
               lines: res.lines,
               source: res.source ?? "lrclib",
               lyricsOffsetMs: 0,
@@ -787,6 +815,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           return { found: false, source: "none" };
         }
         const res = await api.getLyrics(trackId);
+        if (isStaleRequest()) return { found: false, source: "none" };
         let lns = res.lines ?? [];
         let src = res.source ?? "none";
 
@@ -802,6 +831,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 queryArtist: cleanQArtist,
                 durationSec: currentTrackRef.current?.durationSec,
               });
+              if (isStaleRequest()) return { found: false, source: "none" };
               if (autoRes.found && Array.isArray(autoRes.lines) && autoRes.lines.length > 0) {
                 lns = autoRes.lines;
                 src = autoRes.source ?? "lrclib";
@@ -810,6 +840,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        if (isStaleRequest()) return { found: false, source: "none" };
+        lyricsTrackIdRef.current = trackId;
         setLyrics(lns);
         lyricsRef.current = lns;
         setLyricsSource(src);
@@ -817,7 +849,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setLyricsOffsetMs(res.lyricsOffsetMs ?? 0);
         broadcastLeaderState();
         if (lns.length > 0) {
-          void updateDownloadedLyrics(trackId, {
+          void updateDownloadedLyrics(offlineStorageId, {
             lines: lns,
             source: src,
             lyricsOffsetMs: res.lyricsOffsetMs ?? 0,
@@ -825,7 +857,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
         return { found: lns.length > 0, source: src };
       } catch {
-        if (!forceFetch && !customQuery?.queryTitle && !customQuery?.queryArtist) {
+        if (!isStaleRequest() && !forceFetch && !customQuery?.queryTitle && !customQuery?.queryArtist) {
           setLyrics([]);
           lyricsRef.current = [];
           setLyricsSource("none");
@@ -835,7 +867,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
         return { found: false, source: "none" };
       } finally {
-        setLyricsLoading(false);
+        if (reqSeq === lyricsRequestSeqRef.current) {
+          setLyricsLoading(false);
+        }
       }
     },
     [broadcastLeaderState],
@@ -931,11 +965,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           else return;
         }
         if (checkIsOffline()) {
-          const nextDl = q.find((t, i) => i > curIdx && getTrackDownloadSnapshot(t.id).status === "downloaded");
+          const nextDl = q.find((t, i) => i > curIdx && Boolean(resolveDownloadedTrackId(t)));
           nextTrack =
             nextDl ||
             (repeatRef.current === "all"
-              ? q.find((t) => t.id !== curr.id && getTrackDownloadSnapshot(t.id).status === "downloaded") || null
+              ? q.find((t) => t.id !== curr.id && Boolean(resolveDownloadedTrackId(t))) || null
               : null);
         } else {
           nextTrack = q[nextIdx] ?? null;
@@ -966,10 +1000,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         void (async () => {
           try {
             let resolvedNext = normalizeTrack(targetNext);
-            let isNextDownloaded = getTrackDownloadSnapshot(resolvedNext.id).status === "downloaded";
-            if (!isNextDownloaded) {
-              isNextDownloaded = await isTrackDownloaded(resolvedNext.id);
-            }
+            const matchedNextDlId = await resolveDownloadedTrackIdAsync(resolvedNext);
+            const isNextDownloaded = Boolean(matchedNextDlId);
+            const offlineNextStorageId = matchedNextDlId || resolvedNext.id;
 
             if (currentTrackRef.current?.id !== curr.id || autoMixStartedRef.current) {
               return;
@@ -1036,10 +1069,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             let nextSrc = "";
             if (isNextDownloaded) {
               const cachedBlob =
-                getCachedAudioBlobUrl(resolvedNext.id) || (await getDownloadedTrackBlobUrl(resolvedNext.id));
+                getCachedAudioBlobUrl(offlineNextStorageId) || (await getDownloadedTrackBlobUrl(offlineNextStorageId));
               if (cachedBlob) nextSrc = cachedBlob;
               const cachedCover =
-                getCachedCoverBlobUrl(resolvedNext.id) || (await getDownloadedCoverBlobUrl(resolvedNext.id));
+                getCachedCoverBlobUrl(offlineNextStorageId) || (await getDownloadedCoverBlobUrl(offlineNextStorageId));
               if (cachedCover) {
                 resolvedNext = { ...resolvedNext, coverUrl: cachedCover };
               }
@@ -1243,10 +1276,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
 
           const promoted = autoMixTargetTrackRef.current || targetNext;
-          lyricsRef.current = [];
-          setLyrics([]);
-          setLyricsSource("none");
-          lyricsSourceRef.current = "none";
+          resetLyricsForTrackSwitch();
           recordedPlayForIdRef.current = null;
           currentTrackRef.current = promoted;
           setCurrentTrack(promoted);
@@ -1374,10 +1404,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           }
 
           const promoted = autoMixTargetTrackRef.current || targetNext;
-          lyricsRef.current = [];
-          setLyrics([]);
-          setLyricsSource("none");
-          lyricsSourceRef.current = "none";
+          resetLyricsForTrackSwitch();
           recordedPlayForIdRef.current = null;
           currentTrackRef.current = promoted;
           setCurrentTrack(promoted);
@@ -1503,7 +1530,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       }
     };
-  }, [broadcastCurrentState, broadcastLeaderState, cancelAutoMix, loadLyricsForTrack, savePlayerState]);
+  }, [broadcastCurrentState, broadcastLeaderState, cancelAutoMix, loadLyricsForTrack, resetLyricsForTrackSwitch, savePlayerState]);
 
   const effectiveCurrentTrack = useMemo(
     () =>
@@ -1774,7 +1801,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
           if (scSettled.status === "fulfilled" && scSettled.value.results && scSettled.value.results.length > 0) {
             for (const r of scSettled.value.results) {
-              if (r.audioUrl && isMatchingExternalFallback(track.title, track.artistName, r.title, r.artistName)) {
+              if (
+                r.audioUrl &&
+                isMatchingExternalFallback(
+                  track.title,
+                  track.artistName,
+                  r.title,
+                  r.artistName,
+                  track.durationSec,
+                  r.durationSec,
+                )
+              ) {
                 candidates.push({
                   source: "soundcloud",
                   audioUrl: r.audioUrl,
@@ -1793,7 +1830,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 r.audioUrl &&
                 (!rId || rId !== currentYtId) &&
                 r.id !== track.id &&
-                isMatchingExternalFallback(track.title, track.artistName, r.title, r.artistName)
+                isMatchingExternalFallback(
+                  track.title,
+                  track.artistName,
+                  r.title,
+                  r.artistName,
+                  track.durationSec,
+                  r.durationSec,
+                )
               ) {
                 candidates.push({
                   source: "youtube",
@@ -1811,7 +1855,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               const ytSearch = await api.searchExternal(fallbackQ, "youtube", 3);
               if (ytSearch.results && ytSearch.results.length > 0) {
                 for (const r of ytSearch.results) {
-                  if (r.audioUrl && isMatchingExternalFallback(track.title, track.artistName, r.title, r.artistName)) {
+                  if (
+                    r.audioUrl &&
+                    isMatchingExternalFallback(
+                      track.title,
+                      track.artistName,
+                      r.title,
+                      r.artistName,
+                      track.durationSec,
+                      r.durationSec,
+                    )
+                  ) {
                     candidates.push({
                       source: "youtube",
                       audioUrl: r.audioUrl,
@@ -1962,12 +2016,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         delete fallbackCandidatesRef.current[normalizedTrack.id];
       }
 
-      let isDownloaded = getTrackDownloadSnapshot(normalizedTrack.id).status === "downloaded";
-      if (!isDownloaded) {
-        isDownloaded = await isTrackDownloaded(normalizedTrack.id);
-      }
+      const matchedDownloadedId = await resolveDownloadedTrackIdAsync(normalizedTrack);
+      const isDownloaded = Boolean(matchedDownloadedId);
+      const offlineStorageId = matchedDownloadedId || normalizedTrack.id;
 
-      setCurrentlyPlayingTrackId(normalizedTrack.id);
+      setCurrentlyPlayingTrackId(offlineStorageId);
       setOfflineNotice(null);
       if (resolvedAutoPlay) {
         setIsBuffering(true);
@@ -2074,14 +2127,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (isDownloaded) {
         try {
           const [blobUrl, coverBlobUrl] = await Promise.all([
-            getDownloadedTrackBlobUrl(track.id),
-            getDownloadedCoverBlobUrl(track.id),
+            getDownloadedTrackBlobUrl(offlineStorageId),
+            getDownloadedCoverBlobUrl(offlineStorageId),
           ]);
           if (blobUrl) {
             audioSource = blobUrl;
           }
           if (coverBlobUrl) {
-            trackToPlay = { ...track, coverUrl: coverBlobUrl };
+            trackToPlay = { ...trackToPlay, coverUrl: coverBlobUrl };
           }
         } catch {}
 
@@ -2192,11 +2245,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Track is changing! Immediately reset lyrics to avoid showing previous song lyrics
-      setLyrics([]);
-      lyricsRef.current = [];
-      setLyricsSource("none");
-      lyricsSourceRef.current = "none";
+      // Track is changing! Immediately reset lyrics & request sequence to avoid showing previous song lyrics
+      resetLyricsForTrackSwitch();
 
       recordedPlayForIdRef.current = null;
       refreshAttemptsRef.current[track.id] = 0;
@@ -2261,7 +2311,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       await attemptPlayWithRetry(audio, trackToPlay, isDownloaded, audioSource, startSec);
       void loadLyricsForTrack(track.id, false);
     },
-    [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, initAudioGraph, loadLyricsForTrack, sendRemoteCommand, setActiveDeviceId, shouldActAsRemoteController, t],
+    [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, initAudioGraph, loadLyricsForTrack, resetLyricsForTrackSwitch, sendRemoteCommand, setActiveDeviceId, shouldActAsRemoteController, t],
   );
 
   const next = useCallback(
@@ -2307,15 +2357,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       let nextIdx = idx + 1;
 
       // When offline, seek next downloaded track in queue to avoid stopping or throwing network errors
+      const activeRepeat = repeatRef.current;
+      const activeShuffle = shuffleRef.current;
       if (checkIsOffline()) {
-        const nextDownloaded = q.find((t, i) => i > idx && getTrackDownloadSnapshot(t.id).status === "downloaded");
+        const nextDownloaded = q.find((t, i) => i > idx && Boolean(resolveDownloadedTrackId(t)));
         if (nextDownloaded) {
           playTrack(nextDownloaded, undefined, 0, true);
           return;
         }
-        if (repeat === "all" || (!fromEnded && q.some((t) => getTrackDownloadSnapshot(t.id).status === "downloaded"))) {
-          const wrapDownloaded = q.find((t) => getTrackDownloadSnapshot(t.id).status === "downloaded");
+        if (activeRepeat === "all" || (!fromEnded && q.some((t) => Boolean(resolveDownloadedTrackId(t))))) {
+          const wrapDownloaded = q.find((t) => Boolean(resolveDownloadedTrackId(t)));
           if (wrapDownloaded && wrapDownloaded.id !== curr.id) {
+            playTrack(wrapDownloaded, undefined, 0, true);
+            return;
+          }
+          if (wrapDownloaded && wrapDownloaded.id === curr.id && activeRepeat === "all") {
             playTrack(wrapDownloaded, undefined, 0, true);
             return;
           }
@@ -2327,12 +2383,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (shuffle && q.length > 1) {
+      if (activeShuffle && q.length > 1) {
         do {
           nextIdx = Math.floor(Math.random() * q.length);
         } while (nextIdx === idx);
       } else if (nextIdx >= q.length) {
-        if (repeat === "all" || !fromEnded) nextIdx = 0;
+        if (activeRepeat === "all" || !fromEnded) nextIdx = 0;
         else {
           setIsPlaying(false);
           isPlayingRef.current = false;
@@ -2341,9 +2397,28 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
       }
       const target = q[nextIdx];
-      if (target) playTrack(target, undefined, 0, true);
+      if (target) {
+        if (target.id === curr.id && (activeRepeat === "all" || !fromEnded)) {
+          if (nativeAudioActiveRef.current) {
+            void nativeAudioSeek(0);
+            void nativeAudioPlay();
+          } else if (audio) {
+            try {
+              audio.currentTime = 0;
+              void audio.play().catch(() => {});
+            } catch {}
+          }
+          currentTimeRef.current = 0;
+          setCurrentTime(0);
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          broadcastLeaderState();
+          return;
+        }
+        playTrack(target, undefined, 0, true);
+      }
     },
-    [broadcastLeaderState, getTabId, playTrack, repeat, sendRemoteCommand, shouldActAsRemoteController, shuffle],
+    [broadcastLeaderState, getTabId, playTrack, sendRemoteCommand, shouldActAsRemoteController],
   );
 
   const prev = useCallback(() => {
@@ -2382,13 +2457,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (checkIsOffline()) {
       const prevDownloaded = [...q].reverse().find((t, i) => {
         const origIdx = q.length - 1 - i;
-        return origIdx < idx && getTrackDownloadSnapshot(t.id).status === "downloaded";
+        return origIdx < idx && Boolean(resolveDownloadedTrackId(t));
       });
       if (prevDownloaded) {
         playTrack(prevDownloaded, undefined, 0, true);
         return;
       }
-      const wrapDownloaded = [...q].reverse().find((t) => getTrackDownloadSnapshot(t.id).status === "downloaded");
+      const wrapDownloaded = [...q].reverse().find((t) => Boolean(resolveDownloadedTrackId(t)));
       if (wrapDownloaded && wrapDownloaded.id !== curr.id) {
         playTrack(wrapDownloaded, undefined, 0, true);
         return;
@@ -2443,10 +2518,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (!curr) return;
 
     // Ensure audio element has source loaded (e.g. after page refresh)
-    let isDownloadedSync = getTrackDownloadSnapshot(curr.id).status === "downloaded";
-    if (!isDownloadedSync) {
-      isDownloadedSync = await isTrackDownloaded(curr.id);
-    }
+    const isDownloadedSync = Boolean(await resolveDownloadedTrackIdAsync(curr));
 
     const shouldStartPlaying =
       (nativeAudioActiveRef.current ? !isPlayingRef.current : audio.paused) &&
@@ -2712,6 +2784,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setRepeat((r) => {
       const nextR = r === "off" ? "all" : r === "all" ? "one" : "off";
       repeatRef.current = nextR;
+      if (isNativeAudioAvailable()) {
+        void nativeAudioSetRepeatMode(nextR);
+      }
       if (!isThisDeviceActive) {
         void sendRemoteCommand("SET_REPEAT", { repeat: nextR });
         return nextR;
@@ -3443,7 +3518,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     async (curr: Track, resumePosSec = 0): Promise<boolean> => {
       const audio = getSingletonAudio();
       if (!audio || !isExternalTrack(curr)) return false;
-      const isDownloaded = getTrackDownloadSnapshot(curr.id).status === "downloaded";
+      const isDownloaded = Boolean(resolveDownloadedTrackId(curr));
       if (isDownloaded || (!nativeAudioActiveRef.current && audio.src.startsWith("blob:"))) return false;
 
       const attempts = refreshAttemptsRef.current[curr.id] || 0;
@@ -3554,7 +3629,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 const rId = extractYouTubeIdClient(r.pageUrl || r.audioUrl || r.id);
                 if (currentYtId && rId && rId === currentYtId) continue;
               }
-              if (!isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)) {
+              if (
+                !isMatchingExternalFallback(
+                  curr.title,
+                  curr.artistName,
+                  r.title,
+                  r.artistName,
+                  curr.durationSec,
+                  r.durationSec,
+                )
+              ) {
                 continue;
               }
               seenUrls.add(r.audioUrl);
@@ -3885,14 +3969,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Proactive offline fallback: If this track is downloaded locally, switch audio.src immediately
-      let isDownloaded = getTrackDownloadSnapshot(curr.id).status === "downloaded";
-      if (!isDownloaded) {
-        isDownloaded = await isTrackDownloaded(curr.id);
-      }
+      const matchedOfflineId = await resolveDownloadedTrackIdAsync(curr);
+      const isDownloaded = Boolean(matchedOfflineId);
 
       if (isDownloaded) {
         try {
-          const blobUrl = await getDownloadedTrackBlobUrl(curr.id);
+          const blobUrl = await getDownloadedTrackBlobUrl(matchedOfflineId || curr.id);
           if (blobUrl && audio.src !== blobUrl) {
             const resumePos = currentTimeRef.current || 0;
             audio.src = blobUrl;
@@ -4020,7 +4102,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
                   if (scRes.status === "fulfilled" && scRes.value.results) {
                     for (const r of scRes.value.results) {
-                      if (r.audioUrl && isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)) {
+                      if (
+                        r.audioUrl &&
+                        isMatchingExternalFallback(
+                          curr.title,
+                          curr.artistName,
+                          r.title,
+                          r.artistName,
+                          curr.durationSec,
+                          r.durationSec,
+                        )
+                      ) {
                         fallbackCandidates.push({
                           source: "soundcloud",
                           audioUrl: r.audioUrl,
@@ -4039,7 +4131,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                         r.audioUrl &&
                         (!rId || rId !== currentYtId) &&
                         r.id !== curr.id &&
-                        isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)
+                        isMatchingExternalFallback(
+                          curr.title,
+                          curr.artistName,
+                          r.title,
+                          r.artistName,
+                          curr.durationSec,
+                          r.durationSec,
+                        )
                       ) {
                         fallbackCandidates.push({
                           source: "youtube",
@@ -4059,7 +4158,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                           if (
                             r.audioUrl &&
                             r.audioUrl !== curr.audioUrl &&
-                            isMatchingExternalFallback(curr.title, curr.artistName, r.title, r.artistName)
+                            isMatchingExternalFallback(
+                              curr.title,
+                              curr.artistName,
+                              r.title,
+                              r.artistName,
+                              curr.durationSec,
+                              r.durationSec,
+                            )
                           ) {
                             fallbackCandidates.push({
                               source: "soundcloud",
@@ -4216,9 +4322,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const isDownloaded = getTrackDownloadSnapshot(curr.id).status === "downloaded";
+      const isDownloaded = Boolean(resolveDownloadedTrackId(curr));
       const targetUrl = resolveMediaUrl(curr.audioUrl);
-      if (targetUrl && !targetUrl.startsWith("blob:")) {
+      if (!isDownloaded && targetUrl && !targetUrl.startsWith("blob:")) {
         const cleanedTarget = targetUrl.replace(/([?&])_rt=\d+/g, "$1").replace(/[?&]$/, "").replace(/\?&/, "?");
         const sep = cleanedTarget.includes("?") ? "&" : "?";
         const freshUrl = `${cleanedTarget}${sep}_rt=${Date.now()}`;
@@ -4455,10 +4561,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setIsCrossfading(true);
         setCrossfadeFromTrack(outgoingTrack && promoted && outgoingTrack.id !== promoted.id ? outgoingTrack : null);
         if (promoted && currentTrackRef.current?.id !== promoted.id) {
-          lyricsRef.current = [];
-          setLyrics([]);
-          setLyricsSource("none");
-          lyricsSourceRef.current = "none";
+          resetLyricsForTrackSwitch();
           recordedPlayForIdRef.current = null;
           currentTrackRef.current = promoted;
           setCurrentTrack(promoted);
@@ -4520,10 +4623,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setCrossfadeFromTrack(null);
 
         if (promoted && currentTrackRef.current?.id !== promoted.id) {
-          lyricsRef.current = [];
-          setLyrics([]);
-          setLyricsSource("none");
-          lyricsSourceRef.current = "none";
+          resetLyricsForTrackSwitch();
           recordedPlayForIdRef.current = null;
           currentTrackRef.current = promoted;
           setCurrentTrack(promoted);
@@ -4672,7 +4772,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
     });
     return unsub;
-  }, [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, lang, loadLyricsForTrack, savePlayerState, triggerExternalFallback]);
+  }, [attemptPlayWithRetry, broadcastCurrentState, broadcastLeaderState, lang, loadLyricsForTrack, resetLyricsForTrackSwitch, savePlayerState, triggerExternalFallback]);
 
   // Synchronize Metadata whenever currentTrack changes
   useEffect(() => {
@@ -4794,7 +4894,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isCurrentTrackOffline: Boolean(
         downloadVersion >= 0 &&
           effectiveCurrentTrack &&
-          (getTrackDownloadSnapshot(effectiveCurrentTrack.id).status === "downloaded" ||
+          (Boolean(resolveDownloadedTrackId(effectiveCurrentTrack)) ||
             getCachedAudioBlobUrl(effectiveCurrentTrack.id) !== null),
       ),
       isBuffering,

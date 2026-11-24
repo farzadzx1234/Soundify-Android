@@ -213,6 +213,11 @@ export function LyricsPanel({
 
   useEffect(() => {
     hasInitialScrolledRef.current = false;
+    programmaticScrollUntilRef.current = 0;
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: 0, behavior: "auto" });
+    }
   }, [currentTrack?.id]);
 
   useEffect(() => {

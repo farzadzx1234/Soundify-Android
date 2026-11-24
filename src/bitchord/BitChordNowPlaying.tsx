@@ -5,20 +5,16 @@ import Link from "next/link";
 import {
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
-  BluetoothConnectedIcon,
   BroadcastIcon,
   CaretDownIcon,
   CaretLeftIcon,
   CaretRightIcon,
   ChatCircleTextIcon,
   CheckIcon,
-  CircleNotchIcon,
   DotsThreeIcon,
   DownloadSimpleIcon,
   FadersIcon,
-  FastForwardIcon,
   GaugeIcon,
-  HeadphonesIcon,
   HeartIcon,
   InfinityIcon,
   InfoIcon,
@@ -28,14 +24,11 @@ import {
   MinusIcon,
   MoonStarsIcon,
   MusicNoteSimpleIcon,
-  PauseIcon,
-  PlayIcon,
   PlusIcon,
   QueueIcon,
   QuotesIcon,
   RepeatIcon,
   RepeatOnceIcon,
-  RewindIcon,
   ShareNetworkIcon,
   ShuffleIcon,
   SpeakerHighIcon,
@@ -61,7 +54,6 @@ import { formatDuration } from "@/lib/lrc";
 import { isTrackDownloaded } from "@/lib/offlineAudioStorage";
 import { setAutoMixEnabled, useAutoMixEnabled } from "@/lib/smartAutoMix";
 import {
-  calculateDampedDrag,
   calculateElasticDrag,
   calculateVelocity,
   createSwipeTouchHandlers,
@@ -69,6 +61,13 @@ import {
 import type { Track } from "@/lib/types";
 import { openNewUiArtistProfile } from "./artistNavigation";
 import { useAudioOutputDevice } from "./audioOutputHook";
+import {
+  BitChordOutputGlyph,
+  BitChordPlayPauseGlyph,
+  BitChordSkipGlyph,
+  BitChordTransportButton,
+} from "./BitChordGlyphs";
+import { BC_MOTION, dampingFromRatio, stepSpring, usePrefersReducedMotion } from "./motion";
 import {
   cancelSleepTimer,
   setSleepTimerFadeOut,
@@ -129,9 +128,13 @@ function useIsDesktopViewport() {
 function BitChordPillScrubber({
   defaultDuration,
   statusLabel,
+  isCrossfading = false,
+  onScrubbingChange,
 }: {
   defaultDuration: number;
   statusLabel?: string | null;
+  isCrossfading?: boolean;
+  onScrubbingChange?: (active: boolean) => void;
 }) {
   const { seek } = usePlayer();
   const { currentTime, duration } = usePlayerProgress();
@@ -140,31 +143,46 @@ function BitChordPillScrubber({
 
   useEffect(() => {
     if (scrubVal === null) return;
-    const endScrub = () => setScrubVal(null);
+    const endScrub = () => {
+      setScrubVal(null);
+      onScrubbingChange?.(false);
+    };
     window.addEventListener("pointerup", endScrub);
     window.addEventListener("pointercancel", endScrub);
     return () => {
       window.removeEventListener("pointerup", endScrub);
       window.removeEventListener("pointercancel", endScrub);
     };
-  }, [scrubVal]);
+  }, [scrubVal, onScrubbingChange]);
 
   const activeTime = Math.min(safeDuration, Math.max(0, scrubVal !== null ? scrubVal : currentTime));
   const remaining = Math.max(0, safeDuration - activeTime);
   const ratio = Math.max(0, Math.min(1, activeTime / safeDuration));
+  const isScrubbing = scrubVal !== null;
 
   return (
     <div dir="ltr" className="w-full space-y-1.5 select-none" data-prevent-sheet-drag="true">
       <div className="relative flex items-center h-6">
         <div
-          className={`relative w-full h-[6px] rounded-full bg-white/22 overflow-hidden transition-transform duration-150 ${
-            scrubVal !== null ? "scale-y-[1.45]" : ""
+          className={`relative w-full rounded-full overflow-hidden transition-all duration-200 ease-out ${
+            isCrossfading && !isScrubbing
+              ? "h-[8px] bg-white/18 shadow-[0_0_16px_rgba(52,211,153,0.28)]"
+              : isScrubbing
+                ? "h-[11px] bg-white/25"
+                : "h-[6px] bg-white/22"
           }`}
         >
-          <div
-            className="h-full w-full bg-white/90 rounded-full origin-left transition-transform duration-75"
-            style={{ transform: `scaleX(${ratio})` }}
-          />
+          {isCrossfading && !isScrubbing ? (
+            <>
+              <div className="bc-automix-bar absolute inset-0 rounded-full" />
+              <div className="bc-automix-sheen absolute inset-0 rounded-full" />
+            </>
+          ) : (
+            <div
+              className="h-full w-full bg-white/92 rounded-full origin-left transition-transform duration-75"
+              style={{ transform: `scaleX(${ratio})` }}
+            />
+          )}
         </div>
         <input
           type="range"
@@ -173,21 +191,34 @@ function BitChordPillScrubber({
           max={safeDuration}
           step={0.25}
           value={activeTime}
-          onPointerDown={() => setScrubVal(currentTime)}
+          onPointerDown={() => {
+            setScrubVal(currentTime);
+            onScrubbingChange?.(true);
+          }}
           onChange={(e) => {
             const next = parseFloat(e.target.value);
             setScrubVal(next);
             seek(next);
           }}
-          onPointerUp={() => setScrubVal(null)}
+          onPointerUp={() => {
+            setScrubVal(null);
+            onScrubbingChange?.(false);
+          }}
           className="bc-scrubber-range absolute inset-0 w-full h-full cursor-pointer"
         />
       </div>
 
-      <div className="flex items-center justify-between text-[11px] font-medium font-mono tabular-nums text-white/65 px-0.5">
+      <div className="relative flex items-center justify-between text-[11px] font-medium font-mono tabular-nums text-white/65 px-0.5">
         <span>{formatDuration(activeTime)}</span>
         {statusLabel && (
-          <span className="font-sans text-[11px] font-semibold tracking-tight text-white/75 truncate max-w-[56%]">
+          <span
+            dir="auto"
+            className={`pointer-events-none absolute inset-x-12 text-center font-sans text-[11px] font-semibold tracking-tight truncate ${
+              isCrossfading
+                ? "bc-automix-label-pulse text-emerald-300"
+                : "text-white/75"
+            }`}
+          >
             {statusLabel}
           </span>
         )}
@@ -455,23 +486,91 @@ export function BitChordNowPlaying() {
     likesCount: number;
   } | null>(null);
   const [copiedShare, setCopiedShare] = useState(false);
+  const reducedMotion = usePrefersReducedMotion();
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
-  const [hasEntered, setHasEntered] = useState(false);
   const [artworkDeltaX, setArtworkDeltaX] = useState(0);
   const [isSwipingArtwork, setIsSwipingArtwork] = useState(false);
+  const [nextTapCount, setNextTapCount] = useState(0);
+  const [prevTapCount, setPrevTapCount] = useState(0);
+  const [trackAnimDir, setTrackAnimDir] = useState<"next" | "prev">("next");
+  const [isScrubbing, setIsScrubbing] = useState(false);
   const [sampledPalette, setSampledPalette] = useState<{ url: string; palette: CoverPalette } | null>(null);
 
   const containerRef = useRef<HTMLDialogElement>(null);
   const isClosingRef = useRef(false);
-  const closeTimerRef = useRef<number | null>(null);
+  const sheetPosRef = useRef(0);
+  const sheetVelRef = useRef(0);
+  const sheetRafRef = useRef<number | null>(null);
+  const lastDragYRef = useRef(0);
   const shareTimerRef = useRef<number | null>(null);
   const touchStartY = useRef(0);
   const touchStartX = useRef(0);
   const touchStartTimeRef = useRef(0);
   const handleDraggedRef = useRef(false);
   const likeBusyRef = useRef(false);
+
+  const stopSheetSpring = useCallback(() => {
+    if (sheetRafRef.current !== null) {
+      cancelAnimationFrame(sheetRafRef.current);
+      sheetRafRef.current = null;
+    }
+  }, []);
+
+  const paintSheetY = useCallback((y: number) => {
+    const dlg = containerRef.current;
+    if (!dlg) return;
+    dlg.style.transform = y === 0 ? "translate3d(0, 0, 0)" : `translate3d(0, ${y.toFixed(2)}px, 0)`;
+  }, []);
+
+  const runSheetSpring = useCallback(
+    (targetY: number, initialVel = 0, onSettled?: () => void) => {
+      stopSheetSpring();
+      if (reducedMotion) {
+        sheetPosRef.current = targetY;
+        sheetVelRef.current = 0;
+        paintSheetY(targetY);
+        onSettled?.();
+        return;
+      }
+      sheetVelRef.current = initialVel;
+      const damping = dampingFromRatio(BC_MOTION.SHEET_STIFFNESS, BC_MOTION.SHEET_DAMPING_RATIO);
+      let last = performance.now();
+
+      const tick = (now: number) => {
+        const dt = (now - last) / 1000;
+        last = now;
+        const [ny, nv] = stepSpring(
+          sheetPosRef.current,
+          sheetVelRef.current,
+          targetY,
+          dt,
+          BC_MOTION.SHEET_STIFFNESS,
+          damping,
+        );
+        const clamped = Math.max(0, ny);
+        sheetPosRef.current = clamped;
+        sheetVelRef.current = nv;
+        paintSheetY(clamped);
+
+        if (
+          Math.abs(clamped - targetY) <= BC_MOTION.SHEET_SETTLED_PX &&
+          Math.abs(nv) <= 12
+        ) {
+          sheetPosRef.current = targetY;
+          sheetVelRef.current = 0;
+          paintSheetY(targetY);
+          sheetRafRef.current = null;
+          onSettled?.();
+          return;
+        }
+        sheetRafRef.current = requestAnimationFrame(tick);
+      };
+      sheetRafRef.current = requestAnimationFrame(tick);
+    },
+    [paintSheetY, reducedMotion, stopSheetSpring],
+  );
 
   useEffect(() => {
     const coverUrl = currentTrack?.coverUrl;
@@ -491,7 +590,6 @@ export function BitChordNowPlaying() {
     setPrevExpandedState(expanded);
     if (expanded) {
       setIsClosing(false);
-      setHasEntered(false);
       setDragY(0);
       setContextMenuOpen(false);
       setContextMenuPage("main");
@@ -525,9 +623,9 @@ export function BitChordNowPlaying() {
   useEffect(() => {
     return () => {
       if (shareTimerRef.current) window.clearTimeout(shareTimerRef.current);
-      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+      stopSheetSpring();
     };
-  }, []);
+  }, [stopSheetSpring]);
 
   const hasCurrentTrack = Boolean(currentTrack);
 
@@ -541,8 +639,21 @@ export function BitChordNowPlaying() {
       } catch {
         dialog.setAttribute("open", "");
       }
+      try {
+        dialog.focus({ preventScroll: true });
+      } catch {}
+    }
+    const travel = typeof window !== "undefined" ? Math.max(window.innerHeight, 640) : 800;
+    if (reducedMotion) {
+      sheetPosRef.current = 0;
+      paintSheetY(0);
+    } else {
+      sheetPosRef.current = travel;
+      paintSheetY(travel);
+      runSheetSpring(0, 0);
     }
     return () => {
+      stopSheetSpring();
       if (dialog.open) {
         try {
           dialog.close();
@@ -551,25 +662,29 @@ export function BitChordNowPlaying() {
         }
       }
     };
-  }, [expanded, hasCurrentTrack]);
+  }, [expanded, hasCurrentTrack, paintSheetY, reducedMotion, runSheetSpring, stopSheetSpring]);
 
-  const dismissWithPhysics = useCallback(() => {
-    if (isClosingRef.current) return;
-    isClosingRef.current = true;
-    void triggerHapticFeedback("dismiss");
-    setContextMenuOpen(false);
-    setIsDragging(false);
-    setIsClosing(true);
-    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null;
-      isClosingRef.current = false;
-      setIsLyricsFullscreen(false);
-      setExpanded(false);
-      setIsClosing(false);
-      setDragY(0);
-    }, 280);
-  }, [setExpanded]);
+  const dismissWithPhysics = useCallback(
+    (initialVelOrEvent?: number | unknown) => {
+      if (isClosingRef.current) return;
+      isClosingRef.current = true;
+      void triggerHapticFeedback("dismiss");
+      setContextMenuOpen(false);
+      setIsDragging(false);
+      setIsClosing(true);
+      const initialVelPxPerSec = typeof initialVelOrEvent === "number" ? initialVelOrEvent : 0;
+      const travel = typeof window !== "undefined" ? Math.max(window.innerHeight, 640) : 800;
+      runSheetSpring(travel, Math.max(0, initialVelPxPerSec), () => {
+        isClosingRef.current = false;
+        setIsLyricsFullscreen(false);
+        setExpanded(false);
+        setIsClosing(false);
+        setDragY(0);
+        lastDragYRef.current = 0;
+      });
+    },
+    [runSheetSpring, setExpanded],
+  );
 
   useEffect(() => {
     if (!expanded || typeof window === "undefined") return;
@@ -597,10 +712,12 @@ export function BitChordNowPlaying() {
     }
     const scrollableAncestor = targetEl?.closest(".overflow-y-auto");
     if (!isTopHandle && scrollableAncestor && scrollableAncestor.scrollTop > 2) return;
+    stopSheetSpring();
     touchStartY.current = e.touches[0].clientY;
     touchStartX.current = e.touches[0].clientX;
     touchStartTimeRef.current = Date.now();
     handleDraggedRef.current = false;
+    lastDragYRef.current = 0;
     setIsDragging(true);
   };
 
@@ -608,33 +725,46 @@ export function BitChordNowPlaying() {
     if (!isDragging) return;
     if (e.touches.length !== 1) {
       setIsDragging(false);
+      lastDragYRef.current = 0;
       setDragY(0);
+      runSheetSpring(0, 0);
       return;
     }
     const deltaY = e.touches[0].clientY - touchStartY.current;
     const deltaX = e.touches[0].clientX - touchStartX.current;
-    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10 && !handleDraggedRef.current) {
       setIsDragging(false);
+      lastDragYRef.current = 0;
       setDragY(0);
+      runSheetSpring(0, 0);
       return;
     }
-    if (deltaY > 4 && Math.abs(deltaY) > Math.abs(deltaX) * 1.05) {
+    if (deltaY > 4 && (handleDraggedRef.current || Math.abs(deltaY) > Math.abs(deltaX) * 1.05)) {
       handleDraggedRef.current = true;
-      setDragY(calculateDampedDrag(deltaY));
+      const followY = Math.max(0, deltaY);
+      lastDragYRef.current = followY;
+      sheetPosRef.current = followY;
+      paintSheetY(followY);
     } else if (deltaY <= 0) {
-      setDragY(0);
+      lastDragYRef.current = 0;
+      sheetPosRef.current = 0;
+      paintSheetY(0);
     }
   };
 
   const handleTouchEnd = () => {
     if (!isDragging) return;
     setIsDragging(false);
+    const currentDrag = lastDragYRef.current;
     const dt = Math.max(1, Date.now() - touchStartTimeRef.current);
-    const vY = calculateVelocity(dragY, dt);
-    if (dragY > 68 || (dragY > 28 && vY > 0.28)) {
-      dismissWithPhysics();
+    const vY = calculateVelocity(currentDrag, dt); // px/ms
+    const thresholdPx = typeof window !== "undefined" ? Math.min(180, window.innerHeight * 0.22) : 140;
+    if (currentDrag > thresholdPx || (currentDrag > 32 && vY > 0.32)) {
+      dismissWithPhysics(vY * 1000);
     } else {
+      lastDragYRef.current = 0;
       setDragY(0);
+      runSheetSpring(0, vY * 1000);
     }
   };
 
@@ -651,8 +781,16 @@ export function BitChordNowPlaying() {
             setArtworkDeltaX(calculateElasticDrag(deltaX, 48));
           }
         },
-        onSwipeNext: () => next(false),
-        onSwipePrev: () => prev(),
+        onSwipeNext: () => {
+          setTrackAnimDir("next");
+          setNextTapCount((c) => c + 1);
+          next(false);
+        },
+        onSwipePrev: () => {
+          setTrackAnimDir("prev");
+          setPrevTapCount((c) => c + 1);
+          prev();
+        },
         onDragEnd: () => {
           setIsSwipingArtwork(false);
           setArtworkDeltaX(0);
@@ -660,6 +798,20 @@ export function BitChordNowPlaying() {
       }),
     [dir, next, prev],
   );
+
+  const triggerNextTrack = useCallback(() => {
+    setTrackAnimDir("next");
+    setNextTapCount((c) => c + 1);
+    void triggerHapticFeedback("trackSkip");
+    next(false);
+  }, [next]);
+
+  const triggerPrevTrack = useCallback(() => {
+    setTrackAnimDir("prev");
+    setPrevTapCount((c) => c + 1);
+    void triggerHapticFeedback("trackSkip");
+    prev();
+  }, [prev]);
 
   if (!expanded || !currentTrack) return null;
 
@@ -740,7 +892,7 @@ export function BitChordNowPlaying() {
   };
 
   const statusBadge = isCrossfading
-    ? pickText("Soundify Mix Active...", "در حال میکس روان...")
+    ? pickText("Mixing...", "در حال میکس...")
     : isBuffering
       ? pickText("Loading stream...", "در حال بارگذاری...")
       : playbackRate !== 1
@@ -796,6 +948,7 @@ export function BitChordNowPlaying() {
   return (
     <dialog
       ref={containerRef}
+      tabIndex={-1}
       aria-modal="true"
       data-theme="dark"
       data-resolved-theme="dark"
@@ -813,29 +966,22 @@ export function BitChordNowPlaying() {
       onTouchEnd={handleTouchEnd}
       onTouchCancel={() => {
         setIsDragging(false);
+        lastDragYRef.current = 0;
         setDragY(0);
+        runSheetSpring(0, 0);
       }}
-      onAnimationEnd={(e) => {
-        if (e.target === containerRef.current && e.animationName === "bc-sheet-in") {
-          setHasEntered(true);
-        }
-      }}
-      className={`dark fixed inset-0 z-50 m-0 h-dvh w-screen max-w-none max-h-none border-0 p-0 bg-[#0d0d10] text-white overflow-hidden flex flex-col ${
-        isClosing
-          ? "bc-sheet-out pointer-events-none"
-          : !hasEntered && !isDragging && dragY === 0
-            ? "bc-sheet-in"
-            : ""
+      className={`dark fixed inset-0 z-50 m-0 h-dvh w-screen max-w-none max-h-none border-0 p-0 bg-[#0d0d10] text-white overflow-hidden flex flex-col will-change-transform outline-none focus:outline-none ${
+        isClosing ? "pointer-events-none" : ""
       }`}
       style={{
         "--bc-drag-y": `${dragY}px`,
-        transform: isClosing ? undefined : dragY > 0 ? `translate3d(0, ${dragY}px, 0)` : undefined,
-        transition:
-          isDragging || isClosing ? "none" : "transform 0.34s cubic-bezier(0.22, 1, 0.36, 1)",
       } as React.CSSProperties}
     >
-      {/* Dynamic BitChord Atmospheric Artwork Backdrop (offline-safe via OptimizedTrackImage) */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden z-0 select-none" aria-hidden="true">
+      {/* Dynamic Atmospheric Artwork Backdrop (offline-safe via OptimizedTrackImage) */}
+      <div
+        className="pointer-events-none absolute inset-0 overflow-hidden z-0 select-none [&>div]:!aspect-auto [&>div]:!bg-transparent"
+        aria-hidden="true"
+      >
         <OptimizedTrackImage
           src={currentTrack.coverUrl}
           trackId={currentTrack.id}
@@ -847,7 +993,7 @@ export function BitChordNowPlaying() {
           className="h-full w-full object-cover scale-125 blur-3xl opacity-62 brightness-[0.78] saturate-[1.65] transition-opacity duration-500"
         />
         <div
-          className="absolute inset-0 transition-opacity duration-500"
+          className="bc-ambient-breathe absolute inset-0 transition-opacity duration-500"
           style={{
             backgroundImage: `radial-gradient(ellipse 92% 82% at 22% 32%, ${coverPalette.ambientLeft}, transparent 72%), radial-gradient(ellipse 88% 78% at 80% 62%, ${coverPalette.ambientRight}, transparent 74%)`,
           }}
@@ -994,21 +1140,37 @@ export function BitChordNowPlaying() {
                       aria-hidden="true"
                     />
                     <div
-                      key={currentTrack.id}
-                      className={`relative h-full w-full rounded-[26px] overflow-hidden shadow-[0_28px_72px_rgba(0,0,0,0.72)] ring-1 ring-white/15 ${
-                        isCrossfading && crossfadeFromTrack ? "sf-automix-artwork-in" : "sf-track-swap"
-                      }`}
+                      style={{
+                        transform: isScrubbing
+                          ? "scale3d(0.94, 0.94, 1)"
+                          : !isPlaying
+                            ? "scale3d(0.88, 0.88, 1)"
+                            : "scale3d(1, 1, 1)",
+                        transition: "transform 0.5s cubic-bezier(0.215, 0.61, 0.355, 1)",
+                      }}
+                      className="relative h-full w-full rounded-[26px] overflow-hidden shadow-[0_28px_72px_rgba(0,0,0,0.72)] ring-1 ring-white/15"
                     >
-                      <OptimizedTrackImage
-                        src={currentTrack.coverUrl}
-                        trackId={currentTrack.id}
-                        trackTitle={currentTrack.title}
-                        artistName={currentTrack.artistName}
-                        pageUrl={currentTrack.pageUrl}
-                        alt={title}
-                        priority
-                        className="h-full w-full object-cover"
-                      />
+                      <div
+                        key={currentTrack.id}
+                        className={`h-full w-full ${
+                          isCrossfading && crossfadeFromTrack
+                            ? "sf-automix-artwork-in"
+                            : trackAnimDir === "prev"
+                              ? "bc-track-prev"
+                              : "bc-track-next"
+                        }`}
+                      >
+                        <OptimizedTrackImage
+                          src={currentTrack.coverUrl}
+                          trackId={currentTrack.id}
+                          trackTitle={currentTrack.title}
+                          artistName={currentTrack.artistName}
+                          pageUrl={currentTrack.pageUrl}
+                          alt={title}
+                          priority
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
                       {isCrossfading && crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id && (
                         <div
                           aria-hidden="true"
@@ -1069,37 +1231,34 @@ export function BitChordNowPlaying() {
                       </div>
                     </div>
 
-                    {(isCrossfading || sleepTimer.mode !== "off") && (
+                    {sleepTimer.mode !== "off" && (
                       <div className="flex flex-wrap items-center gap-2">
-                        {isCrossfading && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/22 border border-emerald-400/35 px-3 py-1 text-[11px] font-bold text-emerald-200 animate-pulse">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                            <span>{lang === "fa" ? "ساندیفای میکس در حال اجرا..." : "Soundify Mix mixing..."}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContextMenuPage("sleep");
+                            setContextMenuOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-white/14 border border-white/15 px-3 py-1 text-[11px] font-semibold text-white/90 cursor-pointer"
+                        >
+                          <MoonStarsIcon size={13} weight="fill" aria-hidden="true" />
+                          <span>
+                            {sleepTimer.mode === "after_song"
+                              ? lang === "fa"
+                                ? "توقف بعد از این آهنگ"
+                                : "After this song"
+                              : formatRemainingTimer(sleepTimer.remainingSec)}
                           </span>
-                        )}
-                        {sleepTimer.mode !== "off" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setContextMenuPage("sleep");
-                              setContextMenuOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1.5 rounded-full bg-white/14 border border-white/15 px-3 py-1 text-[11px] font-semibold text-white/90 cursor-pointer"
-                          >
-                            <MoonStarsIcon size={13} weight="fill" aria-hidden="true" />
-                            <span>
-                              {sleepTimer.mode === "after_song"
-                                ? lang === "fa"
-                                  ? "توقف بعد از این آهنگ"
-                                  : "After this song"
-                                : formatRemainingTimer(sleepTimer.remainingSec)}
-                            </span>
-                          </button>
-                        )}
+                        </button>
                       </div>
                     )}
 
-                    <BitChordPillScrubber defaultDuration={safeDuration} statusLabel={statusBadge} />
+                    <BitChordPillScrubber
+                      defaultDuration={safeDuration}
+                      statusLabel={statusBadge}
+                      isCrossfading={isCrossfading}
+                      onScrubbingChange={setIsScrubbing}
+                    />
 
                     <div className="flex items-center justify-between px-2">
                       <button
@@ -1117,24 +1276,20 @@ export function BitChordNowPlaying() {
                         <ShuffleIcon size={18} aria-hidden="true" />
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void triggerHapticFeedback("trackSkip");
-                          prev();
-                        }}
+                      <BitChordTransportButton
+                        onClick={triggerPrevTrack}
                         aria-label={t("prevTrack")}
-                        className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white hover:bg-white/12 cursor-pointer"
+                        className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white cursor-pointer"
                       >
-                        {dir === "rtl" ? (
-                          <FastForwardIcon size={26} weight="fill" aria-hidden="true" />
-                        ) : (
-                          <RewindIcon size={26} weight="fill" aria-hidden="true" />
-                        )}
-                      </button>
+                        <BitChordSkipGlyph
+                          direction="prev"
+                          isRtl={dir === "rtl"}
+                          tapCount={prevTapCount}
+                          size={26}
+                        />
+                      </BitChordTransportButton>
 
-                      <button
-                        type="button"
+                      <BitChordTransportButton
                         onClick={() => {
                           void triggerHapticFeedback("playPause");
                           togglePlay();
@@ -1142,30 +1297,29 @@ export function BitChordNowPlaying() {
                         aria-label={isPlaying ? t("pause") : t("play")}
                         className="bc-control-btn h-14 w-14 rounded-full bg-white text-slate-950 shadow-[0_8px_28px_rgba(255,255,255,0.28)] flex items-center justify-center cursor-pointer"
                       >
-                        {isBuffering ? (
-                          <CircleNotchIcon size={24} className="animate-spin text-slate-950" aria-hidden="true" />
-                        ) : isPlaying ? (
-                          <PauseIcon size={24} weight="fill" aria-hidden="true" />
-                        ) : (
-                          <PlayIcon size={24} weight="fill" className="ms-0.5 rtl:me-0.5 rtl:ms-0" aria-hidden="true" />
+                        {(pressed) => (
+                          <BitChordPlayPauseGlyph
+                            isPlaying={isPlaying}
+                            isBuffering={isBuffering}
+                            variant="expanded"
+                            pressed={pressed}
+                            size={24}
+                          />
                         )}
-                      </button>
+                      </BitChordTransportButton>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void triggerHapticFeedback("trackSkip");
-                          next(false);
-                        }}
+                      <BitChordTransportButton
+                        onClick={triggerNextTrack}
                         aria-label={t("nextTrack")}
-                        className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white hover:bg-white/12 cursor-pointer"
+                        className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white cursor-pointer"
                       >
-                        {dir === "rtl" ? (
-                          <RewindIcon size={26} weight="fill" aria-hidden="true" />
-                        ) : (
-                          <FastForwardIcon size={26} weight="fill" aria-hidden="true" />
-                        )}
-                      </button>
+                        <BitChordSkipGlyph
+                          direction="next"
+                          isRtl={dir === "rtl"}
+                          tapCount={nextTapCount}
+                          size={26}
+                        />
+                      </BitChordTransportButton>
 
                       <button
                         type="button"
@@ -1259,19 +1413,13 @@ export function BitChordNowPlaying() {
                       dismissWithPhysics();
                     }}
                     aria-label={t("collapse")}
-                    className="pointer-events-auto flex flex-col items-center gap-2 py-2 px-8 cursor-pointer touch-none"
+                    className="pointer-events-auto flex flex-col items-center gap-2 py-2 px-8 rounded-full cursor-pointer touch-none outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
                   >
                     <span className="h-1.5 w-11 rounded-full bg-white/75 shadow-sm" />
                     <span className="text-[11px] font-semibold text-white/95 drop-shadow-[0_1px_8px_rgba(0,0,0,0.85)] truncate max-w-[78vw]">
                       {playingFromLabel}
                     </span>
                   </button>
-                  {isCrossfading && (
-                    <div className="pointer-events-none mt-1 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/28 backdrop-blur-xl border border-emerald-400/45 px-3.5 py-1 text-[11px] font-bold text-emerald-100 shadow-lg animate-pulse">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
-                      <span>{lang === "fa" ? "ساندیفای میکس در حال اجرا..." : "Soundify Mix Active..."}</span>
-                    </div>
-                  )}
                   {isRemotePlaybackActive && (
                     <div className="pointer-events-auto mt-1 inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur-xl border border-white/15 px-3 py-1 text-[11px]">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" aria-hidden="true" />
@@ -1302,25 +1450,43 @@ export function BitChordNowPlaying() {
                   }}
                 >
                   <div
-                    key={currentTrack.id}
-                    className={`bc-hero-art-mask relative h-full w-full ${
-                      isCrossfading && crossfadeFromTrack ? "sf-automix-artwork-in" : "sf-track-swap"
-                    }`}
+                    style={{
+                      transform: isScrubbing
+                        ? "scale3d(0.96, 0.96, 1)"
+                        : !isPlaying
+                          ? "scale3d(0.92, 0.92, 1)"
+                          : "scale3d(1, 1, 1)",
+                      borderRadius: !isPlaying ? "24px" : "0px",
+                      transition:
+                        "transform 0.52s cubic-bezier(0.22, 1.35, 0.36, 1), border-radius 0.42s cubic-bezier(0.22, 1, 0.36, 1)",
+                    }}
+                    className="bc-hero-art-mask relative h-full w-full overflow-hidden [&>div]:!aspect-auto [&>div]:!bg-transparent"
                   >
-                    <OptimizedTrackImage
-                      src={currentTrack.coverUrl}
-                      trackId={currentTrack.id}
-                      trackTitle={currentTrack.title}
-                      artistName={currentTrack.artistName}
-                      pageUrl={currentTrack.pageUrl}
-                      alt={title}
-                      priority
-                      className="h-full w-full object-cover"
-                    />
+                    <div
+                      key={currentTrack.id}
+                      className={`h-full w-full [&>div]:!aspect-auto [&>div]:!bg-transparent ${
+                        isCrossfading && crossfadeFromTrack
+                          ? "sf-automix-artwork-in"
+                          : trackAnimDir === "prev"
+                            ? "bc-track-prev"
+                            : "bc-track-next"
+                      }`}
+                    >
+                      <OptimizedTrackImage
+                        src={currentTrack.coverUrl}
+                        trackId={currentTrack.id}
+                        trackTitle={currentTrack.title}
+                        artistName={currentTrack.artistName}
+                        pageUrl={currentTrack.pageUrl}
+                        alt={title}
+                        priority
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
                     {isCrossfading && crossfadeFromTrack && crossfadeFromTrack.id !== currentTrack.id && (
                       <div
                         aria-hidden="true"
-                        className="sf-automix-dissolve-out pointer-events-none absolute inset-0 z-10 overflow-hidden"
+                        className="sf-automix-dissolve-out pointer-events-none absolute inset-0 z-10 overflow-hidden [&>div]:!aspect-auto [&>div]:!bg-transparent"
                       >
                         <OptimizedTrackImage
                           src={crossfadeFromTrack.coverUrl}
@@ -1393,59 +1559,59 @@ export function BitChordNowPlaying() {
                   <BitChordLyricPreviewBar onOpenLyrics={() => setMobileTab("lyrics")} />
 
                   {/* BitChord Tactile Pill Scrubber */}
-                  <BitChordPillScrubber defaultDuration={safeDuration} statusLabel={statusBadge} />
+                  <BitChordPillScrubber
+                    defaultDuration={safeDuration}
+                    statusLabel={statusBadge}
+                    isCrossfading={isCrossfading}
+                    onScrubbingChange={setIsScrubbing}
+                  />
 
                   {/* Large Tactile Transport Controls */}
                   <div className="flex items-center justify-around px-2 py-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("trackSkip");
-                        prev();
-                      }}
+                    <BitChordTransportButton
+                      onClick={triggerPrevTrack}
                       aria-label={t("prevTrack")}
-                      className="bc-control-btn h-14 w-14 min-h-[48px] min-w-[48px] rounded-full flex items-center justify-center text-white hover:bg-white/10 cursor-pointer"
+                      className="bc-control-btn h-14 w-14 min-h-[48px] min-w-[48px] rounded-full flex items-center justify-center text-white cursor-pointer"
                     >
-                      {dir === "rtl" ? (
-                        <FastForwardIcon size={34} weight="fill" aria-hidden="true" />
-                      ) : (
-                        <RewindIcon size={34} weight="fill" aria-hidden="true" />
-                      )}
-                    </button>
+                      <BitChordSkipGlyph
+                        direction="prev"
+                        isRtl={dir === "rtl"}
+                        tapCount={prevTapCount}
+                        size={34}
+                      />
+                    </BitChordTransportButton>
 
-                    <button
-                      type="button"
+                    <BitChordTransportButton
                       onClick={() => {
                         void triggerHapticFeedback("playPause");
                         togglePlay();
                       }}
                       aria-label={isPlaying ? t("pause") : t("play")}
-                      className="bc-control-btn h-16 w-16 min-h-[56px] min-w-[56px] rounded-full flex items-center justify-center text-white hover:bg-white/10 cursor-pointer"
+                      className="bc-control-btn h-16 w-16 min-h-[56px] min-w-[56px] rounded-full flex items-center justify-center text-white cursor-pointer"
                     >
-                      {isBuffering ? (
-                        <CircleNotchIcon size={34} className="animate-spin text-white" aria-hidden="true" />
-                      ) : isPlaying ? (
-                        <PauseIcon size={38} weight="fill" aria-hidden="true" />
-                      ) : (
-                        <PlayIcon size={38} weight="fill" className="ms-1 rtl:me-1 rtl:ms-0" aria-hidden="true" />
+                      {(pressed) => (
+                        <BitChordPlayPauseGlyph
+                          isPlaying={isPlaying}
+                          isBuffering={isBuffering}
+                          variant="expanded"
+                          pressed={pressed}
+                          size={38}
+                        />
                       )}
-                    </button>
+                    </BitChordTransportButton>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("trackSkip");
-                        next(false);
-                      }}
+                    <BitChordTransportButton
+                      onClick={triggerNextTrack}
                       aria-label={t("nextTrack")}
-                      className="bc-control-btn h-14 w-14 min-h-[48px] min-w-[48px] rounded-full flex items-center justify-center text-white hover:bg-white/10 cursor-pointer"
+                      className="bc-control-btn h-14 w-14 min-h-[48px] min-w-[48px] rounded-full flex items-center justify-center text-white cursor-pointer"
                     >
-                      {dir === "rtl" ? (
-                        <RewindIcon size={34} weight="fill" aria-hidden="true" />
-                      ) : (
-                        <FastForwardIcon size={34} weight="fill" aria-hidden="true" />
-                      )}
-                    </button>
+                      <BitChordSkipGlyph
+                        direction="next"
+                        isRtl={dir === "rtl"}
+                        tapCount={nextTapCount}
+                        size={34}
+                      />
+                    </BitChordTransportButton>
                   </div>
 
                   {/* Volume Row */}
@@ -1457,76 +1623,75 @@ export function BitChordNowPlaying() {
                     onVolumeChange={setVolume}
                   />
 
-                  {/* Bottom Utility Bar (Lyrics | Output Device | Queue) */}
-                  <div className="flex items-center justify-between pt-0.5 px-4">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("selection");
-                        setMobileTab("lyrics");
-                      }}
-                      aria-label={t("showLyrics")}
-                      className="bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-2xl flex items-center justify-center text-white/75 hover:text-white hover:bg-white/10 cursor-pointer"
-                    >
-                      <QuotesIcon size={22} weight="fill" aria-hidden="true" />
-                    </button>
+                  {/* Bottom Utility Bar (Lyrics | Output Device | Queue) + OutputCaption */}
+                  <div className="pt-0.5 space-y-0.5">
+                    <div className="flex items-center justify-between px-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void triggerHapticFeedback("selection");
+                          setMobileTab("lyrics");
+                        }}
+                        aria-label={t("showLyrics")}
+                        className="bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-2xl flex items-center justify-center text-white/75 hover:text-white hover:bg-white/10 cursor-pointer"
+                      >
+                        <QuotesIcon size={22} weight="fill" aria-hidden="true" />
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("selection");
-                        if (outputDevice.permissionNeeded) {
-                          void requestBluetoothNamesIfNeeded();
-                        }
-                        toggleDevicePicker();
-                      }}
-                      aria-label={t("devicesTitle")}
-                      className="bc-control-btn flex flex-col items-center justify-center gap-0.5 min-h-[44px] px-3 rounded-2xl text-white/85 hover:text-white hover:bg-white/10 cursor-pointer"
-                    >
-                      {outputDevice.kind === "bluetooth" && !isRemotePlaybackActive ? (
-                        <BluetoothConnectedIcon
-                          size={21}
-                          weight="fill"
-                          className="text-sky-300"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <HeadphonesIcon
-                          size={21}
-                          weight={isRemotePlaybackActive || outputDevice.kind !== "speaker" ? "fill" : "regular"}
-                          className={
-                            isRemotePlaybackActive
-                              ? "text-emerald-300"
-                              : outputDevice.kind !== "speaker"
-                                ? "text-white"
-                                : "text-white/85"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void triggerHapticFeedback("selection");
+                          if (outputDevice.permissionNeeded) {
+                            void requestBluetoothNamesIfNeeded();
                           }
-                          aria-hidden="true"
+                          toggleDevicePicker();
+                        }}
+                        aria-label={t("devicesTitle")}
+                        className="bc-control-btn h-11 w-12 min-h-[44px] min-w-[44px] rounded-2xl flex items-center justify-center text-white/85 hover:text-white hover:bg-white/10 cursor-pointer"
+                      >
+                        <BitChordOutputGlyph
+                          device={outputDevice}
+                          isRemoteActive={isRemotePlaybackActive}
+                          size={22}
                         />
-                      )}
-                      <span className="text-[11px] font-semibold text-white/80 truncate max-w-[160px]">
-                        {outputDeviceLabel}
-                      </span>
-                    </button>
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("selection");
-                        setQueueOpen(true);
-                        setMobileTab("queue");
-                      }}
-                      aria-label={t("queue")}
-                      className="bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-2xl flex items-center justify-center text-white/75 hover:text-white hover:bg-white/10 cursor-pointer"
-                    >
-                      <QueueIcon size={22} weight="bold" aria-hidden="true" />
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void triggerHapticFeedback("selection");
+                          setQueueOpen(true);
+                          setMobileTab("queue");
+                        }}
+                        aria-label={t("queue")}
+                        className="bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-2xl flex items-center justify-center text-white/75 hover:text-white hover:bg-white/10 cursor-pointer"
+                      >
+                        <QueueIcon size={22} weight="bold" aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <div className="flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void triggerHapticFeedback("selection");
+                          if (outputDevice.permissionNeeded) {
+                            void requestBluetoothNamesIfNeeded();
+                          }
+                          toggleDevicePicker();
+                        }}
+                        className="px-3 py-0.5 text-[11px] font-medium text-white/60 hover:text-white/90 truncate max-w-[68%] cursor-pointer"
+                      >
+                        {outputDeviceLabel}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             ) : mobileTab === "lyrics" ? (
               /* ---- IMMERSIVE LYRICS VIEW ---- */
-              <div className="bc-view-switch flex flex-col h-full w-full px-5 pt-[max(1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.55rem))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
+              <div className="bc-subview-in flex flex-col h-full w-full px-5 pt-[max(1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.55rem))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
                 <div data-sheet-drag-handle="true" className="flex justify-center pb-2">
                   <button
                     type="button"
@@ -1539,7 +1704,7 @@ export function BitChordNowPlaying() {
                       dismissWithPhysics();
                     }}
                     aria-label={t("collapse")}
-                    className="py-2 px-8 cursor-pointer touch-none"
+                    className="py-2 px-8 rounded-full cursor-pointer touch-none outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
                   >
                     <span className="block h-1.5 w-11 rounded-full bg-white/55" />
                   </button>
@@ -1643,7 +1808,12 @@ export function BitChordNowPlaying() {
 
                 {/* Compact Bottom Transport + Tab Switcher */}
                 <div className="shrink-0 pt-2 space-y-2.5">
-                  <BitChordPillScrubber defaultDuration={safeDuration} statusLabel={isCrossfading ? statusBadge : null} />
+                  <BitChordPillScrubber
+                    defaultDuration={safeDuration}
+                    statusLabel={isCrossfading ? statusBadge : null}
+                    isCrossfading={isCrossfading}
+                    onScrubbingChange={setIsScrubbing}
+                  />
                   <div className="flex items-center justify-between px-4">
                     <button
                       type="button"
@@ -1652,30 +1822,26 @@ export function BitChordNowPlaying() {
                         setMobileTab("hero");
                       }}
                       aria-label={t("nowPlaying")}
-                      className="bc-control-btn h-10 w-10 rounded-xl bg-white/20 text-white flex items-center justify-center cursor-pointer"
+                      className="bc-control-btn h-10 w-10 rounded-[10px] bg-white/22 text-white flex items-center justify-center cursor-pointer"
                     >
                       <QuotesIcon size={20} weight="fill" aria-hidden="true" />
                     </button>
 
                     <div className="flex items-center gap-4">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void triggerHapticFeedback("trackSkip");
-                          prev();
-                        }}
+                      <BitChordTransportButton
+                        onClick={triggerPrevTrack}
                         aria-label={t("prevTrack")}
                         className="bc-control-btn h-10 w-10 rounded-full flex items-center justify-center text-white cursor-pointer"
                       >
-                        {dir === "rtl" ? (
-                          <FastForwardIcon size={24} weight="fill" aria-hidden="true" />
-                        ) : (
-                          <RewindIcon size={24} weight="fill" aria-hidden="true" />
-                        )}
-                      </button>
+                        <BitChordSkipGlyph
+                          direction="prev"
+                          isRtl={dir === "rtl"}
+                          tapCount={prevTapCount}
+                          size={24}
+                        />
+                      </BitChordTransportButton>
 
-                      <button
-                        type="button"
+                      <BitChordTransportButton
                         onClick={() => {
                           void triggerHapticFeedback("playPause");
                           togglePlay();
@@ -1683,30 +1849,26 @@ export function BitChordNowPlaying() {
                         aria-label={isPlaying ? t("pause") : t("play")}
                         className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white cursor-pointer"
                       >
-                        {isBuffering ? (
-                          <CircleNotchIcon size={26} className="animate-spin text-white" aria-hidden="true" />
-                        ) : isPlaying ? (
-                          <PauseIcon size={30} weight="fill" aria-hidden="true" />
-                        ) : (
-                          <PlayIcon size={30} weight="fill" className="ms-0.5" aria-hidden="true" />
-                        )}
-                      </button>
+                        <BitChordPlayPauseGlyph
+                          isPlaying={isPlaying}
+                          isBuffering={isBuffering}
+                          variant="expanded"
+                          size={30}
+                        />
+                      </BitChordTransportButton>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void triggerHapticFeedback("trackSkip");
-                          next(false);
-                        }}
+                      <BitChordTransportButton
+                        onClick={triggerNextTrack}
                         aria-label={t("nextTrack")}
                         className="bc-control-btn h-10 w-10 rounded-full flex items-center justify-center text-white cursor-pointer"
                       >
-                        {dir === "rtl" ? (
-                          <RewindIcon size={24} weight="fill" aria-hidden="true" />
-                        ) : (
-                          <FastForwardIcon size={24} weight="fill" aria-hidden="true" />
-                        )}
-                      </button>
+                        <BitChordSkipGlyph
+                          direction="next"
+                          isRtl={dir === "rtl"}
+                          tapCount={nextTapCount}
+                          size={24}
+                        />
+                      </BitChordTransportButton>
                     </div>
 
                     <button
@@ -1726,7 +1888,7 @@ export function BitChordNowPlaying() {
               </div>
             ) : (
               /* ---- QUEUE VIEW ---- */
-              <div className="bc-view-switch flex flex-col h-full w-full px-5 pt-[max(1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.55rem))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
+              <div className="bc-subview-in flex flex-col h-full w-full px-5 pt-[max(1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.55rem))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
                 <div data-sheet-drag-handle="true" className="flex justify-center pb-2">
                   <button
                     type="button"
@@ -1739,7 +1901,7 @@ export function BitChordNowPlaying() {
                       dismissWithPhysics();
                     }}
                     aria-label={t("collapse")}
-                    className="py-2 px-8 cursor-pointer touch-none"
+                    className="py-2 px-8 rounded-full cursor-pointer touch-none outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
                   >
                     <span className="block h-1.5 w-11 rounded-full bg-white/55" />
                   </button>
@@ -1787,17 +1949,9 @@ export function BitChordNowPlaying() {
                   <h3 className="text-lg font-extrabold text-white">
                     {lang === "fa" ? "صف پخش" : "Queue"}
                   </h3>
-                  <div className="flex items-center gap-2">
-                    {isCrossfading && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/25 border border-emerald-400/40 px-2.5 py-0.5 text-[10.5px] font-bold text-emerald-200 animate-pulse">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                        {lang === "fa" ? "در حال میکس" : "Mixing"}
-                      </span>
-                    )}
-                    <span className="text-xs font-medium text-white/60 tabular-nums">
-                      {queue.length} {t("tracksCount")}
-                    </span>
-                  </div>
+                  <span className="text-xs font-medium text-white/60 tabular-nums">
+                    {queue.length} {t("tracksCount")}
+                  </span>
                 </div>
                 <p className="text-xs font-medium text-white/60 pb-2 truncate shrink-0">
                   {hasGenuineAlbum
@@ -1821,27 +1975,28 @@ export function BitChordNowPlaying() {
 
                 {/* Persistent Scrubber + Transport + [Lyrics | Shuffle/Repeat/AutoMix Pill | Queue] */}
                 <div className="shrink-0 pt-2 space-y-3">
-                  <BitChordPillScrubber defaultDuration={safeDuration} statusLabel={statusBadge} />
+                  <BitChordPillScrubber
+                    defaultDuration={safeDuration}
+                    statusLabel={statusBadge}
+                    isCrossfading={isCrossfading}
+                    onScrubbingChange={setIsScrubbing}
+                  />
 
                   <div className="flex items-center justify-around px-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("trackSkip");
-                        prev();
-                      }}
+                    <BitChordTransportButton
+                      onClick={triggerPrevTrack}
                       aria-label={t("prevTrack")}
                       className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white cursor-pointer"
                     >
-                      {dir === "rtl" ? (
-                        <FastForwardIcon size={30} weight="fill" aria-hidden="true" />
-                      ) : (
-                        <RewindIcon size={30} weight="fill" aria-hidden="true" />
-                      )}
-                    </button>
+                      <BitChordSkipGlyph
+                        direction="prev"
+                        isRtl={dir === "rtl"}
+                        tapCount={prevTapCount}
+                        size={30}
+                      />
+                    </BitChordTransportButton>
 
-                    <button
-                      type="button"
+                    <BitChordTransportButton
                       onClick={() => {
                         void triggerHapticFeedback("playPause");
                         togglePlay();
@@ -1849,30 +2004,26 @@ export function BitChordNowPlaying() {
                       aria-label={isPlaying ? t("pause") : t("play")}
                       className="bc-control-btn h-14 w-14 rounded-full flex items-center justify-center text-white cursor-pointer"
                     >
-                      {isBuffering ? (
-                        <CircleNotchIcon size={30} className="animate-spin text-white" aria-hidden="true" />
-                      ) : isPlaying ? (
-                        <PauseIcon size={34} weight="fill" aria-hidden="true" />
-                      ) : (
-                        <PlayIcon size={34} weight="fill" className="ms-0.5" aria-hidden="true" />
-                      )}
-                    </button>
+                      <BitChordPlayPauseGlyph
+                        isPlaying={isPlaying}
+                        isBuffering={isBuffering}
+                        variant="expanded"
+                        size={34}
+                      />
+                    </BitChordTransportButton>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void triggerHapticFeedback("trackSkip");
-                        next(false);
-                      }}
+                    <BitChordTransportButton
+                      onClick={triggerNextTrack}
                       aria-label={t("nextTrack")}
                       className="bc-control-btn h-12 w-12 rounded-full flex items-center justify-center text-white cursor-pointer"
                     >
-                      {dir === "rtl" ? (
-                        <RewindIcon size={30} weight="fill" aria-hidden="true" />
-                      ) : (
-                        <FastForwardIcon size={30} weight="fill" aria-hidden="true" />
-                      )}
-                    </button>
+                      <BitChordSkipGlyph
+                        direction="next"
+                        isRtl={dir === "rtl"}
+                        tapCount={nextTapCount}
+                        size={30}
+                      />
+                    </BitChordTransportButton>
                   </div>
 
                   {/* Bottom Bar with [Shuffle | Repeat | AutoMix] Segmented Pill (photo_6 & photo_9) */}
@@ -1979,6 +2130,7 @@ export function BitChordNowPlaying() {
             className="bc-glass-menu bc-menu-pop w-full max-w-[280px] max-h-[85dvh] overflow-y-auto rounded-[28px] text-white divide-y divide-white/[0.08]"
             onClick={(e) => e.stopPropagation()}
           >
+            <div key={contextMenuPage} className="bc-subview-in divide-y divide-white/[0.08]">
             {contextMenuPage === "sleep" ? (
               <>
                 <div className="flex items-center gap-2.5 px-4 py-3.5">
@@ -2343,6 +2495,7 @@ export function BitChordNowPlaying() {
                 </div>
               </>
             )}
+            </div>
           </div>
         </div>
       )}

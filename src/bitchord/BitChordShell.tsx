@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -42,6 +42,7 @@ import { BitChordMiniPlayer } from "./BitChordMiniPlayer";
 import { BitChordArtistSheet } from "./BitChordArtistSheet";
 import { OPEN_ARTIST_PROFILE_EVENT, type OpenArtistDetail } from "./artistNavigation";
 import { notifySleepTimerTrackChanged, registerSleepTimerExpireHandler } from "./sleepTimer";
+import { BC_MOTION, PillSquashModel, stepSpring, usePrefersReducedMotion } from "./motion";
 import type { Track } from "@/lib/types";
 
 const BitChordNowPlaying = dynamic(
@@ -69,6 +70,390 @@ function LazyAuthDialog() {
   const { authDialogOpen } = useAuth();
   if (!authDialogOpen) return null;
   return <AuthDialog />;
+}
+
+interface NavTabItem {
+  value: string;
+  href: string;
+  label: string;
+  mobileLabel: string;
+  icon: (active: boolean, size?: number) => React.ReactNode;
+}
+
+/**
+ * BitChord FloatingBottomBar + GlassSelectionPill physics:
+ * - Travel spring: stiffness 280, damping 31.4
+ * - Lift X/Y springs: stiffness 250, dampingX 19.0, dampingY 22.1
+ * - Acceleration-coupled squash & stretch (STRETCH = 0.16, SQUASH = 0.5)
+ * - Horizontal drag across tabs with haptic boundary ticks & spring settle
+ */
+function FloatingLiquidTabBar({
+  navItems,
+  activeTabIndex,
+  dir,
+  onSelectIndex,
+}: {
+  navItems: NavTabItem[];
+  activeTabIndex: number;
+  dir: "rtl" | "ltr";
+  onSelectIndex: (idx: number) => void;
+}) {
+  const reducedMotion = usePrefersReducedMotion();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startTab: number;
+    moved: boolean;
+    lastHapticTab: number;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const n = navItems.length;
+  const safeActive = activeTabIndex >= 0 ? activeTabIndex : 0;
+  const prevActiveIndexRef = useRef(activeTabIndex);
+  const squashModelRef = useRef<PillSquashModel | null>(null);
+
+  const stateRef = useRef({
+    pos: safeActive,
+    vel: 0,
+    target: safeActive,
+    from: safeActive,
+    travelSign: 0,
+    travelSignEased: 0,
+    squash: 0,
+    liftX: 0,
+    liftXVel: 0,
+    liftY: 0,
+    liftYVel: 0,
+    lifted: false,
+    dragging: false,
+    dragTarget: safeActive,
+    dragFollow: safeActive,
+    rafId: null as number | null,
+    lastTime: 0,
+  });
+
+  const paintPill = useCallback(() => {
+    const pill = pillRef.current;
+    if (!pill) return;
+    const s = stateRef.current;
+    const activePos = s.dragging ? s.dragFollow : s.pos;
+    const visualStep = dir === "rtl" ? -activePos : activePos;
+
+    // Acceleration-coupled squash & stretch (GlassSelectionPill.kt) + lifted lens expansion
+    const span = Math.max(0.001, Math.abs(s.target - s.from));
+    const lag = s.dragging
+      ? Math.min(1, Math.abs(s.dragTarget - s.dragFollow) * 1.4 + 0.18)
+      : Math.min(1, Math.abs(s.target - s.pos) / Math.max(1, span * 0.75));
+
+    const dev = s.squash;
+    const stretchX = (1 + lag * BC_MOTION.TAB_STRETCH + s.liftX * 0.11) * (1 + dev);
+    const squashY = (1 - lag * BC_MOTION.TAB_STRETCH * BC_MOTION.TAB_SQUASH + s.liftY * 0.15) * (1 - dev);
+
+    pill.style.transform = `translate3d(${(visualStep * 100).toFixed(3)}%, 0, 0) scale3d(${stretchX.toFixed(4)}, ${squashY.toFixed(4)}, 1)`;
+    pill.setAttribute("data-lifted", s.lifted || s.liftX > 0.04 ? "true" : "false");
+  }, [dir]);
+
+  const startLoop = useCallback(() => {
+    const s = stateRef.current;
+    if (s.rafId !== null) return;
+    s.lastTime = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, Math.max(0, (now - s.lastTime) / 1000));
+      s.lastTime = now;
+
+      let travelSettled = true;
+      if (!s.dragging) {
+        const [np, nv] = stepSpring(
+          s.pos,
+          s.vel,
+          s.target,
+          dt,
+          BC_MOTION.TAB_TRAVEL_STIFFNESS,
+          BC_MOTION.TAB_TRAVEL_DAMPING,
+        );
+        s.pos = np;
+        s.vel = nv;
+        travelSettled = Math.abs(np - s.target) < 0.003 && Math.abs(nv) < 0.04;
+        if (travelSettled) {
+          s.pos = s.target;
+          s.vel = 0;
+        }
+      } else {
+        s.dragFollow += (s.dragTarget - s.dragFollow) * (1 - Math.exp(-dt / 0.05));
+        s.pos = s.dragFollow;
+      }
+
+      const span = Math.abs(s.target - s.from);
+      const progress = span < 1e-4 ? 1 : Math.min(1, 1 - Math.abs(s.target - s.pos) / span);
+      if (!s.dragging && (travelSettled || progress >= BC_MOTION.TAB_HANDOVER_START)) {
+        s.lifted = false;
+      }
+
+      const liftTarget = s.lifted ? 1 : 0;
+      const [lx, lxv] = stepSpring(
+        s.liftX,
+        s.liftXVel,
+        liftTarget,
+        dt,
+        BC_MOTION.TAB_LIFT_STIFFNESS,
+        BC_MOTION.TAB_LIFT_DAMPING_X,
+      );
+      const [ly, lyv] = stepSpring(
+        s.liftY,
+        s.liftYVel,
+        liftTarget,
+        dt,
+        BC_MOTION.TAB_LIFT_STIFFNESS,
+        BC_MOTION.TAB_LIFT_DAMPING_Y,
+      );
+      s.liftX = Math.abs(lx - liftTarget) < 0.001 && Math.abs(lxv) < 0.01 ? liftTarget : lx;
+      s.liftXVel = s.liftX === liftTarget ? 0 : lxv;
+      s.liftY = Math.abs(ly - liftTarget) < 0.001 && Math.abs(lyv) < 0.01 ? liftTarget : ly;
+      s.liftYVel = s.liftY === liftTarget ? 0 : lyv;
+
+      // Acceleration-coupled squash model (GlassSelectionPill.kt)
+      const trackW = trackRef.current?.offsetWidth ?? 320;
+      const stepPx = Math.max(40, trackW / n);
+      const frac = s.dragging ? s.dragFollow : s.pos;
+      if (!squashModelRef.current) {
+        squashModelRef.current = new PillSquashModel();
+      }
+      const squashModel = squashModelRef.current;
+      if (squashModel) {
+        if (!squashModel.isTracking) squashModel.start();
+        let nextSquash = squashModel.track(frac * stepPx, now / 1000, dt);
+        if (s.travelSignEased === 0) {
+          s.travelSignEased = s.travelSign;
+        } else if (s.travelSignEased !== s.travelSign) {
+          s.travelSignEased += (s.travelSign - s.travelSignEased) * (1 - Math.exp(-dt / 0.25));
+          if (Math.abs(s.travelSign - s.travelSignEased) < 0.01) s.travelSignEased = s.travelSign;
+        }
+        const key = s.travelSignEased;
+        if (key !== 0) {
+          nextSquash = nextSquash * (1 - Math.abs(key)) - key * Math.abs(nextSquash);
+        }
+        s.squash = nextSquash;
+      }
+
+      paintPill();
+
+      const liftSettled = !s.lifted && s.liftX === 0 && s.liftY === 0;
+      if (!s.dragging && travelSettled && liftSettled && Math.abs(s.squash) < 0.001) {
+        s.squash = 0;
+        s.travelSign = 0;
+        s.travelSignEased = 0;
+        squashModel?.stop();
+        s.rafId = null;
+        return;
+      }
+      s.rafId = requestAnimationFrame(tick);
+    };
+
+    s.rafId = requestAnimationFrame(tick);
+  }, [n, paintPill]);
+
+  useLayoutEffect(() => {
+    const s = stateRef.current;
+    const prevIdx = prevActiveIndexRef.current;
+    prevActiveIndexRef.current = activeTabIndex;
+    if (s.dragging) return;
+    if (reducedMotion || (prevIdx < 0 && activeTabIndex >= 0)) {
+      if (s.rafId !== null) {
+        cancelAnimationFrame(s.rafId);
+        s.rafId = null;
+      }
+      s.pos = safeActive;
+      s.target = safeActive;
+      s.from = safeActive;
+      s.vel = 0;
+      s.travelSign = 0;
+      s.travelSignEased = 0;
+      s.squash = 0;
+      s.lifted = false;
+      s.liftX = 0;
+      s.liftY = 0;
+      squashModelRef.current?.stop();
+      paintPill();
+      return;
+    }
+    if (s.target !== safeActive) {
+      s.from = s.pos;
+      s.target = safeActive;
+      s.travelSign = Math.sign(safeActive - s.pos);
+      s.lifted = true;
+      startLoop();
+    } else {
+      paintPill();
+    }
+  }, [activeTabIndex, safeActive, reducedMotion, paintPill, startLoop]);
+
+  useEffect(() => {
+    const state = stateRef.current;
+    return () => {
+      if (state.rafId !== null) {
+        cancelAnimationFrame(state.rafId);
+      }
+    };
+  }, []);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary || e.button !== 0) return;
+    const s = stateRef.current;
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startTab: safeActive,
+      moved: false,
+      lastHapticTab: safeActive,
+    };
+    if (!reducedMotion) {
+      s.lifted = true;
+      startLoop();
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const track = trackRef.current;
+    if (!drag || drag.pointerId !== e.pointerId || !track) return;
+    const dx = e.clientX - drag.startX;
+    if (!drag.moved && Math.abs(dx) < 8) return;
+
+    if (!drag.moved) {
+      drag.moved = true;
+      suppressClickRef.current = true;
+      try {
+        track.setPointerCapture(e.pointerId);
+      } catch {}
+      const s = stateRef.current;
+      s.dragging = true;
+      s.dragFollow = s.pos;
+      s.dragTarget = s.pos;
+      s.lifted = !reducedMotion;
+      startLoop();
+    }
+
+    const stepPx = Math.max(1, track.offsetWidth / n);
+    const deltaTabs = (dir === "rtl" ? -dx : dx) / stepPx;
+    const clamped = Math.max(0, Math.min(n - 1, drag.startTab + deltaTabs));
+    stateRef.current.dragTarget = clamped;
+
+    const approx = Math.round(clamped);
+    if (approx !== drag.lastHapticTab) {
+      drag.lastHapticTab = approx;
+      void triggerHapticFeedback("selection");
+    }
+  };
+
+  const finishPointer = (e: React.PointerEvent<HTMLDivElement>, cancelled: boolean) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    const track = trackRef.current;
+    if (track && track.hasPointerCapture(e.pointerId)) {
+      try {
+        track.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+
+    const s = stateRef.current;
+    if (drag.moved) {
+      const targetIdx = cancelled
+        ? safeActive
+        : Math.max(0, Math.min(n - 1, Math.round(s.dragTarget)));
+      s.dragging = false;
+      s.from = s.dragFollow;
+      s.pos = s.dragFollow;
+      s.target = targetIdx;
+      s.lifted = !reducedMotion;
+      startLoop();
+      if (!cancelled && targetIdx !== safeActive) {
+        onSelectIndex(targetIdx);
+      }
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 60);
+    } else {
+      s.lifted = false;
+      startLoop();
+    }
+  };
+
+  return (
+    <nav
+      aria-label="Mobile Navigation"
+      className="lg:hidden fixed inset-x-[19px] bottom-[max(15px,calc(var(--sab,env(safe-area-inset-bottom,0px))+6px))] z-40 select-none touch-manipulation"
+    >
+      <div className="bc-pill-glass mx-auto max-w-md rounded-full p-1">
+        <div
+          ref={trackRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={(e) => finishPointer(e, false)}
+          onPointerCancel={(e) => finishPointer(e, true)}
+          onClickCapture={(e) => {
+            if (suppressClickRef.current) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          className="relative touch-pan-y"
+        >
+          {activeTabIndex >= 0 && (
+            <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+              <div
+                ref={pillRef}
+                data-lifted="false"
+                className="bc-tab-lens-pill h-full w-1/5 rounded-full will-change-transform"
+              />
+            </div>
+          )}
+
+          <div className="relative z-10 grid grid-cols-5 items-center">
+            {navItems.map((item, idx) => {
+              const active = idx === activeTabIndex;
+              return (
+                <Link
+                  key={item.value}
+                  href={item.href}
+                  draggable={false}
+                  onClick={() => {
+                    void triggerHapticFeedback("selection");
+                    if (active && typeof window !== "undefined") {
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                  }}
+                  aria-label={item.label}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-full cursor-pointer outline-none select-none transition-colors duration-200 ${
+                    active
+                      ? "text-slate-950 dark:text-white font-bold"
+                      : "text-slate-600 dark:text-white/65 hover:text-slate-900 dark:hover:text-white/90"
+                  }`}
+                >
+                  <span
+                    className="transition-transform duration-300 ease-[cubic-bezier(0.34,1.48,0.64,1)]"
+                    style={{
+                      transform: active && !reducedMotion ? "scale3d(1.08, 1.08, 1)" : "scale3d(1, 1, 1)",
+                    }}
+                  >
+                    {item.icon(active, 23)}
+                  </span>
+                  <span className="text-[10px] tracking-[0.02em] leading-tight mt-0.5 truncate max-w-full px-0.5">
+                    {item.mobileLabel}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
 }
 
 export function BitChordShell({ children }: { children: React.ReactNode }) {
@@ -488,7 +873,7 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Mobile BitChord Top Header (photo_2 / photo_4 frosted circular & pill controls) */}
-        <header className="lg:hidden sticky top-0 z-30 pt-[max(0.6rem,var(--sat,env(safe-area-inset-top,0px)))] px-4 pb-3 flex items-center justify-between gap-2 pointer-events-none bg-gradient-to-b from-[#f4f4f6]/90 via-[#f4f4f6]/55 to-transparent dark:from-[#09090b]/90 dark:via-[#09090b]/55">
+        <header className="lg:hidden sticky top-0 z-30 pt-[max(0.6rem,var(--sat,env(safe-area-inset-top,0px)))] px-4 pb-4 flex items-center justify-between gap-2 pointer-events-none bg-gradient-to-b from-[#f4f4f6]/95 via-[#f4f4f6]/68 to-transparent dark:from-[#09090b]/95 dark:via-[#09090b]/68">
           <div className="pointer-events-auto flex items-center gap-2 min-w-0">
             {isSubPage ? (
               <button
@@ -656,59 +1041,35 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 px-3 sm:px-6 pt-2 pb-[max(15.5rem,calc(13.5rem+var(--sab,env(safe-area-inset-bottom,0px))))] lg:pb-32"
         >
-          <div key={pathname} className="sf-page-enter mx-auto w-full max-w-[1600px]">
+          <div key={pathname} className="bc-page-enter mx-auto w-full max-w-[1600px]">
             {children}
           </div>
         </main>
       </div>
 
-      {/* Mobile Floating Pill Bottom Nav (BitChord photo_2 & photo_4 style) */}
-      <nav
-        aria-label="Mobile Navigation"
-        className="lg:hidden fixed inset-x-3.5 bottom-[max(0.75rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.35rem))] z-40 select-none touch-manipulation"
-      >
-        <div className="bc-pill-glass relative mx-auto max-w-md rounded-full p-1.5">
-          {activeTabIndex >= 0 && (
-            <div aria-hidden="true" className="pointer-events-none absolute inset-1.5">
-              <div
-                className="h-full w-1/5 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                style={{
-                  transform: `translate3d(${(dir === "rtl" ? -activeTabIndex : activeTabIndex) * 100}%, 0, 0)`,
-                }}
-              >
-                <div className="h-full w-full rounded-full bg-black/[0.08] dark:bg-white/[0.15] border border-black/[0.04] dark:border-white/[0.1]" />
-              </div>
-            </div>
-          )}
+      {/* BitChord BottomFadeScrim behind floating bottom bars */}
+      <div
+        aria-hidden="true"
+        className={`lg:hidden pointer-events-none fixed inset-x-0 bottom-0 z-[35] bc-bottom-fade-scrim transition-[height] duration-200 ease-out ${
+          currentTrack
+            ? "h-[calc(8.5rem+max(15px,calc(var(--sab,env(safe-area-inset-bottom,0px))+6px)))]"
+            : "h-[calc(5.2rem+max(15px,calc(var(--sab,env(safe-area-inset-bottom,0px))+6px)))]"
+        }`}
+      />
 
-          <div className="relative z-10 grid grid-cols-5 items-center">
-            {navItems.map((item, idx) => {
-              const active = idx === activeTabIndex;
-              return (
-                <Link
-                  key={item.value}
-                  href={item.href}
-                  onClick={() => void triggerHapticFeedback("selection")}
-                  aria-label={item.label}
-                  aria-current={active ? "page" : undefined}
-                  className={`bc-control-btn flex flex-col items-center justify-center min-h-[50px] py-1 px-1 rounded-full cursor-pointer outline-none select-none ${
-                    active
-                      ? "text-slate-950 dark:text-white font-bold"
-                      : "text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200"
-                  }`}
-                >
-                  <span className={`transition-transform duration-200 ${active ? "scale-105" : "opacity-80"}`}>
-                    {item.icon(active, 21)}
-                  </span>
-                  <span className="text-[10px] leading-tight mt-0.5 truncate max-w-full px-0.5">
-                    {item.mobileLabel}
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </nav>
+      {/* Mobile Floating Pill Bottom Nav (FloatingBottomBar.kt + GlassSelectionPill.kt physics) */}
+      <FloatingLiquidTabBar
+        navItems={navItems}
+        activeTabIndex={activeTabIndex}
+        dir={dir}
+        onSelectIndex={(idx) => {
+          const item = navItems[idx];
+          if (item && idx !== activeTabIndex) {
+            void triggerHapticFeedback("selection");
+            router.push(item.href);
+          }
+        }}
+      />
 
       <BitChordMiniPlayer />
       <LazyBitChordNowPlaying />

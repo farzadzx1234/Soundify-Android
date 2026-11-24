@@ -25,6 +25,8 @@ import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { formatDuration } from "@/lib/lrc";
 import { areTracksSameIdentity } from "@/lib/trackIdentity";
 import type { Track } from "@/lib/types";
+import { BitChordPlayPauseGlyph } from "./BitChordGlyphs";
+import { rubberBand } from "./motion";
 
 interface BitChordArtistSheetProps {
   artistName: string | null;
@@ -73,18 +75,24 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
   const { currentTrack, isPlaying, queue, playTrack, togglePlay, setExpanded } = usePlayer();
   const { downloadedTracks } = useDownloadedTracks();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const backdropParallaxRef = useRef<HTMLDivElement>(null);
+  const pullStartYRef = useRef<number | null>(null);
 
   const [prevArtist, setPrevArtist] = useState<string | null>(artistName);
   const [remoteTracks, setRemoteTracks] = useState<Track[]>([]);
   const [loadingRemote, setLoadingRemote] = useState(Boolean(artistName));
   const [selectedAlbum, setSelectedAlbum] = useState<string | null>(null);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [overscrollY, setOverscrollY] = useState(0);
+  const [isOverscrolling, setIsOverscrolling] = useState(false);
 
   if (artistName !== prevArtist) {
     setPrevArtist(artistName);
     setRemoteTracks([]);
     setSelectedAlbum(null);
     setActionMenuOpen(false);
+    setOverscrollY(0);
     setLoadingRemote(Boolean(artistName));
   }
 
@@ -99,6 +107,9 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
       } catch {
         dlg.setAttribute("open", "");
       }
+      try {
+        dlg.focus({ preventScroll: true });
+      } catch {}
     }
     return () => {
       if (dlg.open) {
@@ -209,20 +220,66 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
     playTrack(list[0], list, 0, true, `artist:${artistName}`);
   };
 
+  const handleBackdropParallaxScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const backdrop = backdropParallaxRef.current;
+    if (!backdrop) return;
+    const st = Math.max(0, e.currentTarget.scrollTop);
+    // BitChord DetailScreen PageBackground parallax (-0.55x smooth glide)
+    const offset = -Math.min(st * 0.55, 280);
+    backdrop.style.transform = `translate3d(0, ${offset}px, 0)`;
+  };
+
+  const handleScrollTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    if ((scrollRef.current?.scrollTop ?? 0) <= 0) {
+      pullStartYRef.current = e.touches[0].clientY;
+    } else {
+      pullStartYRef.current = null;
+    }
+  };
+
+  const handleScrollTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    const startY = pullStartYRef.current;
+    if (startY === null || e.touches.length !== 1) return;
+    const scroller = scrollRef.current;
+    if (!scroller || scroller.scrollTop > 1) {
+      pullStartYRef.current = null;
+      return;
+    }
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 4) {
+      setIsOverscrolling(true);
+      setOverscrollY(rubberBand(dy, 520));
+    } else if (overscrollY > 0) {
+      setOverscrollY(0);
+    }
+  };
+
+  const handleScrollTouchEnd = () => {
+    pullStartYRef.current = null;
+    setIsOverscrolling(false);
+    if (overscrollY !== 0) setOverscrollY(0);
+  };
+
   return (
     <dialog
       ref={dialogRef}
+      tabIndex={-1}
       aria-modal="true"
       aria-label={artistName}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
       }}
-      className="fixed inset-0 z-[80] m-0 h-dvh w-screen max-w-none max-h-none border-0 p-0 bg-[#f4f4f6] dark:bg-[#09090b] text-slate-950 dark:text-white overflow-hidden flex flex-col bc-view-switch"
+      className="fixed inset-0 z-[80] m-0 h-dvh w-screen max-w-none max-h-none border-0 p-0 bg-[#f4f4f6] dark:bg-[#09090b] text-slate-950 dark:text-white overflow-hidden flex flex-col bc-sheet-in outline-none focus:outline-none"
     >
-      {/* Atmospheric Hero Backdrop */}
+      {/* Seamless Atmospheric Hero Backdrop (DetailScreen.kt PageBackground eased fade to solid wash) */}
       {heroTrack && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[44vh] overflow-hidden" aria-hidden="true">
+        <div
+          ref={backdropParallaxRef}
+          className="bc-artist-hero-mask pointer-events-none absolute inset-x-0 -top-16 h-[74vh] will-change-transform [&>div]:!aspect-auto [&>div]:!bg-transparent"
+          aria-hidden="true"
+        >
           <OptimizedTrackImage
             src={heroTrack.coverUrl}
             trackId={heroTrack.id}
@@ -230,9 +287,22 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
             artistName={heroTrack.artistName}
             pageUrl={heroTrack.pageUrl}
             alt=""
-            className="h-full w-full object-cover scale-125 blur-3xl opacity-35 dark:opacity-55 saturate-150"
+            className="h-full w-full object-cover scale-125 blur-3xl opacity-38 dark:opacity-55 saturate-150"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/15 via-[#f4f4f6]/75 to-[#f4f4f6] dark:from-black/30 dark:via-[#09090b]/70 dark:to-[#09090b]" />
+          <div
+            className="hidden dark:block absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to bottom, rgba(0,0,0,0.28) 0%, rgba(9,9,11,0.16) 40%, rgba(9,9,11,0.48) 62%, rgba(9,9,11,0.82) 78%, rgba(9,9,11,0.97) 90%, #09090b 100%)",
+            }}
+          />
+          <div
+            className="block dark:hidden absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(244,244,246,0.22) 40%, rgba(244,244,246,0.55) 62%, rgba(244,244,246,0.86) 78%, rgba(244,244,246,0.98) 90%, #f4f4f6 100%)",
+            }}
+          />
         </div>
       )}
 
@@ -245,7 +315,7 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
             onClose();
           }}
           aria-label={lang === "fa" ? "بازگشت" : "Back"}
-          className="bc-pill-glass bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-full inline-flex items-center justify-center text-slate-900 dark:text-white cursor-pointer"
+          className="bc-pill-glass bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-full inline-flex items-center justify-center text-slate-900 dark:text-white cursor-pointer outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/40 dark:focus-visible:ring-white/45"
         >
           {lang === "fa" ? (
             <CaretRightIcon size={20} weight="bold" aria-hidden="true" />
@@ -277,7 +347,21 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
         </div>
       </header>
 
-      <div className="relative z-10 flex-1 overflow-y-auto px-5 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.5rem))]">
+      <div
+        ref={scrollRef}
+        onScroll={handleBackdropParallaxScroll}
+        onTouchStart={handleScrollTouchStart}
+        onTouchMove={handleScrollTouchMove}
+        onTouchEnd={handleScrollTouchEnd}
+        onTouchCancel={handleScrollTouchEnd}
+        className="relative z-10 flex-1 overflow-y-auto px-5 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.5rem))]"
+      >
+        <div
+          style={{
+            transform: overscrollY !== 0 ? `translate3d(0, ${overscrollY}px, 0)` : undefined,
+            transition: isOverscrolling ? "none" : "transform 0.42s cubic-bezier(0.22, 1.35, 0.36, 1)",
+          }}
+        >
         {/* Centered BitChord DetailScreen Hero */}
         <section className="mx-auto max-w-2xl flex flex-col items-center text-center pt-2 pb-6 space-y-4">
           <div className="h-44 w-44 sm:h-52 sm:w-52 rounded-[28px] overflow-hidden shadow-[0_24px_60px_rgba(0,0,0,0.45)] ring-1 ring-black/10 dark:ring-white/15 bg-black/10 dark:bg-white/5 flex items-center justify-center">
@@ -323,17 +407,8 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
               disabled={displayedTracks.length === 0}
               className="bc-control-btn flex-1 h-12 rounded-full bg-slate-950 text-white dark:bg-white dark:text-slate-950 font-bold text-sm inline-flex items-center justify-center gap-2 shadow-lg disabled:opacity-40 cursor-pointer"
             >
-              {isPlayingArtist ? (
-                <>
-                  <PauseIcon size={18} weight="fill" aria-hidden="true" />
-                  <span>{t("pause")}</span>
-                </>
-              ) : (
-                <>
-                  <PlayIcon size={18} weight="fill" aria-hidden="true" />
-                  <span>{t("play")}</span>
-                </>
-              )}
+              <BitChordPlayPauseGlyph isPlaying={isPlayingArtist} variant="mini" size={18} />
+              <span>{isPlayingArtist ? t("pause") : t("play")}</span>
             </button>
           </div>
         </section>
@@ -422,7 +497,7 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
                 return (
                   <div
                     key={tr.id}
-                    className={`flex items-center gap-3 px-3.5 py-2.5 transition-colors ${
+                    className={`track-list-row flex items-center gap-3 px-3.5 py-2.5 transition-colors ${
                       isCurr ? "bg-black/[0.05] dark:bg-white/[0.08]" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                     }`}
                   >
@@ -485,6 +560,7 @@ export function BitChordArtistSheet({ artistName, seedTrack, onClose }: BitChord
             )}
           </div>
         </section>
+        </div>
       </div>
 
       {/* Quick Action Sheet for Artist */}

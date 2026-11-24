@@ -4728,7 +4728,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           isBufferingRef.current = Boolean(st.isBuffering);
           setIsCrossfading(false);
           setCrossfadeFromTrack(null);
-        });
+        }).catch(() => {});
       } else if (audio) {
         currentTimeRef.current = audio.currentTime;
         setCurrentTime(audio.currentTime);

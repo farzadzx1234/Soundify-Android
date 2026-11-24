@@ -60,14 +60,22 @@ public class MediaSessionPlugin extends Plugin {
             serviceIntent.putExtra("coverUrl", lastCoverUrl);
             serviceIntent.putExtra("duration", lastDuration);
             serviceIntent.putExtra("trackId", lastTrackId);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getContext().startForegroundService(serviceIntent);
-            } else {
-                getContext().startService(serviceIntent);
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    getContext().startForegroundService(serviceIntent);
+                } else {
+                    getContext().startService(serviceIntent);
+                }
+            } catch (Exception fgsEx) {
+                // On Android 12-16 background transitions, ForegroundServiceStartNotAllowedException may fire;
+                // resolve cleanly instead of throwing uncaught errors on the Capacitor bridge.
+                try {
+                    getContext().startService(serviceIntent);
+                } catch (Exception ignored) {}
             }
             call.resolve();
-        } catch (Exception ex) {
-            call.reject("Failed to start media service: " + ex.getMessage(), ex);
+        } catch (Throwable ex) {
+            call.resolve();
         }
     }
 
@@ -142,15 +150,21 @@ public class MediaSessionPlugin extends Plugin {
                 serviceIntent.putExtra("trackId", lastTrackId);
                 serviceIntent.putExtra("position", position != null ? position : 0.0);
                 serviceIntent.putExtra("playbackRate", playbackRate != null ? playbackRate : 1.0);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    getContext().startForegroundService(serviceIntent);
-                } else {
-                    getContext().startService(serviceIntent);
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        getContext().startForegroundService(serviceIntent);
+                    } else {
+                        getContext().startService(serviceIntent);
+                    }
+                } catch (Exception fgsEx) {
+                    try {
+                        getContext().startService(serviceIntent);
+                    } catch (Exception ignored) {}
                 }
             }
             call.resolve();
-        } catch (Exception ex) {
-            call.reject("Failed to update playback state: " + ex.getMessage(), ex);
+        } catch (Throwable ex) {
+            call.resolve();
         }
     }
 

@@ -32,7 +32,10 @@ const CACHE_NAME = "soundify-covers-v1";
 const INDEX_LS_KEY = "soundify_cover_cache_index_v1";
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 const DEFAULT_MAX_COUNT = 120; // Max 120 cached cover thumbnails
-const MAX_ACTIVE_OBJECT_URLS = 48; // Bounded active blob Object URLs in memory
+const MAX_ACTIVE_OBJECT_URLS = 160; // Keep live cover Object URLs intact while scrolling
+const MAX_MEMORY_CACHE_ENTRIES = 16; // Bound in-RAM Blob handles to avoid WebView heap bloat
+const MAX_MEMORY_CACHE_BYTES = 4 * 1024 * 1024; // 4 MB max raw Blob handles on JS heap
+const MAX_CONCURRENT_PREFETCHES = 3;
 
 let maxCacheBytes = DEFAULT_MAX_BYTES;
 let maxCacheCount = DEFAULT_MAX_COUNT;
@@ -43,6 +46,10 @@ const persistedIndex = new Map<string, PersistedCoverMeta>();
 const memoryObjectUrls = new Map<string, string>();
 const activeObjectUrlOrder: string[] = [];
 const inFlightPrefetches = new Map<string, Promise<boolean>>();
+const inFlightReads = new Map<string, Promise<string | null>>();
+let cachedStoragePromise: Promise<Cache> | null = null;
+let activePrefetchCount = 0;
+const prefetchWaiters: Array<() => void> = [];
 let indexHydrated = false;
 
 function hydratePersistedIndex(): void {
@@ -125,6 +132,63 @@ function hasCacheStorage(): boolean {
   return typeof window !== "undefined" && "caches" in window;
 }
 
+async function openCoverCache(): Promise<Cache | null> {
+  if (!hasCacheStorage()) return null;
+  if (!cachedStoragePromise) {
+    cachedStoragePromise = window.caches.open(CACHE_NAME).catch((err) => {
+      cachedStoragePromise = null;
+      throw err;
+    });
+  }
+  try {
+    return await cachedStoragePromise;
+  } catch {
+    cachedStoragePromise = null;
+    return null;
+  }
+}
+
+function trimMemoryBlobCache(): void {
+  if (memoryCache.size <= MAX_MEMORY_CACHE_ENTRIES) {
+    let totalMemBytes = 0;
+    for (const entry of memoryCache.values()) {
+      totalMemBytes += entry.sizeBytes;
+    }
+    if (totalMemBytes <= MAX_MEMORY_CACHE_BYTES) return;
+  }
+
+  const ordered = Array.from(memoryCache.entries()).sort(
+    (a, b) => a[1].accessSeq - b[1].accessSeq || a[1].lastAccessedAt - b[1].lastAccessedAt,
+  );
+  let totalBytes = ordered.reduce((sum, [, e]) => sum + e.sizeBytes, 0);
+  let count = ordered.length;
+  for (const [k, entry] of ordered) {
+    if (count <= MAX_MEMORY_CACHE_ENTRIES && totalBytes <= MAX_MEMORY_CACHE_BYTES) {
+      break;
+    }
+    memoryCache.delete(k);
+    totalBytes -= entry.sizeBytes;
+    count--;
+  }
+}
+
+async function acquirePrefetchSlot(): Promise<void> {
+  if (activePrefetchCount < MAX_CONCURRENT_PREFETCHES) {
+    activePrefetchCount++;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    prefetchWaiters.push(resolve);
+  });
+  activePrefetchCount++;
+}
+
+function releasePrefetchSlot(): void {
+  activePrefetchCount = Math.max(0, activePrefetchCount - 1);
+  const next = prefetchWaiters.shift();
+  if (next) next();
+}
+
 function rememberObjectUrl(url: string, objUrl: string): void {
   while (activeObjectUrlOrder.length >= MAX_ACTIVE_OBJECT_URLS) {
     const oldest = activeObjectUrlOrder.shift();
@@ -178,44 +242,62 @@ export async function getCachedCoverUrl(url: string): Promise<string | null> {
   }
 
   if (hasCacheStorage()) {
-    try {
-      const cache = await window.caches.open(CACHE_NAME);
-      for (const cand of candidates) {
-        const res = await cache.match(cand);
-        if (res && res.ok) {
-          const blob = await res.blob();
-          if (!isValidCacheableCoverBlob(blob)) {
-            await cache.delete(cand).catch(() => {});
-            persistedIndex.delete(cand);
-            persistIndexToStorage();
-            continue;
-          }
-          const seq = ++accessSequence;
-          const now = Date.now();
-          memoryCache.set(cand, {
-            url: cand,
-            blob,
-            sizeBytes: blob.size,
-            cachedAt: now,
-            lastAccessedAt: now,
-            accessSeq: seq,
-          });
-          persistedIndex.set(cand, {
-            url: cand,
-            sizeBytes: blob.size,
-            cachedAt: persistedIndex.get(cand)?.cachedAt ?? now,
-            lastAccessedAt: now,
-            accessSeq: seq,
-          });
-          persistIndexToStorage();
-          if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
-            const objUrl = URL.createObjectURL(blob);
-            rememberObjectUrl(cand, objUrl);
-            return objUrl;
+    const existingRead = inFlightReads.get(url);
+    if (existingRead) return existingRead;
+
+    const readPromise = (async () => {
+      try {
+        const cache = await openCoverCache();
+        if (!cache) return null;
+        for (const cand of candidates) {
+          const res = await cache.match(cand);
+          if (res && res.ok) {
+            const blob = await res.blob();
+            if (!isValidCacheableCoverBlob(blob)) {
+              await cache.delete(cand).catch(() => {});
+              persistedIndex.delete(cand);
+              persistIndexToStorage();
+              continue;
+            }
+            const seq = ++accessSequence;
+            const now = Date.now();
+            memoryCache.set(cand, {
+              url: cand,
+              blob,
+              sizeBytes: blob.size,
+              cachedAt: now,
+              lastAccessedAt: now,
+              accessSeq: seq,
+            });
+            trimMemoryBlobCache();
+            const existingMeta = persistedIndex.get(cand);
+            persistedIndex.set(cand, {
+              url: cand,
+              sizeBytes: blob.size,
+              cachedAt: existingMeta?.cachedAt ?? now,
+              lastAccessedAt: now,
+              accessSeq: seq,
+            });
+            if (!existingMeta) {
+              persistIndexToStorage();
+            }
+            if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+              const objUrl = URL.createObjectURL(blob);
+              rememberObjectUrl(cand, objUrl);
+              return objUrl;
+            }
           }
         }
-      }
-    } catch {}
+      } catch {}
+      return null;
+    })();
+
+    inFlightReads.set(url, readPromise);
+    try {
+      return await readPromise;
+    } finally {
+      inFlightReads.delete(url);
+    }
   }
 
   return null;
@@ -243,6 +325,7 @@ export async function cacheCoverImage(url: string, blob: Blob): Promise<string |
   };
 
   memoryCache.set(url, entry);
+  trimMemoryBlobCache();
   persistedIndex.set(url, {
     url,
     sizeBytes,
@@ -257,16 +340,18 @@ export async function cacheCoverImage(url: string, blob: Blob): Promise<string |
     try {
       const existing = memoryObjectUrls.get(url);
       if (existing) {
-        try { URL.revokeObjectURL(existing); } catch {}
+        objectUrl = existing;
+        rememberObjectUrl(url, existing);
+      } else {
+        objectUrl = URL.createObjectURL(blob);
+        rememberObjectUrl(url, objectUrl);
       }
-      objectUrl = URL.createObjectURL(blob);
-      rememberObjectUrl(url, objectUrl);
     } catch {}
   }
 
-  if (hasCacheStorage()) {
+  const cache = await openCoverCache();
+  if (cache) {
     try {
-      const cache = await window.caches.open(CACHE_NAME);
       const res = new Response(blob, {
         headers: {
           "Content-Type": blob.type || "image/jpeg",
@@ -295,7 +380,9 @@ export async function prefetchCover(url: string): Promise<boolean> {
   }
 
   const fetchPromise = (async () => {
+    await acquirePrefetchSlot();
     try {
+      if (isCoverCached(url)) return true;
       const res = await fetch(url, {
         priority: "low" as RequestPriority,
         cache: "force-cache",
@@ -308,6 +395,7 @@ export async function prefetchCover(url: string): Promise<boolean> {
     } catch {
       return false;
     } finally {
+      releasePrefetchSlot();
       inFlightPrefetches.delete(url);
     }
   })();
@@ -455,6 +543,8 @@ export async function clearCoverCache(): Promise<void> {
   memoryCache.clear();
   persistedIndex.clear();
   inFlightPrefetches.clear();
+  inFlightReads.clear();
+  cachedStoragePromise = null;
   accessSequence = 0;
   indexHydrated = true;
 

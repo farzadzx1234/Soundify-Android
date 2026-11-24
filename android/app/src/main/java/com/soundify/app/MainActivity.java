@@ -36,7 +36,11 @@ public class MainActivity extends BridgeActivity {
                     "document.documentElement.style.setProperty('--sat', '%dpx');",
                     mLastBottomInsetDp, mLastTopInsetDp
                 );
-                wv.post(() -> wv.evaluateJavascript(script, null));
+                wv.post(() -> {
+                    try {
+                        wv.evaluateJavascript(script, null);
+                    } catch (Exception ignored) {}
+                });
             }
         } catch (Exception ignored) {}
     }
@@ -47,7 +51,11 @@ public class MainActivity extends BridgeActivity {
         try {
             WebView wv = getBridge() != null ? getBridge().getWebView() : null;
             if (wv != null) {
-                wv.post(() -> wv.evaluateJavascript("if (typeof window !== 'undefined' && window.__soundifySetBackground) { window.__soundifySetBackground(true); }", null));
+                wv.post(() -> {
+                    try {
+                        wv.evaluateJavascript("if (typeof window !== 'undefined' && window.__soundifySetBackground) { window.__soundifySetBackground(true); }", null);
+                    } catch (Exception ignored) {}
+                });
             }
         } catch (Exception ignored) {}
     }
@@ -58,7 +66,11 @@ public class MainActivity extends BridgeActivity {
         try {
             WebView wv = getBridge() != null ? getBridge().getWebView() : null;
             if (wv != null) {
-                wv.post(() -> wv.evaluateJavascript("if (typeof window !== 'undefined' && window.__soundifySetBackground) { window.__soundifySetBackground(false); }", null));
+                wv.post(() -> {
+                    try {
+                        wv.evaluateJavascript("if (typeof window !== 'undefined' && window.__soundifySetBackground) { window.__soundifySetBackground(false); }", null);
+                    } catch (Exception ignored) {}
+                });
             }
         } catch (Exception ignored) {}
         try {

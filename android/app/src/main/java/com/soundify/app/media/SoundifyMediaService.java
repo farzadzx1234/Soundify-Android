@@ -51,6 +51,7 @@ import com.soundify.app.MainActivity;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -89,8 +90,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.39";
-    private static final String APP_VERSION_HEADER = "1.0.39";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.40";
+    private static final String APP_VERSION_HEADER = "1.0.40";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -289,97 +290,111 @@ public class SoundifyMediaService extends Service {
     private final Runnable nextDeckIntroScanTicker = new Runnable() {
         @Override
         public void run() {
-            if (!nextDeckIntroScanning || isCrossfading || pendingCrossfade || !nativeAudioActive) {
-                nextDeckIntroScanning = false;
-                mainHandler.removeCallbacks(this);
-                return;
-            }
-            if (nextDeckPlayer == null || nextDeckTrackId.isEmpty() || nextDeckDsp == null) {
-                nextDeckIntroScanning = false;
-                return;
-            }
-            PlaybackException err = nextDeckPlayer.getPlayerError();
-            int st = nextDeckPlayer.getPlaybackState();
-            if (err != null) {
-                nextDeckIntroScanning = false;
-                return;
-            }
-            long now = SystemClock.elapsedRealtime();
+            try {
+                if (!nextDeckIntroScanning || isCrossfading || pendingCrossfade || !nativeAudioActive) {
+                    nextDeckIntroScanning = false;
+                    mainHandler.removeCallbacks(this);
+                    return;
+                }
+                if (nextDeckPlayer == null || nextDeckTrackId.isEmpty() || nextDeckDsp == null) {
+                    nextDeckIntroScanning = false;
+                    return;
+                }
+                PlaybackException err = nextDeckPlayer.getPlayerError();
+                int st = nextDeckPlayer.getPlaybackState();
+                if (err != null) {
+                    nextDeckIntroScanning = false;
+                    return;
+                }
+                long now = SystemClock.elapsedRealtime();
 
-            if (!nextDeckIntroScanStartedPlayback) {
-                if (st == Player.STATE_READY) {
-                    if (!nextDeckPlayer.isCurrentMediaItemSeekable()) {
-                        nextDeckIntroScanning = false;
-                        nextDeckIntroScanDone = true;
+                if (!nextDeckIntroScanStartedPlayback) {
+                    if (st == Player.STATE_READY) {
+                        if (!nextDeckPlayer.isCurrentMediaItemSeekable()) {
+                            nextDeckIntroScanning = false;
+                            nextDeckIntroScanDone = true;
+                            try {
+                                nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(nextDeckTargetPlaybackRate > 0 ? nextDeckTargetPlaybackRate : 1.0f));
+                            } catch (Exception ignored) {}
+                            return;
+                        }
+                        nextDeckIntroScanStartedPlayback = true;
+                        nextDeckIntroScanStartWallMs = now;
+                        nextDeckAudibleTicks = 0;
+                        nextDeckFirstAudibleMs = -1L;
+                        nextDeckFirstMusicBodyMs = -1L;
                         try {
-                            nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(nextDeckTargetPlaybackRate > 0 ? nextDeckTargetPlaybackRate : 1.0f));
-                        } catch (Exception ignored) {}
+                            nextDeckPlayer.setAudioAttributes(buildMediaAudioAttributes(), false);
+                            nextDeckPlayer.setVolume(0.0f);
+                            nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(3.0f));
+                            nextDeckPlayer.setPlayWhenReady(true);
+                            nextDeckPlayer.play();
+                        } catch (Exception ignored) {
+                            finishNextDeckIntroScanOnMainThread(nextDeckStartMs);
+                            return;
+                        }
+                        mainHandler.postDelayed(this, 40L);
                         return;
                     }
-                    nextDeckIntroScanStartedPlayback = true;
-                    nextDeckIntroScanStartWallMs = now;
-                    nextDeckAudibleTicks = 0;
-                    nextDeckFirstAudibleMs = -1L;
-                    nextDeckFirstMusicBodyMs = -1L;
-                    try {
-                        nextDeckPlayer.setAudioAttributes(buildMediaAudioAttributes(), false);
-                        nextDeckPlayer.setVolume(0.0f);
-                        nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(3.0f));
-                        nextDeckPlayer.setPlayWhenReady(true);
-                        nextDeckPlayer.play();
-                    } catch (Exception ignored) {
+                    if (now - nextDeckIntroScanPrepWallMs >= 10_000L) {
+                        nextDeckIntroScanning = false;
+                        return;
+                    }
+                    mainHandler.postDelayed(this, 60L);
+                    return;
+                }
+
+                if (nextDeckDsp.getProcessedBlocks() < 2) {
+                    if ((now - nextDeckIntroScanStartWallMs) >= 4800L) {
                         finishNextDeckIntroScanOnMainThread(nextDeckStartMs);
                         return;
                     }
                     mainHandler.postDelayed(this, 40L);
                     return;
                 }
-                if (now - nextDeckIntroScanPrepWallMs >= 10_000L) {
-                    nextDeckIntroScanning = false;
-                    return;
-                }
-                mainHandler.postDelayed(this, 60L);
-                return;
-            }
 
-            if (nextDeckDsp.getProcessedBlocks() < 2) {
-                if ((now - nextDeckIntroScanStartWallMs) >= 4800L) {
-                    finishNextDeckIntroScanOnMainThread(nextDeckStartMs);
+                long posMs = Math.max(0L, nextDeckPlayer.getCurrentPosition());
+                float live = nextDeckDsp.getLiveRms();
+                float bass = nextDeckDsp.getBassRms();
+
+                if (live >= 0.024f || bass >= 0.015f) {
+                    nextDeckAudibleTicks++;
+                    if (nextDeckAudibleTicks >= 2 && nextDeckFirstAudibleMs < 0L) {
+                        nextDeckFirstAudibleMs = Math.max(0L, posMs - 160L);
+                    }
+                } else {
+                    nextDeckAudibleTicks = 0;
+                }
+
+                if (live >= 0.062f || bass >= 0.038f) {
+                    nextDeckFirstMusicBodyMs = posMs;
+                }
+
+                boolean timedOut = (now - nextDeckIntroScanStartWallMs) >= 4800L;
+                if (nextDeckFirstMusicBodyMs >= 0L || posMs >= 14500L || timedOut || st == Player.STATE_ENDED) {
+                    finishNextDeckIntroScanOnMainThread(computeSmartScannedCueMs());
                     return;
                 }
                 mainHandler.postDelayed(this, 40L);
-                return;
+            } catch (Throwable ignored) {
+                nextDeckIntroScanning = false;
             }
-
-            long posMs = Math.max(0L, nextDeckPlayer.getCurrentPosition());
-            float live = nextDeckDsp.getLiveRms();
-            float bass = nextDeckDsp.getBassRms();
-
-            if (live >= 0.024f || bass >= 0.015f) {
-                nextDeckAudibleTicks++;
-                if (nextDeckAudibleTicks >= 2 && nextDeckFirstAudibleMs < 0L) {
-                    nextDeckFirstAudibleMs = Math.max(0L, posMs - 160L);
-                }
-            } else {
-                nextDeckAudibleTicks = 0;
-            }
-
-            if (live >= 0.062f || bass >= 0.038f) {
-                nextDeckFirstMusicBodyMs = posMs;
-            }
-
-            boolean timedOut = (now - nextDeckIntroScanStartWallMs) >= 4800L;
-            if (nextDeckFirstMusicBodyMs >= 0L || posMs >= 14500L || timedOut || st == Player.STATE_ENDED) {
-                finishNextDeckIntroScanOnMainThread(computeSmartScannedCueMs());
-                return;
-            }
-            mainHandler.postDelayed(this, 40L);
         }
     };
 
     private final Runnable nativeProgressTicker = new Runnable() {
         @Override
         public void run() {
+            try {
+                runNativeProgressTickInternal();
+            } catch (Throwable ignored) {
+                if (nativeAudioActive) {
+                    mainHandler.postDelayed(this, 500L);
+                }
+            }
+        }
+
+        private void runNativeProgressTickInternal() {
             if (nativeAudioActive && nativePlayer != null && nativePlayer.isPlaying()) {
                 long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
                 long nowMs = SystemClock.elapsedRealtime();
@@ -614,114 +629,128 @@ public class SoundifyMediaService extends Service {
     private final Player.Listener primaryPlayerListener = new Player.Listener() {
         @Override
         public void onPlaybackStateChanged(int playbackState) {
-            if (nativePlayer == null || !nativeAudioActive) return;
-            long durMs = nativePlayer.getDuration();
-            if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
-                currentDurationSec = durMs / 1000.0;
-            }
-            long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
-            currentPositionSec = posMs / 1000.0;
+            try {
+                if (nativePlayer == null || !nativeAudioActive) return;
+                long durMs = nativePlayer.getDuration();
+                if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
+                    currentDurationSec = durMs / 1000.0;
+                }
+                long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+                currentPositionSec = posMs / 1000.0;
 
-            if (playbackState == Player.STATE_BUFFERING) {
-                emitNativeState("buffering", null);
-            } else if (playbackState == Player.STATE_READY) {
-                updatePlaybackState(nativePlayer.isPlaying(), currentPositionSec, currentDurationSec, currentPlaybackRate);
-                emitNativeState("ready", null);
-            } else if (playbackState == Player.STATE_ENDED) {
-                if (isCrossfading) {
-                    mainHandler.removeCallbacks(crossfadeTicker);
-                    mainHandler.post(crossfadeTicker);
-                    return;
-                }
-                if ("one".equals(nativeRepeatMode)) {
-                    nativeReplayOnMainThread();
-                    return;
-                }
-                if ("all".equals(nativeRepeatMode) && nativeQueue.size() == 1) {
-                    nativeReplayOnMainThread();
-                    return;
-                }
-                if (
-                    nextDeckPlayer != null &&
-                    !nextDeckTrackId.isEmpty() &&
-                    nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE &&
-                    nextDeckPlayer.getPlayerError() == null
-                ) {
-                    mainHandler.removeCallbacks(nativeProgressTicker);
-                    pendingCrossfade = false;
-                    mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
-                    executeReadyNativeCrossfade(
-                        nativeAutoMixEnabled ? 650L : 120L,
-                        currentNativeVolume,
-                        nextDeckTitle,
-                        nextDeckArtist,
-                        nextDeckAlbum,
-                        nextDeckCoverUrl,
-                        nextDeckDurationSec,
-                        nextDeckTrackId,
-                        true
-                    );
-                    return;
-                }
-                int nextIdx = resolveNextQueueIndex(true);
-                if (nextIdx >= 0 && nextIdx < nativeQueue.size()) {
-                    NativeQueueEntry nextEntry = nativeQueue.get(nextIdx);
-                    if (nextEntry != null && nextEntry.url != null && !nextEntry.url.isEmpty()) {
-                        nativeQueueIndex = nextIdx;
-                        pendingNextQueueIndex = -1;
-                        playNativeQueueEntryOnMainThread(nextEntry);
-                        emitNativeState("trackChanged", null);
+                if (playbackState == Player.STATE_BUFFERING) {
+                    emitNativeState("buffering", null);
+                } else if (playbackState == Player.STATE_READY) {
+                    updatePlaybackState(nativePlayer.isPlaying(), currentPositionSec, currentDurationSec, currentPlaybackRate);
+                    emitNativeState("ready", null);
+                } else if (playbackState == Player.STATE_ENDED) {
+                    if (isCrossfading) {
+                        mainHandler.removeCallbacks(crossfadeTicker);
+                        mainHandler.post(crossfadeTicker);
                         return;
                     }
+                    if ("one".equals(nativeRepeatMode)) {
+                        nativeReplayOnMainThread();
+                        return;
+                    }
+                    if ("all".equals(nativeRepeatMode) && nativeQueue.size() == 1) {
+                        nativeReplayOnMainThread();
+                        return;
+                    }
+                    if (
+                        nextDeckPlayer != null &&
+                        !nextDeckTrackId.isEmpty() &&
+                        nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE &&
+                        nextDeckPlayer.getPlayerError() == null
+                    ) {
+                        mainHandler.removeCallbacks(nativeProgressTicker);
+                        pendingCrossfade = false;
+                        mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
+                        executeReadyNativeCrossfade(
+                            nativeAutoMixEnabled ? 650L : 120L,
+                            currentNativeVolume,
+                            nextDeckTitle,
+                            nextDeckArtist,
+                            nextDeckAlbum,
+                            nextDeckCoverUrl,
+                            nextDeckDurationSec,
+                            nextDeckTrackId,
+                            true
+                        );
+                        return;
+                    }
+                    int nextIdx = resolveNextQueueIndex(true);
+                    if (nextIdx >= 0 && nextIdx < nativeQueue.size()) {
+                        NativeQueueEntry nextEntry = nativeQueue.get(nextIdx);
+                        if (nextEntry != null && nextEntry.url != null && !nextEntry.url.isEmpty()) {
+                            nativeQueueIndex = nextIdx;
+                            pendingNextQueueIndex = -1;
+                            playNativeQueueEntryOnMainThread(nextEntry);
+                            emitNativeState("trackChanged", null);
+                            return;
+                        }
+                    }
+                    mainHandler.removeCallbacks(nativeProgressTicker);
+                    isPlaying = false;
+                    releaseWakeLock();
+                    updatePlaybackState(false, currentDurationSec, currentDurationSec, currentPlaybackRate);
+                    emitNativeState("ended", null);
                 }
-                mainHandler.removeCallbacks(nativeProgressTicker);
-                isPlaying = false;
-                releaseWakeLock();
-                updatePlaybackState(false, currentDurationSec, currentDurationSec, currentPlaybackRate);
-                emitNativeState("ended", null);
-            }
+            } catch (Throwable ignored) {}
         }
 
         @Override
         public void onIsPlayingChanged(boolean playing) {
-            if (nativePlayer == null || !nativeAudioActive) return;
-            if ((isCrossfading || isSwitchingNativeTrack) && !playing) {
-                return;
-            }
-            if (!playing && nativePlayer.getPlayWhenReady() && nativePlayer.getPlaybackState() == Player.STATE_BUFFERING) {
-                isPlaying = true;
-                acquireWakeLock();
-                emitNativeState("buffering", null);
-                return;
-            }
-            isPlaying = playing;
-            long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
-            currentPositionSec = posMs / 1000.0;
-            mainHandler.removeCallbacks(nativeProgressTicker);
-            if (playing) {
-                acquireWakeLock();
-                mainHandler.postDelayed(nativeProgressTicker, 250L);
-            } else {
-                releaseWakeLock();
-            }
-            updatePlaybackState(playing, currentPositionSec, currentDurationSec, currentPlaybackRate);
-            emitNativeState("state", null);
+            try {
+                if (nativePlayer == null || !nativeAudioActive) return;
+                if ((isCrossfading || isSwitchingNativeTrack) && !playing) {
+                    return;
+                }
+                if (!playing && nativePlayer.getPlayWhenReady() && nativePlayer.getPlaybackState() == Player.STATE_BUFFERING) {
+                    isPlaying = true;
+                    acquireWakeLock();
+                    emitNativeState("buffering", null);
+                    return;
+                }
+                isPlaying = playing;
+                long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+                currentPositionSec = posMs / 1000.0;
+                mainHandler.removeCallbacks(nativeProgressTicker);
+                if (playing) {
+                    acquireWakeLock();
+                    mainHandler.postDelayed(nativeProgressTicker, 250L);
+                } else {
+                    releaseWakeLock();
+                }
+                updatePlaybackState(playing, currentPositionSec, currentDurationSec, currentPlaybackRate);
+                emitNativeState("state", null);
+            } catch (Throwable ignored) {}
         }
 
         @Override
         public void onPlayerError(PlaybackException error) {
-            if (!nativeAudioActive || isCrossfading) return;
-            mainHandler.removeCallbacks(nativeProgressTicker);
-            isPlaying = false;
-            releaseWakeLock();
-            updatePlaybackState(false, currentPositionSec, currentDurationSec, currentPlaybackRate);
-            emitNativeState("error", error);
+            try {
+                if (!nativeAudioActive || isCrossfading) return;
+                mainHandler.removeCallbacks(nativeProgressTicker);
+                isPlaying = false;
+                releaseWakeLock();
+                updatePlaybackState(false, currentPositionSec, currentDurationSec, currentPlaybackRate);
+                emitNativeState("error", error);
+            } catch (Throwable ignored) {}
         }
     };
 
     private final Runnable pendingCrossfadeWaitTicker = new Runnable() {
         @Override
         public void run() {
+            try {
+                runPendingCrossfadeWaitInternal();
+            } catch (Throwable ignored) {
+                pendingCrossfade = false;
+            }
+        }
+
+        private void runPendingCrossfadeWaitInternal() {
             if (!pendingCrossfade) return;
             if (
                 !nativeAudioActive ||
@@ -778,32 +807,44 @@ public class SoundifyMediaService extends Service {
     private final Runnable nativeFadeOutTicker = new Runnable() {
         @Override
         public void run() {
-            if (fadingOutPlayer == null) return;
-            int st = fadingOutPlayer.getPlaybackState();
-            long elapsedMs = SystemClock.elapsedRealtime() - fadeOutStartMs;
-            double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(300L, fadeOutDurationMs)));
-            double easedOut = 0.5 - 0.5 * Math.cos(p * Math.PI);
-            float outGain = (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.35) * fadeOutInitialVolume);
             try {
-                fadingOutPlayer.setVolume(Math.max(0.0f, outGain));
-            } catch (Exception ignored) {}
-            if (fadingOutDsp != null) {
-                double outT = Math.max(0.0, Math.min(1.0, (p - 0.18) / 0.72));
-                double outSmooth = outT * outT * (3.0 - 2.0 * outT);
-                fadingOutDsp.setHighPassHz(outT <= 0.0 ? 0.0f : (float) (30.0 + outSmooth * 650.0));
-            }
+                if (fadingOutPlayer == null) return;
+                int st = fadingOutPlayer.getPlaybackState();
+                long elapsedMs = SystemClock.elapsedRealtime() - fadeOutStartMs;
+                double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(300L, fadeOutDurationMs)));
+                double easedOut = 0.5 - 0.5 * Math.cos(p * Math.PI);
+                float outGain = (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.35) * fadeOutInitialVolume);
+                try {
+                    fadingOutPlayer.setVolume(Math.max(0.0f, outGain));
+                } catch (Exception ignored) {}
+                if (fadingOutDsp != null) {
+                    double outT = Math.max(0.0, Math.min(1.0, (p - 0.18) / 0.72));
+                    double outSmooth = outT * outT * (3.0 - 2.0 * outT);
+                    fadingOutDsp.setHighPassHz(outT <= 0.0 ? 0.0f : (float) (30.0 + outSmooth * 650.0));
+                }
 
-            if (p < 1.0 && st != Player.STATE_ENDED && st != Player.STATE_IDLE) {
-                mainHandler.postDelayed(this, 16L);
-                return;
+                if (p < 1.0 && st != Player.STATE_ENDED && st != Player.STATE_IDLE) {
+                    mainHandler.postDelayed(this, 16L);
+                    return;
+                }
+                stopFadingOutPlayerOnMainThread();
+            } catch (Throwable ignored) {
+                stopFadingOutPlayerOnMainThread();
             }
-            stopFadingOutPlayerOnMainThread();
         }
     };
 
     private final Runnable crossfadeTicker = new Runnable() {
         @Override
         public void run() {
+            try {
+                runCrossfadeTickInternal();
+            } catch (Throwable ignored) {
+                isCrossfading = false;
+            }
+        }
+
+        private void runCrossfadeTickInternal() {
             if (!isCrossfading || nativePlayer == null || (!crossfadeFadeInOnly && nextDeckPlayer == null) || !nativeAudioActive) {
                 isCrossfading = false;
                 return;
@@ -1024,12 +1065,26 @@ public class SoundifyMediaService extends Service {
         releaseWakeLock();
         abandonAudioFocus();
         if (mediaSession != null) {
-            mediaSession.setActive(false);
-            mediaSession.release();
+            try {
+                mediaSession.setActive(false);
+                mediaSession.release();
+            } catch (Exception ignored) {}
             mediaSession = null;
         }
-        executorService.shutdownNow();
-        autoMixAnalyzerExecutor.shutdownNow();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Exception ignored) {}
+        isForeground = false;
+        try {
+            executorService.shutdownNow();
+        } catch (Exception ignored) {}
+        try {
+            autoMixAnalyzerExecutor.shutdownNow();
+        } catch (Exception ignored) {}
         super.onDestroy();
     }
 
@@ -1528,7 +1583,18 @@ public class SoundifyMediaService extends Service {
         }
     }
 
-    public void updateMetadata(String title, String artist, String album, String coverUrl, double durationSec, String trackId) {
+    public void updateMetadata(
+        final String title,
+        final String artist,
+        final String album,
+        final String coverUrl,
+        final double durationSec,
+        final String trackId
+    ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> updateMetadata(title, artist, album, coverUrl, durationSec, trackId));
+            return;
+        }
         this.currentTitle = (title != null && !title.isEmpty()) ? title : "Soundify";
         this.currentArtist = (artist != null) ? artist : "";
         this.currentAlbum = (album != null) ? album : "";
@@ -1553,25 +1619,81 @@ public class SoundifyMediaService extends Service {
         }
     }
 
-    public void ensureForegroundNotification() {
+    private Notification buildMinimalFallbackNotification() {
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(this, CHANNEL_ID)
+            : new Notification.Builder(this);
+        return builder
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(currentTitle != null && !currentTitle.isEmpty() ? currentTitle : "Soundify")
+            .setContentText(currentArtist != null ? currentArtist : "")
+            .setOngoing(isPlaying)
+            .setOnlyAlertOnce(true)
+            .build();
+    }
+
+    private boolean startForegroundSafely(Notification notification) {
         try {
-            Notification notification = buildNotification();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
             } else {
                 startForeground(NOTIFICATION_ID, notification);
             }
             isForeground = true;
-        } catch (Exception ignored) {}
+            return true;
+        } catch (Throwable primaryErr) {
+            try {
+                Notification fallback = buildMinimalFallbackNotification();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(NOTIFICATION_ID, fallback, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+                } else {
+                    startForeground(NOTIFICATION_ID, fallback);
+                }
+                isForeground = true;
+                return true;
+            } catch (Throwable fallbackErr) {
+                try {
+                    startForeground(NOTIFICATION_ID, buildMinimalFallbackNotification());
+                    isForeground = true;
+                    return true;
+                } catch (Throwable ignored) {
+                    return false;
+                }
+            }
+        }
     }
 
-    public void updatePlaybackState(boolean playing, double positionSec, double durationSec, double playbackRate) {
+    public void ensureForegroundNotification() {
+        Notification notification;
+        try {
+            notification = buildNotification();
+        } catch (Throwable t) {
+            notification = buildMinimalFallbackNotification();
+        }
+        startForegroundSafely(notification);
+    }
+
+    public void updatePlaybackState(
+        final boolean playing,
+        final double positionSec,
+        final double durationSec,
+        final double playbackRate
+    ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> updatePlaybackState(playing, positionSec, durationSec, playbackRate));
+            return;
+        }
         this.isPlaying = playing;
         this.currentPositionSec = Math.max(0.0, positionSec);
         if (durationSec > 0) {
             this.currentDurationSec = durationSec;
         }
         this.currentPlaybackRate = playbackRate > 0 ? playbackRate : 1.0;
+
+        this.nativeSnapshotPlaying = playing;
+        this.nativeSnapshotPosSec = this.currentPositionSec;
+        this.nativeSnapshotDurSec = this.currentDurationSec;
+        this.nativeSnapshotSpeed = (float) this.currentPlaybackRate;
 
         // Note: Do NOT call requestAudioFocus() here. Audio decoding runs inside Chromium WebView's
         // <audio> element, which already acquires and manages Android Audio Focus natively.
@@ -1596,13 +1718,13 @@ public class SoundifyMediaService extends Service {
                 .putString(MediaMetadata.METADATA_KEY_ALBUM, currentAlbum)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, (long) (currentDurationSec * 1000));
 
-            if (cachedArtworkBitmap != null) {
+            if (cachedArtworkBitmap != null && !cachedArtworkBitmap.isRecycled()) {
                 builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, cachedArtworkBitmap);
                 builder.putBitmap(MediaMetadata.METADATA_KEY_ART, cachedArtworkBitmap);
             }
 
             mediaSession.setMetadata(builder.build());
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
     }
 
     private void applyPlaybackState() {
@@ -1624,15 +1746,54 @@ public class SoundifyMediaService extends Service {
                 .setState(state, positionMs, (float) currentPlaybackRate);
 
             mediaSession.setPlaybackState(stateBuilder.build());
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
+    }
+
+    private static Bitmap decodeSampledBitmap(byte[] bytes, int maxDim) {
+        if (bytes == null || bytes.length == 0) return null;
+        BitmapFactory.Options boundsOpts = new BitmapFactory.Options();
+        boundsOpts.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, boundsOpts);
+        int rawW = boundsOpts.outWidth;
+        int rawH = boundsOpts.outHeight;
+        if (rawW <= 0 || rawH <= 0) return null;
+
+        int inSampleSize = 1;
+        while ((rawW / inSampleSize) > maxDim * 2 || (rawH / inSampleSize) > maxDim * 2) {
+            inSampleSize *= 2;
+        }
+        BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+        decodeOpts.inSampleSize = Math.max(1, inSampleSize);
+        decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, decodeOpts);
+    }
+
+    private static byte[] readArtworkBytesCapped(InputStream is, int maxBytes) throws java.io.IOException {
+        if (is == null) return null;
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        int total = 0;
+        while ((n = is.read(buf)) > 0) {
+            total += n;
+            if (total > maxBytes) {
+                return null;
+            }
+            bos.write(buf, 0, n);
+        }
+        return bos.toByteArray();
     }
 
     private void loadArtworkAsync(final String rawCoverUrl) {
         final int reqSeq = artworkRequestSeq.incrementAndGet();
         if (rawCoverUrl == null || rawCoverUrl.isEmpty() || rawCoverUrl.startsWith("blob:")) {
-            cachedArtworkBitmap = null;
-            applyMediaMetadata();
-            updateNotification();
+            mainHandler.post(() -> {
+                if (reqSeq == artworkRequestSeq.get()) {
+                    cachedArtworkBitmap = null;
+                    applyMediaMetadata();
+                    updateNotification();
+                }
+            });
             return;
         }
 
@@ -1647,72 +1808,80 @@ public class SoundifyMediaService extends Service {
             coverUrl = rawCoverUrl;
         }
 
-        executorService.execute(() -> {
-            if (reqSeq != artworkRequestSeq.get()) {
-                return;
-            }
-            try {
-                Bitmap bitmap = null;
-                if (coverUrl.startsWith("data:image/")) {
-                    int commaIndex = coverUrl.indexOf(',');
-                    if (commaIndex != -1) {
-                        byte[] decoded = Base64.decode(coverUrl.substring(commaIndex + 1), Base64.DEFAULT);
-                        bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
-                    }
-                } else if (coverUrl.startsWith("http://") || coverUrl.startsWith("https://")) {
-                    URL url = new URL(coverUrl);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setConnectTimeout(5000);
-                    conn.setReadTimeout(5000);
-                    conn.setRequestProperty("User-Agent", APP_USER_AGENT);
-                    conn.setRequestProperty("X-App-Version", APP_VERSION_HEADER);
-                    conn.setInstanceFollowRedirects(true);
-                    conn.connect();
-                    if (conn.getResponseCode() == 200) {
-                        InputStream is = conn.getInputStream();
-                        bitmap = BitmapFactory.decodeStream(is);
-                        is.close();
-                    }
-                    conn.disconnect();
-                }
-
+        try {
+            executorService.execute(() -> {
                 if (reqSeq != artworkRequestSeq.get()) {
-                    if (bitmap != null && !bitmap.isRecycled()) {
-                        bitmap.recycle();
-                    }
                     return;
                 }
-
-                if (bitmap == null) {
-                    try {
-                        bitmap = BitmapFactory.decodeResource(getResources(), com.soundify.app.R.mipmap.ic_launcher);
-                    } catch (Exception ignored) {}
-                }
-
-                if (bitmap != null && reqSeq == artworkRequestSeq.get() && rawCoverUrl.equals(currentCoverUrl)) {
-                    int maxDim = 512;
-                    int width = bitmap.getWidth();
-                    int height = bitmap.getHeight();
-                    if (width > maxDim || height > maxDim) {
-                        float ratio = Math.min((float) maxDim / width, (float) maxDim / height);
-                        int targetW = Math.round(ratio * width);
-                        int targetH = Math.round(ratio * height);
-                        bitmap = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true);
-                    }
-                    final Bitmap finalBitmap = bitmap;
-                    mainHandler.post(() -> {
-                        if (reqSeq == artworkRequestSeq.get() && rawCoverUrl.equals(currentCoverUrl)) {
-                            cachedArtworkBitmap = finalBitmap;
-                            applyMediaMetadata();
-                            updateNotification();
-                        } else if (finalBitmap != null && !finalBitmap.isRecycled()) {
-                            finalBitmap.recycle();
+                try {
+                    Bitmap bitmap = null;
+                    if (coverUrl.startsWith("data:image/")) {
+                        int commaIndex = coverUrl.indexOf(',');
+                        if (commaIndex != -1) {
+                            byte[] decoded = Base64.decode(coverUrl.substring(commaIndex + 1), Base64.DEFAULT);
+                            bitmap = decodeSampledBitmap(decoded, 512);
                         }
-                    });
-                } else {
-                    if (bitmap != null && !bitmap.isRecycled()) {
-                        bitmap.recycle();
+                    } else if (coverUrl.startsWith("http://") || coverUrl.startsWith("https://")) {
+                        URL url = new URL(coverUrl);
+                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                        conn.setConnectTimeout(5000);
+                        conn.setReadTimeout(5000);
+                        conn.setRequestProperty("User-Agent", APP_USER_AGENT);
+                        conn.setRequestProperty("X-App-Version", APP_VERSION_HEADER);
+                        conn.setInstanceFollowRedirects(true);
+                        try {
+                            conn.connect();
+                            if (conn.getResponseCode() == 200) {
+                                try (InputStream is = conn.getInputStream()) {
+                                    byte[] imgBytes = readArtworkBytesCapped(is, 4 * 1024 * 1024);
+                                    if (imgBytes != null) {
+                                        bitmap = decodeSampledBitmap(imgBytes, 512);
+                                    }
+                                }
+                            }
+                        } finally {
+                            conn.disconnect();
+                        }
                     }
+
+                    if (reqSeq != artworkRequestSeq.get()) {
+                        return;
+                    }
+
+                    if (bitmap == null) {
+                        try {
+                            bitmap = BitmapFactory.decodeResource(getResources(), com.soundify.app.R.mipmap.ic_launcher);
+                        } catch (Throwable ignored) {}
+                    }
+
+                    if (bitmap != null && reqSeq == artworkRequestSeq.get() && rawCoverUrl.equals(currentCoverUrl)) {
+                        int maxDim = 512;
+                        int width = bitmap.getWidth();
+                        int height = bitmap.getHeight();
+                        if (width > maxDim || height > maxDim) {
+                            float ratio = Math.min((float) maxDim / width, (float) maxDim / height);
+                            int targetW = Math.max(1, Math.round(ratio * width));
+                            int targetH = Math.max(1, Math.round(ratio * height));
+                            bitmap = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true);
+                        }
+                        final Bitmap finalBitmap = bitmap;
+                        mainHandler.post(() -> {
+                            if (reqSeq == artworkRequestSeq.get() && rawCoverUrl.equals(currentCoverUrl)) {
+                                cachedArtworkBitmap = finalBitmap;
+                                applyMediaMetadata();
+                                updateNotification();
+                            }
+                        });
+                    } else if (reqSeq == artworkRequestSeq.get()) {
+                        mainHandler.post(() -> {
+                            if (reqSeq == artworkRequestSeq.get()) {
+                                cachedArtworkBitmap = null;
+                                applyMediaMetadata();
+                                updateNotification();
+                            }
+                        });
+                    }
+                } catch (Throwable ignored) {
                     if (reqSeq == artworkRequestSeq.get()) {
                         mainHandler.post(() -> {
                             if (reqSeq == artworkRequestSeq.get()) {
@@ -1723,18 +1892,8 @@ public class SoundifyMediaService extends Service {
                         });
                     }
                 }
-            } catch (Exception ignored) {
-                if (reqSeq == artworkRequestSeq.get()) {
-                    mainHandler.post(() -> {
-                        if (reqSeq == artworkRequestSeq.get()) {
-                            cachedArtworkBitmap = null;
-                            applyMediaMetadata();
-                            updateNotification();
-                        }
-                    });
-                }
-            }
-        });
+            });
+        } catch (Throwable ignored) {}
     }
 
     private Notification buildNotification() {
@@ -1774,7 +1933,7 @@ public class SoundifyMediaService extends Service {
             .setDeleteIntent(deletePendingIntent)
             .setContentIntent(createContentIntent());
 
-        if (cachedArtworkBitmap != null) {
+        if (cachedArtworkBitmap != null && !cachedArtworkBitmap.isRecycled()) {
             builder.setLargeIcon(cachedArtworkBitmap);
         }
 
@@ -1819,25 +1978,12 @@ public class SoundifyMediaService extends Service {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
 
-            if (isPlaying) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-                } else {
-                    startForeground(NOTIFICATION_ID, notification);
-                }
-                isForeground = true;
+            if (isPlaying || isForeground) {
+                startForegroundSafely(notification);
             } else {
-                if (isForeground) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-                    } else {
-                        startForeground(NOTIFICATION_ID, notification);
-                    }
-                } else {
-                    nm.notify(NOTIFICATION_ID, notification);
-                }
+                nm.notify(NOTIFICATION_ID, notification);
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
     }
 
     private androidx.media3.common.AudioAttributes buildMediaAudioAttributes() {
@@ -2028,6 +2174,12 @@ public class SoundifyMediaService extends Service {
         NativeAudioPlugin.emitState(payload);
     }
 
+    private volatile boolean nativeSnapshotPlaying = false;
+    private volatile boolean nativeSnapshotBuffering = false;
+    private volatile double nativeSnapshotPosSec = 0.0;
+    private volatile double nativeSnapshotDurSec = 0.0;
+    private volatile float nativeSnapshotSpeed = 1.0f;
+
     public JSObject getNativeStateSnapshot() {
         JSObject obj = new JSObject();
         obj.put("active", nativeAudioActive);
@@ -2038,25 +2190,44 @@ public class SoundifyMediaService extends Service {
         obj.put("queueIndex", nativeQueueIndex);
         obj.put("repeatMode", nativeRepeatMode);
         obj.put("shuffle", nativeShuffle);
-        if (nativePlayer != null && nativeAudioActive) {
-            int state = nativePlayer.getPlaybackState();
-            long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
-            long nowMs = SystemClock.elapsedRealtime();
-            if (nowMs < crossfadePositionGuardUntilMs && Math.abs(posMs - crossfadePositionFloorMs) > 2500L) {
-                posMs = crossfadePositionFloorMs;
-            }
-            long durMs = nativePlayer.getDuration();
-            double durSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
-                ? durMs / 1000.0
-                : currentDurationSec;
-            boolean effectivePlaying = nativePlayer.getPlayWhenReady()
-                && state != Player.STATE_IDLE
-                && state != Player.STATE_ENDED;
-            obj.put("isPlaying", effectivePlaying);
-            obj.put("isBuffering", state == Player.STATE_BUFFERING);
-            obj.put("position", posMs / 1000.0);
-            obj.put("duration", durSec);
-            obj.put("playbackRate", nativePlayer.getPlaybackParameters().speed);
+        if (nativePlayer != null && nativeAudioActive && Looper.myLooper() == Looper.getMainLooper()) {
+            try {
+                int state = nativePlayer.getPlaybackState();
+                long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+                long nowMs = SystemClock.elapsedRealtime();
+                if (nowMs < crossfadePositionGuardUntilMs && Math.abs(posMs - crossfadePositionFloorMs) > 2500L) {
+                    posMs = crossfadePositionFloorMs;
+                }
+                long durMs = nativePlayer.getDuration();
+                double durSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
+                    ? durMs / 1000.0
+                    : currentDurationSec;
+                boolean effectivePlaying = nativePlayer.getPlayWhenReady()
+                    && state != Player.STATE_IDLE
+                    && state != Player.STATE_ENDED;
+                double posSec = posMs / 1000.0;
+                float spd = nativePlayer.getPlaybackParameters().speed;
+
+                nativeSnapshotPlaying = effectivePlaying;
+                nativeSnapshotBuffering = state == Player.STATE_BUFFERING;
+                nativeSnapshotPosSec = posSec;
+                nativeSnapshotDurSec = durSec;
+                nativeSnapshotSpeed = spd;
+
+                obj.put("isPlaying", effectivePlaying);
+                obj.put("isBuffering", state == Player.STATE_BUFFERING);
+                obj.put("position", posSec);
+                obj.put("duration", durSec);
+                obj.put("playbackRate", spd);
+                return obj;
+            } catch (Throwable ignored) {}
+        }
+        if (nativeAudioActive) {
+            obj.put("isPlaying", nativeSnapshotPlaying);
+            obj.put("isBuffering", nativeSnapshotBuffering);
+            obj.put("position", nativeSnapshotPosSec);
+            obj.put("duration", nativeSnapshotDurSec > 0 ? nativeSnapshotDurSec : currentDurationSec);
+            obj.put("playbackRate", nativeSnapshotSpeed > 0 ? nativeSnapshotSpeed : (float) currentPlaybackRate);
         } else {
             obj.put("isPlaying", isPlaying);
             obj.put("isBuffering", false);
@@ -2081,6 +2252,9 @@ public class SoundifyMediaService extends Service {
         final String trackId
     ) {
         mainHandler.post(() -> {
+            if (url == null || url.trim().isEmpty()) {
+                return;
+            }
             ensureNativePlayerOnMainThread(authToken);
             currentNativeVolume = Math.max(0.0f, Math.min(1.0f, volume));
             cancelCrossfadeOnMainThread();
@@ -2092,7 +2266,7 @@ public class SoundifyMediaService extends Service {
                 updateMetadata(title, artist, album, coverUrl, durationSec, trackId);
             }
             nativeAudioActive = true;
-            lastNativeStreamUrl = url != null ? url : "";
+            lastNativeStreamUrl = url.trim();
             lastNativeAuthToken = authToken != null ? authToken : "";
             currentPositionSec = Math.max(0.0, startSec);
             currentPlaybackRate = playbackRate > 0 ? playbackRate : 1.0f;
@@ -2100,6 +2274,11 @@ public class SoundifyMediaService extends Service {
                 currentDurationSec = durationSec;
             }
             isPlaying = true;
+            nativeSnapshotPlaying = true;
+            nativeSnapshotBuffering = true;
+            nativeSnapshotPosSec = currentPositionSec;
+            nativeSnapshotDurSec = currentDurationSec;
+            nativeSnapshotSpeed = (float) currentPlaybackRate;
             acquireWakeLock();
             ensureForegroundNotification();
 
@@ -2109,13 +2288,14 @@ public class SoundifyMediaService extends Service {
                     nativePlayer.setVolume(currentNativeVolume);
                     nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
                     nativePlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
-                    nativePlayer.setMediaItem(MediaItem.fromUri(url));
+                    nativePlayer.setMediaItem(MediaItem.fromUri(url.trim()));
                     if (startSec > 0) {
                         nativePlayer.seekTo((long) (startSec * 1000.0));
                     }
                     nativePlayer.setPlayWhenReady(true);
                     nativePlayer.prepare();
                     nativePlayer.play();
+                } catch (Throwable ignored) {
                 } finally {
                     isSwitchingNativeTrack = false;
                 }
@@ -2207,37 +2387,41 @@ public class SoundifyMediaService extends Service {
                 }
 
                 if (!captureAUrl.isEmpty() && !captureBUrl.isEmpty()) {
-                    autoMixAnalyzerExecutor.execute(() -> {
-                        AutoMixPcmAnalyzer.AutoMixPlanNative analyzedPlan = AutoMixPcmAnalyzer.analyzeStreamPair(
-                            getApplicationContext(),
-                            captureAId,
-                            captureAUrl,
-                            captureDurA,
-                            captureBId,
-                            captureBUrl,
-                            analyzerHeaders
-                        );
-                        if (analyzedPlan == null) {
-                            return;
-                        }
-                        mainHandler.post(() -> {
-                            if (planSeq != autoMixPlanSeq.get() || isCrossfading) {
-                                return;
-                            }
-                            if (!captureAId.equals(currentTrackId) || !captureBId.equals(nextDeckTrackId)) {
-                                return;
-                            }
-                            scheduledAutoMixPlan = analyzedPlan;
-                            abortNextDeckIntroScanOnMainThread();
-                            long offsetMsB = Math.max(0L, (analyzedPlan.startOffsetSampleOnTrackB * 1000L) / Math.max(8000, analyzedPlan.sampleRate));
-                            nextDeckStartMs = offsetMsB;
-                            if (nextDeckPlayer != null && nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE && nextDeckPlayer.isCurrentMediaItemSeekable()) {
-                                try {
-                                    nextDeckPlayer.seekTo(offsetMsB);
-                                } catch (Exception ignored) {}
-                            }
+                    try {
+                        autoMixAnalyzerExecutor.execute(() -> {
+                            try {
+                                AutoMixPcmAnalyzer.AutoMixPlanNative analyzedPlan = AutoMixPcmAnalyzer.analyzeStreamPair(
+                                    getApplicationContext(),
+                                    captureAId,
+                                    captureAUrl,
+                                    captureDurA,
+                                    captureBId,
+                                    captureBUrl,
+                                    analyzerHeaders
+                                );
+                                if (analyzedPlan == null) {
+                                    return;
+                                }
+                                mainHandler.post(() -> {
+                                    if (planSeq != autoMixPlanSeq.get() || isCrossfading) {
+                                        return;
+                                    }
+                                    if (!captureAId.equals(currentTrackId) || !captureBId.equals(nextDeckTrackId)) {
+                                        return;
+                                    }
+                                    scheduledAutoMixPlan = analyzedPlan;
+                                    abortNextDeckIntroScanOnMainThread();
+                                    long offsetMsB = Math.max(0L, (analyzedPlan.startOffsetSampleOnTrackB * 1000L) / Math.max(8000, analyzedPlan.sampleRate));
+                                    nextDeckStartMs = offsetMsB;
+                                    if (nextDeckPlayer != null && nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE && nextDeckPlayer.isCurrentMediaItemSeekable()) {
+                                        try {
+                                            nextDeckPlayer.seekTo(offsetMsB);
+                                        } catch (Exception ignored) {}
+                                    }
+                                });
+                            } catch (Throwable ignored) {}
                         });
-                    });
+                    } catch (Throwable ignored) {}
                 }
             }
         });
@@ -2685,6 +2869,7 @@ public class SoundifyMediaService extends Service {
                 nativePlayer.setPlayWhenReady(true);
                 nativePlayer.prepare();
                 nativePlayer.play();
+            } catch (Throwable ignored) {
             } finally {
                 isSwitchingNativeTrack = false;
             }

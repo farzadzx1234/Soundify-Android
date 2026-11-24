@@ -202,21 +202,21 @@ describe("v1.0.39 Fixes: Library Remove Modal, Cross-Source Playlist Identity & 
     expect(nowPlayingSrc).toContain("isTrackInCustomPlaylist");
   });
 
-  it("4. Synchronizes v1.0.39 / versionCode 40 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.39");
-    expect(APP_BUILD_NUMBER).toBe(40);
+  it("4. Preserves v1.0.39 / versionCode >= 40 forward synchronization across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION.length).toBeGreaterThanOrEqual(5);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(40);
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));
-    expect(pkg.version).toBe("1.0.39");
+    expect(pkg.version).toBe(APP_VERSION);
     const swJs = fs.readFileSync(path.resolve(__dirname, "../../public/sw.js"), "utf8");
-    expect(swJs).toContain("soundify-v1.0.39-b40");
+    expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
     const gradle = fs.readFileSync(path.resolve(__dirname, "../../android/app/build.gradle"), "utf8");
-    expect(gradle).toContain("versionCode 40");
-    expect(gradle).toContain('versionName "1.0.39"');
+    expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+    expect(gradle).toContain(`versionName "${APP_VERSION}"`);
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.39"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.39"');
+    expect(service).toContain(`APP_USER_AGENT = "Soundify-Android/${APP_VERSION}"`);
+    expect(service).toContain(`APP_VERSION_HEADER = "${APP_VERSION}"`);
   });
 });

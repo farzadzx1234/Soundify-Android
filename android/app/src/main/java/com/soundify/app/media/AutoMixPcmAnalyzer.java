@@ -163,18 +163,27 @@ public final class AutoMixPcmAnalyzer {
         if (urlA == null || urlA.isEmpty() || urlB == null || urlB.isEmpty()) {
             return null;
         }
-        DecodedSegment segA = decodeWindow(context, urlA, headers, true, knownDurationSecA);
-        if (segA == null || segA.pcm.length < segA.sampleRate * 8) {
-            return null;
-        }
-        DecodedSegment segB = decodeWindow(context, urlB, headers, false, 0.0);
-        if (segB == null || segB.pcm.length < segB.sampleRate * 4) {
-            return null;
-        }
+        try {
+            DecodedSegment segA = decodeWindow(context, urlA, headers, true, knownDurationSecA);
+            if (segA == null || segA.pcm.length < segA.sampleRate * 8) {
+                return null;
+            }
+            int sampleRate = segA.sampleRate;
+            SegmentStats statsA = analyzeSegment(segA, true);
+            // Release Track A PCM (~7MB) before decoding Track B to minimize peak heap pressure
+            segA = null;
 
-        SegmentStats statsA = analyzeSegment(segA, true);
-        SegmentStats statsB = analyzeSegment(segB, false);
-        return solvePlan(trackAId, trackBId, statsA, statsB, segA.sampleRate);
+            DecodedSegment segB = decodeWindow(context, urlB, headers, false, 0.0);
+            if (segB == null || segB.pcm.length < segB.sampleRate * 4) {
+                return null;
+            }
+            SegmentStats statsB = analyzeSegment(segB, false);
+            segB = null;
+
+            return solvePlan(trackAId, trackBId, statsA, statsB, sampleRate);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static DecodedSegment decodeWindow(

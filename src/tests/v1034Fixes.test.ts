@@ -56,7 +56,7 @@ describe("Soundify v1.0.34 Device Music/Soundify Detection, Strict Fallback Arti
   });
 
   it("synchronizes v1.0.34+ / versionCode >= 35 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.3[4-9]\d*$/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(?:3[4-9]|[4-9]\d+|\d{3,})$/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(35);
 
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));

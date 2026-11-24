@@ -115,7 +115,7 @@ describe("Soundify v1.0.33 Offline Covers, Strict Offline Playback & 5-Stage Aut
   });
 
   it("synchronizes v1.0.33+ / versionCode >= 34 across all version manifests", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.3[3-9]\d*$/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(?:3[3-9]|[4-9]\d+|\d{3,})$/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(34);
 
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));

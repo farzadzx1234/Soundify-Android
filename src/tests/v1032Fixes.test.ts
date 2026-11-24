@@ -48,7 +48,7 @@ describe("Soundify v1.0.32 Real PCM AutoMix Intro/Outro, Timeline Guard & Locked
   });
 
   it("synchronizes v1.0.32+ / versionCode 33+ across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.3[2-9]\d*$/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(?:3[2-9]|[4-9]\d+|\d{3,})$/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(33);
 
     const pkg = JSON.parse(

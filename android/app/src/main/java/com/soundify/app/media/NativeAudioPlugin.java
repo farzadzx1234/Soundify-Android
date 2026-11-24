@@ -85,15 +85,21 @@ public class NativeAudioPlugin extends Plugin {
                 intent.putExtra("coverUrl", coverUrl != null ? coverUrl : "");
                 intent.putExtra("duration", safeDuration);
                 intent.putExtra("trackId", trackId != null ? trackId : "");
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    getContext().startForegroundService(intent);
-                } else {
-                    getContext().startService(intent);
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        getContext().startForegroundService(intent);
+                    } else {
+                        getContext().startService(intent);
+                    }
+                } catch (Exception fgsEx) {
+                    try {
+                        getContext().startService(intent);
+                    } catch (Exception ignored) {}
                 }
             }
             call.resolve();
-        } catch (Exception ex) {
-            call.reject("Failed to play native stream: " + ex.getMessage(), ex);
+        } catch (Throwable ex) {
+            call.reject("Failed to play native stream: " + ex.getMessage());
         }
     }
 
@@ -158,18 +164,20 @@ public class NativeAudioPlugin extends Plugin {
 
     @PluginMethod
     public void getState(PluginCall call) {
-        SoundifyMediaService service = SoundifyMediaService.getInstance();
-        if (service != null) {
-            call.resolve(service.getNativeStateSnapshot());
-        } else {
-            JSObject ret = new JSObject();
-            ret.put("active", false);
-            ret.put("isPlaying", false);
-            ret.put("isBuffering", false);
-            ret.put("position", 0.0);
-            ret.put("duration", 0.0);
-            call.resolve(ret);
-        }
+        try {
+            SoundifyMediaService service = SoundifyMediaService.getInstance();
+            if (service != null) {
+                call.resolve(service.getNativeStateSnapshot());
+                return;
+            }
+        } catch (Throwable ignored) {}
+        JSObject ret = new JSObject();
+        ret.put("active", false);
+        ret.put("isPlaying", false);
+        ret.put("isBuffering", false);
+        ret.put("position", 0.0);
+        ret.put("duration", 0.0);
+        call.resolve(ret);
     }
 
     @PluginMethod

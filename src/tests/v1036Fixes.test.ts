@@ -49,7 +49,7 @@ describe("Soundify v1.0.36 <=7s Soundify Mix Ceiling & Permanent Offline Covers/
   });
 
   it("synchronizes v1.0.36+ / versionCode >= 37 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.3[6-9]\d*$/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(?:3[6-9]|[4-9]\d+|\d{3,})$/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(37);
 
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));

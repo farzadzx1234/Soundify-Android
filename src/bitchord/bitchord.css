@@ -1,0 +1,348 @@
+/* ==========================================================================
+   BitChord-Inspired Design Skin (100% Scoped & Self-Contained)
+   Zero impact when data-ui-skin="bitchord" is absent.
+   ========================================================================== */
+
+:root[data-ui-skin="bitchord"] {
+  --bc-ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --bc-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --sf-bg-dark: #09090b;
+  --sf-bg-light: #f4f4f6;
+  --sf-surface-dark: rgba(255, 255, 255, 0.045);
+  --sf-card-dark: rgba(255, 255, 255, 0.048);
+  --sf-card-hover-dark: rgba(255, 255, 255, 0.085);
+  --sf-card-border-dark: 1px solid rgba(255, 255, 255, 0.075);
+  --sf-card-hover-border-dark: 1px solid rgba(255, 255, 255, 0.14);
+  --sf-card-shadow-dark:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 28px rgba(0, 0, 0, 0.38);
+  --sf-chrome-bg-dark: rgba(18, 18, 22, 0.82);
+  --sf-chrome-border-dark: 1px solid rgba(255, 255, 255, 0.11);
+  --sf-chrome-shadow-dark:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 18px 44px rgba(0, 0, 0, 0.62);
+
+  --sf-text-dark: #fafafa;
+  --sf-muted-dark: #a1a1aa;
+  --sf-border-dark: rgba(255, 255, 255, 0.08);
+  --sf-hairline-dark: rgba(255, 255, 255, 0.07);
+  --sf-subtle-dark: rgba(255, 255, 255, 0.055);
+  --sf-subtle-hover-dark: rgba(255, 255, 255, 0.1);
+  --sf-accent-dark: #f4f4f5;
+  --sf-accent-light: #18181b;
+}
+
+/* Ensure dark-resolved BitChord tokens apply cleanly */
+:root[data-ui-skin="bitchord"][data-resolved-theme="dark"],
+:root[data-ui-skin="bitchord"].dark {
+  --sf-bg: #09090b;
+  --sf-text: #fafafa;
+  --sf-muted: #a1a1aa;
+  --sf-card: rgba(255, 255, 255, 0.048);
+  --sf-card-hover: rgba(255, 255, 255, 0.085);
+  --sf-card-border: 1px solid rgba(255, 255, 255, 0.075);
+  --sf-card-hover-border: 1px solid rgba(255, 255, 255, 0.14);
+  --sf-chrome-bg: rgba(18, 18, 22, 0.86);
+  --sf-chrome-border: 1px solid rgba(255, 255, 255, 0.11);
+  --sf-border: rgba(255, 255, 255, 0.08);
+  --sf-hairline: rgba(255, 255, 255, 0.07);
+  --sf-subtle: rgba(255, 255, 255, 0.055);
+  --sf-subtle-hover: rgba(255, 255, 255, 0.1);
+  --sf-accent: #f4f4f5;
+  --lg-fill: #fafafa;
+}
+
+/* Light-resolved BitChord tokens (clean daylight zinc palette) */
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] {
+  --sf-bg: #f4f4f6;
+  --sf-text: #09090b;
+  --sf-muted: #52525b;
+  --sf-card: rgba(255, 255, 255, 0.88);
+  --sf-card-hover: rgba(255, 255, 255, 0.98);
+  --sf-card-border: 1px solid rgba(9, 9, 11, 0.07);
+  --sf-card-hover-border: 1px solid rgba(9, 9, 11, 0.14);
+  --sf-chrome-bg: rgba(255, 255, 255, 0.88);
+  --sf-chrome-border: 1px solid rgba(9, 9, 11, 0.08);
+  --sf-border: rgba(9, 9, 11, 0.08);
+  --sf-hairline: rgba(9, 9, 11, 0.07);
+  --sf-subtle: rgba(9, 9, 11, 0.045);
+  --sf-subtle-hover: rgba(9, 9, 11, 0.09);
+  --sf-accent: #18181b;
+  --lg-fill: #18181b;
+}
+
+/* Preserve high contrast on GlassControls filled primary buttons when --sf-accent is #f4f4f5 in dark mode */
+:root[data-ui-skin="bitchord"][data-resolved-theme="dark"] button.sf-btn[style*="var(--sf-accent)"],
+:root[data-ui-skin="bitchord"].dark button.sf-btn[style*="var(--sf-accent)"] {
+  color: #09090b !important;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+}
+
+/* Scoped surface & card polish matching BitChord's frosted clean geometry */
+:root[data-ui-skin="bitchord"] .sf-content-surface {
+  border-radius: 24px;
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+}
+
+:root[data-ui-skin="bitchord"] .track-list-row {
+  border-radius: 18px;
+  transition: transform 0.2s var(--bc-ease-spring), background-color 0.18s ease;
+}
+
+:root[data-ui-skin="bitchord"] .track-list-row:active {
+  transform: scale3d(0.985, 0.985, 1);
+}
+
+/* BitChord Pill & Glass Surface Primitives */
+.bc-pill-glass {
+  background: rgba(20, 20, 24, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    0 14px 36px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-pill-glass {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+.bc-mini-pill {
+  background: rgba(22, 22, 26, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 14px 34px rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(28px) saturate(1.45);
+  -webkit-backdrop-filter: blur(28px) saturate(1.45);
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-mini-pill {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.bc-player-surface {
+  background: #0d0d10;
+}
+
+.bc-player-top-scrim {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.48) 0%,
+    rgba(0, 0, 0, 0.18) 65%,
+    transparent 100%
+  );
+}
+
+.bc-control-btn {
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease, background-color 0.18s ease;
+}
+
+.bc-control-btn:active {
+  transform: scale3d(0.93, 0.93, 1);
+}
+
+/* Full-bleed edge-to-edge artwork fade into atmospheric backdrop */
+.bc-hero-art-mask {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 0.98) 54%,
+    rgba(0, 0, 0, 0.72) 76%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 0.98) 54%,
+    rgba(0, 0, 0, 0.72) 76%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+
+/* Queue bottom soft fade mask */
+.bc-queue-fade {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 1) 4%,
+    rgba(0, 0, 0, 1) 86%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 1) 4%,
+    rgba(0, 0, 0, 1) 86%,
+    transparent 100%
+  );
+}
+
+/* BitChord Glass Context Menu */
+.bc-glass-menu {
+  background: rgba(34, 32, 36, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 24px 64px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(32px) saturate(1.5);
+  -webkit-backdrop-filter: blur(32px) saturate(1.5);
+}
+
+/* Custom GPU-composited keyframes (transform & opacity only) */
+@keyframes bc-sheet-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-sheet-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, var(--bc-drag-y, 0px), 0);
+  }
+  to {
+    opacity: 0.88;
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
+@keyframes bc-menu-pop {
+  from {
+    opacity: 0;
+    transform: scale3d(0.92, 0.92, 1) translate3d(0, -6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: scale3d(1, 1, 1) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-view-switch {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale3d(0.98, 0.98, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes bc-float-dock-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale3d(0.97, 0.97, 1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes bc-ambient-breathe {
+  0% {
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+  100% {
+    transform: translate3d(2.5%, -3%, 0) scale3d(1.07, 1.07, 1);
+  }
+}
+
+.bc-sheet-in {
+  animation: bc-sheet-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backface-visibility: hidden;
+}
+
+.bc-sheet-out {
+  animation: bc-sheet-out 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  backface-visibility: hidden;
+}
+
+.bc-menu-pop {
+  animation: bc-menu-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backface-visibility: hidden;
+}
+
+.bc-view-switch {
+  animation: bc-view-switch 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backface-visibility: hidden;
+}
+
+.bc-float-dock-in {
+  animation: bc-float-dock-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backface-visibility: hidden;
+}
+
+.bc-ambient-breathe {
+  animation: bc-ambient-breathe 14s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+[data-paused="true"] .bc-ambient-breathe {
+  animation-play-state: paused;
+}
+
+/* Tactile BitChord Pill Scrubber */
+.bc-scrubber-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  margin: 0;
+  touch-action: none;
+}
+
+.bc-scrubber-range:focus {
+  outline: none;
+}
+
+.bc-scrubber-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.bc-scrubber-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bc-sheet-in,
+  .bc-sheet-out,
+  .bc-menu-pop,
+  .bc-view-switch,
+  .bc-float-dock-in,
+  .bc-ambient-breathe {
+    animation: none !important;
+  }
+  .bc-control-btn,
+  :root[data-ui-skin="bitchord"] .track-list-row {
+    transition: opacity 0.15s ease, background-color 0.15s ease !important;
+  }
+}

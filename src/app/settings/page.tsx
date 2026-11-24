@@ -36,6 +36,7 @@ import { isAndroidNative } from "@/lib/androidBridge";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { isNativeAudioAvailable } from "@/lib/nativeAudioBridge";
 import { setAutoMixEnabled, useAutoMixEnabled } from "@/lib/smartAutoMix";
+import { BitChordSettingsCard } from "@/bitchord/BitChordSettingsCard";
 
 const LOCAL_PREF_EVENT = "soundify-local-pref-change";
 
@@ -591,6 +592,9 @@ export default function SettingsPage() {
           </div>
         </div>
       </section>
+
+      {/* Group 1.5: New Interface Experience (BitChord Skin Toggle) */}
+      <BitChordSettingsCard />
 
       {/* Group 2: Audio & Playback */}
       <section aria-label={t("settingsPlaybackGroup")} className="space-y-2">

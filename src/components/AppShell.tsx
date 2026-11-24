@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -39,6 +39,14 @@ import {
   triggerImmediateNetworkProbe,
 } from "@/lib/networkResilience";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
+import { isBitChordBootActive } from "@/bitchord/designMode";
+
+const BitChordShell = dynamic(
+  () => import("@/bitchord/BitChordShell").then((m) => m.BitChordShell),
+  { ssr: false },
+);
+
+const subscribeNoop = () => () => {};
 
 const NowPlayingOverlay = dynamic(
   () => import("./NowPlayingOverlay").then((m) => m.NowPlayingOverlay),
@@ -68,6 +76,14 @@ function LazyAuthDialog() {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const bitChordActive = useSyncExternalStore(subscribeNoop, isBitChordBootActive, () => false);
+  if (bitChordActive) {
+    return <BitChordShell>{children}</BitChordShell>;
+  }
+  return <DefaultAppShell>{children}</DefaultAppShell>;
+}
+
+function DefaultAppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, openAuthDialog, logout } = useAuth();

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "glisse/styles.css";
 import "./globals.css";
+import "../bitchord/bitchord.css";
 import { I18nProvider } from "@/context/I18nContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { AuthProvider } from "@/context/AuthContext";
@@ -54,7 +55,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <link rel="dns-prefetch" href="https://soundify.mashhad-ix.ir" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var s=localStorage.getItem("color-scheme");document.querySelector('meta[name="color-scheme"]').content=s??"light dark";var d=s==="dark"||(s!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(s==="light"||s==="dark")document.documentElement.setAttribute("data-theme",s);document.documentElement.setAttribute("data-resolved-theme",d?"dark":"light");document.documentElement.classList.toggle("dark",d);var l=localStorage.getItem("soundify_lang");if(l==="en"||l==="fa"){document.documentElement.lang=l;document.documentElement.dir=l==="fa"?"rtl":"ltr";}}catch(e){}`,
+            __html: `try{var s=localStorage.getItem("color-scheme");document.querySelector('meta[name="color-scheme"]').content=s??"light dark";var d=s==="dark"||(s!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(s==="light"||s==="dark")document.documentElement.setAttribute("data-theme",s);document.documentElement.setAttribute("data-resolved-theme",d?"dark":"light");document.documentElement.classList.toggle("dark",d);var l=localStorage.getItem("soundify_lang");if(l==="en"||l==="fa"){document.documentElement.lang=l;document.documentElement.dir=l==="fa"?"rtl":"ltr";}if(localStorage.getItem("soundify_ui_bitchord_v1")==="true"){document.documentElement.setAttribute("data-ui-skin","bitchord");}}catch(e){}`,
           }}
         />
         <link

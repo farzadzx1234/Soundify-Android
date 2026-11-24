@@ -38,6 +38,11 @@ export default function ErrorBoundary({
               ? "دستگاه شما در حالت آفلاین قرار دارد. آهنگ‌های دانلود شده در کتابخانه همیشه در دسترس هستند."
               : "خطایی هنگام بارگذاری اطلاعات پیش آمد. می‌توانید دوباره تلاش کنید یا به صفحه اصلی بازگردید."}
           </p>
+          {!isOffline && error?.message && (
+            <p className="text-[11px] font-mono text-white/45 break-words px-2" dir="ltr">
+              {String(error.message).slice(0, 140)}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">

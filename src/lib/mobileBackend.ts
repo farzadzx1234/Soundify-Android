@@ -140,7 +140,7 @@ export function resolveMobileV1Url(subPath: string): string {
  * Resolves media stream URLs and cover art images for audio playback on Android.
  */
 export function resolveMediaUrl(url: string | null | undefined): string {
-  if (!url) return "";
+  if (!url || typeof url !== "string") return "";
 
   // Helper to ensure external audio stream URLs include appVersion (HTTP 426 gate) and token (HTTP 403 cross-origin <audio> auth)
   const ensureAppVersion = (target: string): string => {
@@ -296,14 +296,16 @@ export function getTrackShareUrl(trackId: string): string {
  * Resolves the static-export-safe internal app href for the Track Detail & Comments page.
  */
 export function getTrackDetailHref(trackId: string): string {
-  return `/track/default?id=${encodeURIComponent(trackId)}`;
+  const safeId = typeof trackId === "string" ? trackId : String(trackId ?? "");
+  return `/track/default?id=${encodeURIComponent(safeId)}`;
 }
 
 /**
  * Resolves the static-export-safe internal app href for the Playlist Detail page.
  */
 export function getPlaylistDetailHref(playlistId: string): string {
-  return `/playlist/default?id=${encodeURIComponent(playlistId)}`;
+  const safeId = typeof playlistId === "string" ? playlistId : String(playlistId ?? "");
+  return `/playlist/default?id=${encodeURIComponent(safeId)}`;
 }
 
 /**

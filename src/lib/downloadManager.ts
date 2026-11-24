@@ -6,6 +6,7 @@ import { parseLrc } from "./lrc";
 import {
   deleteNativeOfflineFiles,
   exportTrackToDeviceStorage,
+  getLocalDeviceCoverDataUrl,
   listDeviceSoundifyAudioFiles,
   type DeviceSoundifyAudioFile,
 } from "./mediaExport";
@@ -234,6 +235,12 @@ function unregisterDownloadedTrackIndex(trackId: string): void {
   downloadedTrackIds.delete(trackId);
   deviceAudioUriByTrackId.delete(trackId);
   deviceCoverUriByTrackId.delete(trackId);
+  for (let i = discoveredDeviceFiles.length - 1; i >= 0; i--) {
+    const parsed = parseDeviceFileMeta(discoveredDeviceFiles[i]);
+    if (discoveredDeviceFiles[i].trackId === trackId || parsed.canonicalId === trackId) {
+      discoveredDeviceFiles.splice(i, 1);
+    }
+  }
   const meta = downloadedMetaById.get(trackId);
   if (meta) {
     if (meta.pageUrlKey && downloadedByPageUrl.get(meta.pageUrlKey) === trackId) {
@@ -250,8 +257,11 @@ function unregisterDownloadedTrackIndex(trackId: string): void {
   }
 }
 
-export function registerDeviceLocalAudioFile(file: DeviceSoundifyAudioFile): void {
-  if (!file || !file.uri) return;
+function parseDeviceFileMeta(file: DeviceSoundifyAudioFile): {
+  canonicalId: string;
+  title: string;
+  artist: string;
+} {
   const stem = (file.fileName || "")
     .replace(/\.(?:mp3|m4a|aac|ogg|opus|wav|flac)$/i, "")
     .trim();
@@ -266,6 +276,19 @@ export function registerDeviceLocalAudioFile(file: DeviceSoundifyAudioFile): voi
     file.trackId && file.trackId.trim()
       ? file.trackId.trim()
       : `device-${foldDownloadKeyPart(stem || file.fileName).replace(/\s+/g, "-") || "track"}`;
+  return {
+    canonicalId,
+    title: parsedTitle || stem || "Audio Track",
+    artist: parsedArtist || "Soundify",
+  };
+}
+
+export function registerDeviceLocalAudioFile(file: DeviceSoundifyAudioFile): void {
+  if (!file || !file.uri) return;
+  const parsed = parseDeviceFileMeta(file);
+  const canonicalId = parsed.canonicalId;
+  const parsedTitle = parsed.title;
+  const parsedArtist = parsed.artist;
 
   if (!discoveredDeviceFiles.some((d) => d.uri === file.uri)) {
     discoveredDeviceFiles.push(file);
@@ -273,7 +296,7 @@ export function registerDeviceLocalAudioFile(file: DeviceSoundifyAudioFile): voi
 
   registerDownloadedTrackIndex({
     id: canonicalId,
-    title: parsedTitle || stem,
+    title: parsedTitle,
     artistName: parsedArtist,
   });
 
@@ -284,13 +307,13 @@ export function registerDeviceLocalAudioFile(file: DeviceSoundifyAudioFile): voi
 
   const allFingerprints = new Set<string>(
     computeTrackDownloadFingerprints({
-      title: parsedTitle || stem,
+      title: parsedTitle,
       artistName: parsedArtist,
     }),
   );
   if (file.title || file.artist) {
     for (const fp of computeTrackDownloadFingerprints({
-      title: file.title || stem,
+      title: file.title || parsedTitle,
       artistName: file.artist || parsedArtist,
     })) {
       allFingerprints.add(fp);
@@ -1434,9 +1457,82 @@ export function useDownloadedTracks() {
   const refresh = async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      const all = await getAllDownloadedTracks();
+      const [all, liveDeviceFiles] = await Promise.all([
+        getAllDownloadedTracks(),
+        listDeviceSoundifyAudioFiles().catch(() => [] as DeviceSoundifyAudioFile[]),
+      ]);
+
+      for (const df of liveDeviceFiles) {
+        registerDeviceLocalAudioFile(df);
+      }
+
+      const idbIds = new Set<string>();
+      const idbFingerprints = new Set<string>();
+      for (const rec of all) {
+        if (rec?.trackId) idbIds.add(rec.trackId);
+        if (rec?.track) {
+          for (const fp of computeTrackDownloadFingerprints(rec.track)) {
+            idbFingerprints.add(fp);
+          }
+        }
+      }
+
+      const deviceOnlyRecords: DownloadedTrackRecord[] = [];
+      const seenDeviceIds = new Set<string>();
+      const allDeviceFiles = [...discoveredDeviceFiles];
+      for (const df of allDeviceFiles) {
+        if (!df?.uri) continue;
+        const meta = parseDeviceFileMeta(df);
+        const fps = computeTrackDownloadFingerprints({
+          title: meta.title,
+          artistName: meta.artist,
+        });
+        const matchedInIdb =
+          idbIds.has(meta.canonicalId) ||
+          fps.some((fp) => idbFingerprints.has(fp));
+        if (matchedInIdb || seenDeviceIds.has(meta.canonicalId)) {
+          continue;
+        }
+        seenDeviceIds.add(meta.canonicalId);
+        const syntheticTrack: Track = {
+          id: meta.canonicalId,
+          title: meta.title,
+          titleFa: meta.title,
+          artistId: "offline",
+          artistName: meta.artist,
+          artistNameFa: meta.artist,
+          artistAvatarColor: "#6366f1",
+          album: "Soundify Offline",
+          albumFa: "آفلاین ساندیفای",
+          genre: "Offline",
+          mood: "Offline",
+          coverUrl: df.coverUri || "",
+          audioUrl: df.uri,
+          durationSec: df.durationSec || 0,
+          waveform: [],
+          playsCount: 0,
+          likesCount: 0,
+          repostsCount: 0,
+          likedByMe: false,
+          repostedByMe: false,
+          source: (df.source as Track["source"]) || "local",
+          hasLyrics: false,
+          lyricsSource: "none",
+          createdAt: new Date().toISOString(),
+          accentColor: "#6366f1",
+        };
+        deviceOnlyRecords.push({
+          trackId: meta.canonicalId,
+          track: syntheticTrack,
+          audioBlob: new Blob([], { type: "audio/mpeg" }),
+          downloadedAt: Date.now(),
+          sizeBytes: df.sizeBytes || 0,
+        });
+      }
+
+      const combined = [...all, ...deviceOnlyRecords];
       const enriched = await Promise.all(
-        all.map(async (rec) => {
+        combined.map(async (rec) => {
           if (rec.coverBlob) {
             const coverUrl = await getDownloadedCoverBlobUrl(rec.trackId);
             if (coverUrl) {
@@ -1448,6 +1544,20 @@ export function useDownloadedTracks() {
                 },
               };
             }
+          }
+          const localDeviceAudioUri = resolveLocalDeviceAudioUri(rec.track);
+          const localDataCover = await getLocalDeviceCoverDataUrl({
+            trackId: rec.trackId,
+            audioUri: localDeviceAudioUri || undefined,
+          }).catch(() => null);
+          if (localDataCover) {
+            return {
+              ...rec,
+              track: {
+                ...rec.track,
+                coverUrl: localDataCover,
+              },
+            };
           }
           if (rec.track.coverUrl && !rec.track.coverUrl.startsWith("blob:")) {
             return {

@@ -5,26 +5,26 @@ import { APP_BUILD_NUMBER, APP_VERSION } from "@/lib/appVersion";
 import { analyzeTrackSegment, findBestFrequencyMatchPair, solveAutoMixPlan } from "@/lib/autoMixEngine";
 
 describe("Soundify v1.0.37 Missed Fade-Out Detection Fix", () => {
-  it("synchronizes v1.0.37 / versionCode 38 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toBe("1.0.37");
-    expect(APP_BUILD_NUMBER).toBe(38);
+  it("synchronizes v1.0.37+ / versionCode >= 38 across TS, package.json, sw.js, Gradle, and Java", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.(?:3[7-9]|[4-9]\d)$/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(38);
 
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));
-    expect(pkg.version).toBe("1.0.37");
+    expect(pkg.version).toBe(APP_VERSION);
 
     const swJs = fs.readFileSync(path.resolve(__dirname, "../../public/sw.js"), "utf8");
-    expect(swJs).toContain("soundify-v1.0.37-b38");
+    expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
 
     const gradle = fs.readFileSync(path.resolve(__dirname, "../../android/app/build.gradle"), "utf8");
-    expect(gradle).toContain("versionCode 38");
-    expect(gradle).toContain('versionName "1.0.37"');
+    expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+    expect(gradle).toContain(`versionName "${APP_VERSION}"`);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toContain('APP_USER_AGENT = "Soundify-Android/1.0.37"');
-    expect(service).toContain('APP_VERSION_HEADER = "1.0.37"');
+    expect(service).toContain(`APP_USER_AGENT = "Soundify-Android/${APP_VERSION}"`);
+    expect(service).toContain(`APP_VERSION_HEADER = "${APP_VERSION}"`);
   });
 
   it("trims long whisper fade-out tails perceptually and triggers mix on the audible fade slope instead of dead tail", () => {

@@ -314,6 +314,41 @@ public class NativeAudioPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void syncQueue(PluginCall call) {
+        String queueJson = call.getString("queueJson", "[]");
+        Integer currentIndex = call.getInt("currentIndex", -1);
+        String currentTrackId = call.getString("currentTrackId", "");
+        Boolean shuffle = call.getBoolean("shuffle", false);
+        String repeatMode = call.getString("repeatMode", "off");
+        Boolean autoMixEnabled = call.getBoolean("autoMixEnabled", true);
+        String authToken = call.getString("authToken", "");
+
+        SoundifyMediaService service = SoundifyMediaService.getInstance();
+        if (service != null) {
+            service.syncNativeQueue(
+                queueJson != null ? queueJson : "[]",
+                currentIndex != null ? currentIndex : -1,
+                currentTrackId != null ? currentTrackId : "",
+                Boolean.TRUE.equals(shuffle),
+                repeatMode != null ? repeatMode : "off",
+                autoMixEnabled == null || Boolean.TRUE.equals(autoMixEnabled),
+                authToken != null ? authToken : ""
+            );
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setAutoMixEnabled(PluginCall call) {
+        Boolean enabled = call.getBoolean("enabled", true);
+        SoundifyMediaService service = SoundifyMediaService.getInstance();
+        if (service != null) {
+            service.setNativeAutoMixEnabled(enabled == null || Boolean.TRUE.equals(enabled));
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
     public void replay(PluginCall call) {
         SoundifyMediaService service = SoundifyMediaService.getInstance();
         if (service != null) {

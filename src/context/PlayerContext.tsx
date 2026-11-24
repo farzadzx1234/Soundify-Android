@@ -47,13 +47,14 @@ import {
 } from "@/lib/offlineAudioStorage";
 import {
   computeTrackDownloadFingerprint,
+  registerDeviceLocalAudioFile,
   resolveDownloadedTrackId,
   resolveDownloadedTrackIdAsync,
   resolveLocalDeviceAudioUri,
   resolveLocalDeviceCoverUri,
   subscribeToDownloads,
 } from "@/lib/downloadManager";
-import { getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
+import { exportTrackToDeviceStorage, getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
 import { prebufferTrack, recordPlaybackSessionStep } from "@/lib/audioBufferManager";
 import {
   initAndroidMediaSession,
@@ -66,17 +67,20 @@ import {
   isNativeAudioAvailable,
   nativeAudioCancelCrossfade,
   nativeAudioFadeOutAndStop,
+  nativeAudioGetState,
   nativeAudioPause,
   nativeAudioPlay,
   nativeAudioPlayStream,
   nativeAudioPrepareNextStream,
   nativeAudioReplay,
   nativeAudioSeek,
+  nativeAudioSetAutoMixEnabled,
   nativeAudioSetPlaybackRate,
   nativeAudioSetRepeatMode,
   nativeAudioSetVolume,
   nativeAudioStartCrossfade,
   nativeAudioStop,
+  nativeAudioSyncQueue,
   subscribeNativeAudioState,
 } from "@/lib/nativeAudioBridge";
 import {
@@ -2404,14 +2408,41 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             matchedDownloadedId ? getDownloadedCoverBlobUrl(offlineStorageId) : Promise.resolve(null),
           ]);
           let resolvedBlobUrl = blobUrlRaw;
+          let directRec: Awaited<ReturnType<typeof getDownloadedTrack>> = null;
           if (!resolvedBlobUrl && matchedDownloadedId) {
-            const directRec = await getDownloadedTrack(offlineStorageId).catch(() => null);
+            directRec = await getDownloadedTrack(offlineStorageId).catch(() => null);
             if (directRec?.audioBlob && directRec.audioBlob.size > 0 && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
               resolvedBlobUrl = URL.createObjectURL(directRec.audioBlob);
             }
           }
-          if (localDeviceUri && isNativeAudioAvailable()) {
-            audioSource = localDeviceUri;
+          let nativeFileUri = localDeviceUri;
+          if (!nativeFileUri && isNativeAudioAvailable() && matchedDownloadedId) {
+            if (!directRec) {
+              directRec = await getDownloadedTrack(offlineStorageId).catch(() => null);
+            }
+            if (directRec?.audioBlob && directRec.audioBlob.size > 0) {
+              const exported = await exportTrackToDeviceStorage(
+                trackToPlay,
+                directRec.audioBlob,
+                directRec.coverBlob,
+              ).catch(() => null);
+              const exportedUri = exported?.privateUri || exported?.uri;
+              if (exportedUri) {
+                nativeFileUri = exportedUri;
+                registerDeviceLocalAudioFile({
+                  uri: exportedUri,
+                  fileName: `${trackToPlay.artistName || "Soundify"} - ${trackToPlay.title || trackToPlay.id}.mp3`,
+                  title: trackToPlay.title || trackToPlay.id,
+                  artist: trackToPlay.artistName || "Soundify",
+                  trackId: offlineStorageId,
+                  durationSec: trackToPlay.durationSec || 0,
+                  sizeBytes: directRec.audioBlob.size,
+                });
+              }
+            }
+          }
+          if (nativeFileUri && isNativeAudioAvailable()) {
+            audioSource = nativeFileUri;
           } else if (resolvedBlobUrl) {
             audioSource = resolvedBlobUrl;
           }
@@ -2423,7 +2454,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               localCoverUri ||
               (await getLocalDeviceCoverDataUrl({
                 trackId: offlineStorageId,
-                audioUri: localDeviceUri || undefined,
+                audioUri: nativeFileUri || undefined,
               }));
             if (fallbackCover) {
               trackToPlay = { ...trackToPlay, coverUrl: fallbackCover };
@@ -3075,10 +3106,83 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     broadcastLeaderState();
   }, [broadcastLeaderState, getTabId, sendRemoteCommand, shouldActAsRemoteController]);
 
+  const syncNativeQueueSnapshot = useCallback(
+    (qList: Track[], active: Track | null, shuf: boolean, rep: RepeatMode) => {
+      if (!isNativeAudioAvailable()) return;
+      const items = qList
+        .filter((tr): tr is Track => Boolean(tr && tr.id))
+        .map((tr) => {
+          const localUri = resolveLocalDeviceAudioUri(tr);
+          let resolvedUrl = localUri || "";
+          if (!resolvedUrl) {
+            const norm = normalizeTrack(tr);
+            let rawAudio = norm.audioUrl;
+            if (isExternalTrack(norm) && (!rawAudio || rawAudio.includes("open.spotify.com") || rawAudio.includes("fallback-preview.mp3"))) {
+              const canonical = extractCanonicalExternalUrl(norm.pageUrl || norm.audioUrl, norm.id);
+              const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(norm.title, norm.artistName);
+              rawAudio = resolveMediaUrl(
+                `/api/stream/external?url=${encodeURIComponent(canonical || norm.id)}&id=${encodeURIComponent(norm.id)}&title=${encodeURIComponent(cleanT || norm.title || "")}&artist=${encodeURIComponent(cleanA || norm.artistName || "")}`,
+              );
+            }
+            resolvedUrl = stripFastStartParam(resolveMediaUrl(rawAudio));
+          }
+          const rawCover =
+            tr.coverUrl && !tr.coverUrl.startsWith("blob:")
+              ? resolveMediaUrl(tr.coverUrl)
+              : originalCoverUrlsRef.current[tr.id]
+                ? resolveMediaUrl(originalCoverUrlsRef.current[tr.id])
+                : "";
+          return {
+            id: tr.id,
+            url: resolvedUrl,
+            title: tr.title || "Soundify",
+            artist: tr.artistName || "",
+            album: tr.album || "",
+            coverUrl: rawCover,
+            duration: tr.durationSec || 0,
+          };
+        })
+        .filter((item) => Boolean(item.url));
+      const curIdx = active ? items.findIndex((it) => it.id === active.id) : -1;
+      void nativeAudioSyncQueue({
+        queue: items,
+        currentIndex: curIdx,
+        currentTrackId: active?.id || "",
+        shuffle: shuf,
+        repeatMode: rep,
+        autoMixEnabled: getAutoMixEnabled(),
+        authToken: getApiToken() || "",
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isNativeAudioAvailable()) return;
+    syncNativeQueueSnapshot(queue, currentTrack, shuffle, repeat);
+  }, [queue, currentTrack, shuffle, repeat, downloadVersion, syncNativeQueueSnapshot]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isNativeAudioAvailable()) return;
+    const syncAutoMixSetting = () => {
+      void nativeAudioSetAutoMixEnabled(getAutoMixEnabled());
+    };
+    syncAutoMixSetting();
+    window.addEventListener("soundify-automix-changed", syncAutoMixSetting);
+    window.addEventListener("storage", syncAutoMixSetting);
+    return () => {
+      window.removeEventListener("soundify-automix-changed", syncAutoMixSetting);
+      window.removeEventListener("storage", syncAutoMixSetting);
+    };
+  }, []);
+
   const toggleShuffle = useCallback(() => {
     setShuffle((s) => {
       const nextS = !s;
       shuffleRef.current = nextS;
+      if (isNativeAudioAvailable()) {
+        syncNativeQueueSnapshot(queueRef.current, currentTrackRef.current, nextS, repeatRef.current);
+      }
       if (!isThisDeviceActive) {
         void sendRemoteCommand("SET_SHUFFLE", { shuffle: nextS });
         return nextS;
@@ -3093,7 +3197,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       return nextS;
     });
-  }, [broadcastLeaderState, getTabId, isThisDeviceActive, sendRemoteCommand]);
+  }, [broadcastLeaderState, getTabId, isThisDeviceActive, sendRemoteCommand, syncNativeQueueSnapshot]);
 
   const cycleRepeat = useCallback(() => {
     setRepeat((r) => {
@@ -3101,6 +3205,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       repeatRef.current = nextR;
       if (isNativeAudioAvailable()) {
         void nativeAudioSetRepeatMode(nextR);
+        syncNativeQueueSnapshot(queueRef.current, currentTrackRef.current, shuffleRef.current, nextR);
       }
       if (!isThisDeviceActive) {
         void sendRemoteCommand("SET_REPEAT", { repeat: nextR });
@@ -3116,7 +3221,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       return nextR;
     });
-  }, [broadcastLeaderState, getTabId, isThisDeviceActive, sendRemoteCommand]);
+  }, [broadcastLeaderState, getTabId, isThisDeviceActive, sendRemoteCommand, syncNativeQueueSnapshot]);
 
   const setPlaybackRate = useCallback(
     (rate: number) => {
@@ -4578,7 +4683,39 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     audio.addEventListener("error", onError);
 
     const unsubApp = subscribeToAppState((inFg) => {
-      if (inFg && audio && !nativeAudioActiveRef.current) {
+      if (!inFg) return;
+      if (nativeAudioActiveRef.current) {
+        void nativeAudioGetState().then((st) => {
+          if (!st || !st.active || !nativeAudioActiveRef.current) return;
+          if (st.trackId && currentTrackRef.current?.id !== st.trackId) {
+            const matched = queueRef.current.find((t) => t.id === st.trackId);
+            if (matched) {
+              resetLyricsForTrackSwitch();
+              recordedPlayForIdRef.current = null;
+              currentTrackRef.current = matched;
+              setCurrentTrack(matched);
+              setCurrentlyPlayingTrackId(matched.id);
+              void loadLyricsForTrack(matched.id, false);
+            }
+          }
+          if (typeof st.position === "number" && Number.isFinite(st.position) && st.position >= 0) {
+            currentTimeRef.current = st.position;
+            setCurrentTime(st.position);
+          }
+          if (typeof st.duration === "number" && Number.isFinite(st.duration) && st.duration > 0) {
+            durationRef.current = st.duration;
+            setDuration(st.duration);
+          }
+          if (typeof st.isPlaying === "boolean") {
+            setIsPlaying(st.isPlaying);
+            isPlayingRef.current = st.isPlaying;
+          }
+          setIsBuffering(Boolean(st.isBuffering));
+          isBufferingRef.current = Boolean(st.isBuffering);
+          setIsCrossfading(false);
+          setCrossfadeFromTrack(null);
+        });
+      } else if (audio) {
         currentTimeRef.current = audio.currentTime;
         setCurrentTime(audio.currentTime);
       }
@@ -4605,7 +4742,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       audio.removeEventListener("loadedmetadata", onLoadedMetadata);
       audio.removeEventListener("error", onError);
     };
-  }, [audioDeckVersion, broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, getTabId, lang, notifyServerConnectivityIssue, savePlayerState, t, triggerExternalFallback, updateTrackInQueue]);
+  }, [audioDeckVersion, broadcastCurrentState, broadcastLeaderState, claimThisDevice, deviceId, getTabId, lang, loadLyricsForTrack, notifyServerConnectivityIssue, resetLyricsForTrackSwitch, savePlayerState, t, triggerExternalFallback, updateTrackInQueue]);
 
   // Intelligent Network Resilience subscription:
   // Keeps offline UI synced and automatically resumes interrupted playback when VPN/network returns.
@@ -4872,8 +5009,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         autoMixStartedRef.current = true;
         const outgoingTrack = currentTrackRef.current;
         const promoted =
-          autoMixTargetTrackRef.current ||
-          (state.trackId ? queueRef.current.find((t) => t.id === state.trackId) || null : null);
+          (state.trackId && autoMixTargetTrackRef.current?.id === state.trackId
+            ? autoMixTargetTrackRef.current
+            : null) ||
+          (state.trackId ? queueRef.current.find((t) => t.id === state.trackId) || null : null) ||
+          autoMixTargetTrackRef.current;
         setIsCrossfading(true);
         setCrossfadeFromTrack(outgoingTrack && promoted && outgoingTrack.id !== promoted.id ? outgoingTrack : null);
         if (promoted && currentTrackRef.current?.id !== promoted.id) {
@@ -4926,10 +5066,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (state.event === "crossfadeComplete") {
+      if (state.event === "crossfadeComplete" || state.event === "trackChanged") {
         const promoted =
-          autoMixTargetTrackRef.current ||
-          (state.trackId ? queueRef.current.find((t) => t.id === state.trackId) || null : null);
+          (state.trackId && autoMixTargetTrackRef.current?.id === state.trackId
+            ? autoMixTargetTrackRef.current
+            : null) ||
+          (state.trackId ? queueRef.current.find((t) => t.id === state.trackId) || null : null) ||
+          (state.event === "crossfadeComplete" ? autoMixTargetTrackRef.current : null);
         autoMixStartedRef.current = false;
         autoMixPreparedKeyRef.current = null;
         autoMixPreparingKeyRef.current = null;

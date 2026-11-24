@@ -18,6 +18,7 @@ import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.wifi.WifiManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -47,11 +48,17 @@ import androidx.media3.extractor.mp3.Mp3Extractor;
 import com.getcapacitor.JSObject;
 import com.soundify.app.MainActivity;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -82,12 +89,13 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.37";
-    private static final String APP_VERSION_HEADER = "1.0.37";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.38";
+    private static final String APP_VERSION_HEADER = "1.0.38";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
     private static final String WAKE_LOCK_TAG = "Soundify:MediaPlaybackWakeLock";
+    private static final String WIFI_LOCK_TAG = "Soundify:MediaPlaybackWifiLock";
     private static final String DEFAULT_BASE_URL = "https://soundify.mashhad-ix.ir";
 
     private static SoundifyMediaService instance;
@@ -96,6 +104,7 @@ public class SoundifyMediaService extends Service {
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final ExecutorService autoMixAnalyzerExecutor = Executors.newSingleThreadExecutor();
@@ -152,6 +161,39 @@ public class SoundifyMediaService extends Service {
     private String lastNativeStreamUrl = "";
     private String lastNativeAuthToken = "";
     private volatile String nativeRepeatMode = "off";
+    private volatile boolean nativeShuffle = false;
+    private volatile boolean nativeAutoMixEnabled = true;
+    private static final class NativeQueueEntry {
+        final String id;
+        final String url;
+        final String title;
+        final String artist;
+        final String album;
+        final String coverUrl;
+        final double durationSec;
+
+        NativeQueueEntry(
+            String id,
+            String url,
+            String title,
+            String artist,
+            String album,
+            String coverUrl,
+            double durationSec
+        ) {
+            this.id = id;
+            this.url = url;
+            this.title = title;
+            this.artist = artist;
+            this.album = album;
+            this.coverUrl = coverUrl;
+            this.durationSec = durationSec;
+        }
+    }
+    private final List<NativeQueueEntry> nativeQueue = new ArrayList<>();
+    private int nativeQueueIndex = -1;
+    private int pendingNextQueueIndex = -1;
+    private final Random queueShuffleRandom = new Random();
     private long crossfadeStartMs = 0L;
     private long crossfadeInvokedMs = 0L;
     private long crossfadePositionFloorMs = 0L;
@@ -354,15 +396,30 @@ public class SoundifyMediaService extends Service {
                 applyPlaybackState();
                 emitNativeState("state", null);
 
+                // Autonomous screen-off queue pre-buffer so AutoMix & Loop never stall when Chromium JS sleeps
+                double quickRemSec = currentDurationSec > 0 ? Math.max(0.0, currentDurationSec - currentPositionSec) : 999.0;
+                if (
+                    !"one".equals(nativeRepeatMode) &&
+                    !isCrossfading &&
+                    !pendingCrossfade &&
+                    (nextDeckTrackId == null || nextDeckTrackId.isEmpty()) &&
+                    !nativeQueue.isEmpty() &&
+                    (quickRemSec <= 45.0 || (currentDurationSec <= 0.0 && currentPositionSec >= 10.0))
+                ) {
+                    maybeAutoPrepareNextFromQueueOnMainThread();
+                }
+
                 // Sample-Accurate Stage 2 Native Plan Trigger (zero JS timer jitter)
                 AutoMixPcmAnalyzer.AutoMixPlanNative activePlan = scheduledAutoMixPlan;
                 boolean hasValidPlanForPair =
+                    nativeAutoMixEnabled &&
                     activePlan != null &&
                     currentTrackId.equals(activePlan.trackAId) &&
                     !nextDeckTrackId.isEmpty() &&
                     nextDeckTrackId.equals(activePlan.trackBId);
 
                 if (
+                    nativeAutoMixEnabled &&
                     !isCrossfading &&
                     !pendingCrossfade &&
                     !"one".equals(nativeRepeatMode) &&
@@ -375,10 +432,13 @@ public class SoundifyMediaService extends Service {
                         planStartMsA = Math.max(planStartMsA, Math.max(0L, durMs - 20000L));
                     }
                     long planDurMs = Math.min(7000L, Math.max(1200L, (activePlan.durationSamples * 1000L) / Math.max(8000, activePlan.sampleRate)));
-                    if (posMs >= planStartMsA) {
+                    if (posMs >= planStartMsA || (currentDurationSec >= 12.0 && quickRemSec <= 3.8 && quickRemSec >= 1.0)) {
+                        long effectivePlanDurMs = posMs >= planStartMsA
+                            ? planDurMs
+                            : Math.max(1800L, Math.min(planDurMs, (long) ((quickRemSec - 0.18) * 1000.0)));
                         resetOutroCounters();
                         executeReadyNativeCrossfade(
-                            planDurMs,
+                            effectivePlanDurMs,
                             currentNativeVolume,
                             nextDeckTitle,
                             nextDeckArtist,
@@ -392,31 +452,30 @@ public class SoundifyMediaService extends Service {
                     }
                 }
 
-                // Live DSP Fade-Out & Tail Safety Net (runs even when activePlan != null so fade-outs are never missed)
+                // Live DSP Fade-Out & Zero-Skip Tail Safety Net (runs even when screen is off or track has strong outro)
                 if (
+                    nativeAutoMixEnabled &&
                     !isCrossfading &&
                     !pendingCrossfade &&
                     !"one".equals(nativeRepeatMode) &&
-                    nativeDeckDsp != null &&
-                    nativeDeckDsp.getProcessedBlocks() >= 16 &&
                     nextDeckPlayer != null &&
                     !nextDeckTrackId.isEmpty() &&
-                    nextDeckPlayer.getPlaybackState() == Player.STATE_READY &&
-                    currentDurationSec >= 24.0
+                    currentDurationSec >= 12.0
                 ) {
                     double remSec = currentDurationSec - currentPositionSec;
-                    float body = nativeDeckDsp.getBodyRms();
-                    float live = nativeDeckDsp.getLiveRms();
-                    float bodyBass = nativeDeckDsp.getBodyBassRms();
-                    float bass = nativeDeckDsp.getBassRms();
-                    float bodyVocal = nativeDeckDsp.getBodyVocalRms();
-                    float vocal = nativeDeckDsp.getVocalMidRms();
+                    int nextState = nextDeckPlayer.getPlaybackState();
+                    float body = nativeDeckDsp != null ? nativeDeckDsp.getBodyRms() : 0.1f;
+                    float live = nativeDeckDsp != null ? nativeDeckDsp.getLiveRms() : 0.1f;
+                    float bodyBass = nativeDeckDsp != null ? nativeDeckDsp.getBodyBassRms() : 0.08f;
+                    float bass = nativeDeckDsp != null ? nativeDeckDsp.getBassRms() : 0.08f;
+                    float bodyVocal = nativeDeckDsp != null ? nativeDeckDsp.getBodyVocalRms() : 0.08f;
+                    float vocal = nativeDeckDsp != null ? nativeDeckDsp.getVocalMidRms() : 0.08f;
 
                     if (nextDeckIntroScanning && (remSec <= 8.0 || live < Math.max(0.014f, body * 0.14f))) {
                         abortNextDeckIntroScanOnMainThread();
                     }
 
-                    if (!nextDeckIntroScanning) {
+                    if (!nextDeckIntroScanning && nextState == Player.STATE_READY && nativeDeckDsp != null && nativeDeckDsp.getProcessedBlocks() >= 16) {
                         boolean vocalSafeNow = (bodyVocal <= 0.02f || vocal < bodyVocal * 0.48f);
 
                         // 1. Near-silence / whisper fade-out tail (catches slow fades even with activePlan != null)
@@ -472,7 +531,7 @@ public class SoundifyMediaService extends Service {
                             vocalDipTicks = 0;
                         }
 
-                        long maxSafeMs = Math.max(2600L, Math.min(6800L, (long) ((remSec - 0.25) * 1000.0)));
+                        long maxSafeMs = Math.max(1800L, Math.min(6800L, (long) ((remSec - 0.22) * 1000.0)));
                         long triggerCrossfadeMs = -1L;
                         if (silenceOutroTicks >= 3) {
                             triggerCrossfadeMs = Math.min(4200L, maxSafeMs);
@@ -484,6 +543,9 @@ public class SoundifyMediaService extends Service {
                             triggerCrossfadeMs = Math.min(6500L, maxSafeMs);
                         } else if (!hasValidPlanForPair && vocalDipTicks >= 3) {
                             triggerCrossfadeMs = Math.min(5400L, maxSafeMs);
+                        } else if (remSec <= 4.3 && remSec >= 1.1) {
+                            // Guaranteed zero-skip AutoMix fallback for songs with dense loud/vocal endings
+                            triggerCrossfadeMs = Math.max(1800L, Math.min(4200L, maxSafeMs));
                         }
 
                         if (triggerCrossfadeMs > 0L) {
@@ -501,6 +563,44 @@ public class SoundifyMediaService extends Service {
                             );
                             return;
                         }
+                    } else if (
+                        !nextDeckIntroScanning &&
+                        nextState == Player.STATE_READY &&
+                        remSec <= 4.3 &&
+                        remSec >= 1.1
+                    ) {
+                        // Even if DSP hasn't accumulated 12 blocks (e.g. seeked straight into outro), still mix smoothly
+                        long maxSafeMs = Math.max(1800L, Math.min(4200L, (long) ((remSec - 0.22) * 1000.0)));
+                        resetOutroCounters();
+                        executeReadyNativeCrossfade(
+                            maxSafeMs,
+                            currentNativeVolume,
+                            nextDeckTitle,
+                            nextDeckArtist,
+                            nextDeckAlbum,
+                            nextDeckCoverUrl,
+                            nextDeckDurationSec,
+                            nextDeckTrackId,
+                            false
+                        );
+                        return;
+                    } else if (
+                        !nextDeckIntroScanning &&
+                        nextState == Player.STATE_BUFFERING &&
+                        remSec <= 4.3 &&
+                        remSec >= 0.9
+                    ) {
+                        long waitFadeMs = Math.max(1800L, Math.min(4200L, (long) ((remSec - 0.2) * 1000.0)));
+                        startNativeCrossfade(
+                            waitFadeMs,
+                            currentNativeVolume,
+                            nextDeckTitle,
+                            nextDeckArtist,
+                            nextDeckAlbum,
+                            nextDeckCoverUrl,
+                            nextDeckDurationSec,
+                            nextDeckTrackId
+                        );
                     }
                 } else {
                     resetOutroCounters();
@@ -537,6 +637,10 @@ public class SoundifyMediaService extends Service {
                     nativeReplayOnMainThread();
                     return;
                 }
+                if ("all".equals(nativeRepeatMode) && nativeQueue.size() == 1) {
+                    nativeReplayOnMainThread();
+                    return;
+                }
                 if (
                     nextDeckPlayer != null &&
                     !nextDeckTrackId.isEmpty() &&
@@ -547,7 +651,7 @@ public class SoundifyMediaService extends Service {
                     pendingCrossfade = false;
                     mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
                     executeReadyNativeCrossfade(
-                        650L,
+                        nativeAutoMixEnabled ? 650L : 120L,
                         currentNativeVolume,
                         nextDeckTitle,
                         nextDeckArtist,
@@ -558,6 +662,17 @@ public class SoundifyMediaService extends Service {
                         true
                     );
                     return;
+                }
+                int nextIdx = resolveNextQueueIndex(true);
+                if (nextIdx >= 0 && nextIdx < nativeQueue.size()) {
+                    NativeQueueEntry nextEntry = nativeQueue.get(nextIdx);
+                    if (nextEntry != null && nextEntry.url != null && !nextEntry.url.isEmpty()) {
+                        nativeQueueIndex = nextIdx;
+                        pendingNextQueueIndex = -1;
+                        playNativeQueueEntryOnMainThread(nextEntry);
+                        emitNativeState("trackChanged", null);
+                        return;
+                    }
                 }
                 mainHandler.removeCallbacks(nativeProgressTicker);
                 isPlaying = false;
@@ -1255,13 +1370,25 @@ public class SoundifyMediaService extends Service {
                 wakeLock.setReferenceCounted(false);
             }
         } catch (Exception ignored) {}
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG);
+                wifiLock.setReferenceCounted(false);
+            }
+        } catch (Exception ignored) {}
     }
 
     public synchronized void acquireWakeLock() {
         try {
             if (wakeLock != null && !wakeLock.isHeld()) {
-                // Safety acquire for 45 minutes of continuous decoding
-                wakeLock.acquire(45 * 60 * 1000L);
+                // Safety acquire for 60 minutes of continuous background screen-off playback
+                wakeLock.acquire(60 * 60 * 1000L);
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (wifiLock != null && !wifiLock.isHeld()) {
+                wifiLock.acquire();
             }
         } catch (Exception ignored) {}
     }
@@ -1270,6 +1397,11 @@ public class SoundifyMediaService extends Service {
         try {
             if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
             }
         } catch (Exception ignored) {}
     }
@@ -1900,6 +2032,12 @@ public class SoundifyMediaService extends Service {
         JSObject obj = new JSObject();
         obj.put("active", nativeAudioActive);
         obj.put("trackId", currentTrackId != null ? currentTrackId : "");
+        obj.put("title", currentTitle != null ? currentTitle : "Soundify");
+        obj.put("artist", currentArtist != null ? currentArtist : "");
+        obj.put("coverUrl", currentCoverUrl != null ? currentCoverUrl : "");
+        obj.put("queueIndex", nativeQueueIndex);
+        obj.put("repeatMode", nativeRepeatMode);
+        obj.put("shuffle", nativeShuffle);
         if (nativePlayer != null && nativeAudioActive) {
             int state = nativePlayer.getPlaybackState();
             long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
@@ -2271,6 +2409,16 @@ public class SoundifyMediaService extends Service {
         nextDeckStreamUrl = "";
         nextDeckTrackId = "";
 
+        if (crossfadeNextTrackId != null && !crossfadeNextTrackId.isEmpty()) {
+            int matchedIdx = findQueueIndexById(crossfadeNextTrackId);
+            if (matchedIdx >= 0) {
+                nativeQueueIndex = matchedIdx;
+            } else if (pendingNextQueueIndex >= 0 && pendingNextQueueIndex < nativeQueue.size()) {
+                nativeQueueIndex = pendingNextQueueIndex;
+            }
+        }
+        pendingNextQueueIndex = -1;
+
         long initialPosMs = Math.max(0L, nextDeckStartMs);
         crossfadePositionFloorMs = initialPosMs;
         crossfadePositionGuardUntilMs = SystemClock.elapsedRealtime() + 750L;
@@ -2447,8 +2595,166 @@ public class SoundifyMediaService extends Service {
         mainHandler.post(this::nativeReplayOnMainThread);
     }
 
+    private int findQueueIndexById(final String trackId) {
+        if (trackId == null || trackId.isEmpty()) return -1;
+        for (int i = 0; i < nativeQueue.size(); i++) {
+            if (trackId.equals(nativeQueue.get(i).id)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int resolveNextQueueIndex(final boolean allowWrap) {
+        int size = nativeQueue.size();
+        if (size == 0) return -1;
+        int curIdx = findQueueIndexById(currentTrackId);
+        if (curIdx < 0) curIdx = nativeQueueIndex;
+        if (curIdx < 0 || curIdx >= size) curIdx = 0;
+
+        if (nativeShuffle && size > 1) {
+            int candidate = queueShuffleRandom.nextInt(size);
+            if (candidate == curIdx) {
+                candidate = (curIdx + 1) % size;
+            }
+            return candidate;
+        }
+
+        int nextIdx = curIdx + 1;
+        if (nextIdx >= size) {
+            if ("all".equals(nativeRepeatMode) && allowWrap) {
+                return 0;
+            }
+            return -1;
+        }
+        return nextIdx;
+    }
+
+    private void maybeAutoPrepareNextFromQueueOnMainThread() {
+        if (!nativeAudioActive || nativePlayer == null || isCrossfading || pendingCrossfade) return;
+        if ("one".equals(nativeRepeatMode)) return;
+        if (nextDeckTrackId != null && !nextDeckTrackId.isEmpty()) return;
+        if (nativeQueue.isEmpty()) return;
+
+        int nextIdx = resolveNextQueueIndex(true);
+        if (nextIdx < 0 || nextIdx >= nativeQueue.size()) return;
+        NativeQueueEntry nextEntry = nativeQueue.get(nextIdx);
+        if (nextEntry == null || nextEntry.url == null || nextEntry.url.isEmpty()) return;
+        if (nextEntry.id != null && nextEntry.id.equals(currentTrackId)) return;
+
+        pendingNextQueueIndex = nextIdx;
+        prepareNextNativeStream(
+            nextEntry.url,
+            lastNativeAuthToken,
+            0.0,
+            (float) (currentPlaybackRate > 0 ? currentPlaybackRate : 1.0),
+            nextEntry.id,
+            nextEntry.title,
+            nextEntry.artist,
+            nextEntry.album,
+            nextEntry.coverUrl,
+            nextEntry.durationSec
+        );
+    }
+
+    private void playNativeQueueEntryOnMainThread(final NativeQueueEntry entry) {
+        if (entry == null || entry.url == null || entry.url.isEmpty()) return;
+        ensureNativePlayerOnMainThread(lastNativeAuthToken);
+        cancelCrossfadeOnMainThread();
+        resetOutroCounters();
+        if (nativeDeckDsp != null) {
+            nativeDeckDsp.resetTrackStats();
+        }
+        updateMetadata(entry.title, entry.artist, entry.album, entry.coverUrl, entry.durationSec, entry.id);
+        nativeAudioActive = true;
+        lastNativeStreamUrl = entry.url;
+        currentPositionSec = 0.0;
+        if (entry.durationSec > 0) {
+            currentDurationSec = entry.durationSec;
+        }
+        isPlaying = true;
+        acquireWakeLock();
+        ensureForegroundNotification();
+        if (nativePlayer != null) {
+            isSwitchingNativeTrack = true;
+            try {
+                nativePlayer.setVolume(currentNativeVolume);
+                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+                nativePlayer.setPlaybackParameters(new PlaybackParameters((float) (currentPlaybackRate > 0 ? currentPlaybackRate : 1.0)));
+                nativePlayer.setMediaItem(MediaItem.fromUri(entry.url));
+                nativePlayer.setPlayWhenReady(true);
+                nativePlayer.prepare();
+                nativePlayer.play();
+            } finally {
+                isSwitchingNativeTrack = false;
+            }
+        }
+        mainHandler.removeCallbacks(nativeProgressTicker);
+        mainHandler.postDelayed(nativeProgressTicker, 250L);
+        updatePlaybackState(true, 0.0, currentDurationSec, currentPlaybackRate);
+    }
+
+    public void syncNativeQueue(
+        final String queueJson,
+        final int currentIndex,
+        final String activeTrackId,
+        final boolean shuffle,
+        final String repeatMode,
+        final boolean autoMixEnabled,
+        final String authToken
+    ) {
+        final String safeMode = "one".equals(repeatMode) ? "one" : ("all".equals(repeatMode) ? "all" : "off");
+        nativeShuffle = shuffle;
+        nativeRepeatMode = safeMode;
+        nativeAutoMixEnabled = autoMixEnabled;
+        if (authToken != null && !authToken.isEmpty()) {
+            lastNativeAuthToken = authToken;
+        }
+
+        final List<NativeQueueEntry> parsed = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(queueJson != null ? queueJson : "[]");
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject item = arr.optJSONObject(i);
+                if (item == null) continue;
+                String id = item.optString("id", "");
+                String url = item.optString("url", "");
+                if (id.isEmpty() || url.isEmpty()) continue;
+                parsed.add(new NativeQueueEntry(
+                    id,
+                    url,
+                    item.optString("title", "Soundify"),
+                    item.optString("artist", ""),
+                    item.optString("album", ""),
+                    item.optString("coverUrl", ""),
+                    item.optDouble("duration", 0.0)
+                ));
+            }
+        } catch (Exception ignored) {}
+
+        mainHandler.post(() -> {
+            nativeQueue.clear();
+            nativeQueue.addAll(parsed);
+            int idxById = findQueueIndexById(activeTrackId != null && !activeTrackId.isEmpty() ? activeTrackId : currentTrackId);
+            if (idxById >= 0) {
+                nativeQueueIndex = idxById;
+            } else if (currentIndex >= 0 && currentIndex < nativeQueue.size()) {
+                nativeQueueIndex = currentIndex;
+            } else {
+                nativeQueueIndex = nativeQueue.isEmpty() ? -1 : 0;
+            }
+            if (nativePlayer != null) {
+                nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+            }
+        });
+    }
+
+    public void setNativeAutoMixEnabled(final boolean enabled) {
+        nativeAutoMixEnabled = enabled;
+    }
+
     public void nativeSetRepeatMode(final String mode) {
-        nativeRepeatMode = "one".equals(mode) ? "one" : "off";
+        nativeRepeatMode = "one".equals(mode) ? "one" : ("all".equals(mode) ? "all" : "off");
         mainHandler.post(() -> {
             if (nativePlayer != null) {
                 nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);

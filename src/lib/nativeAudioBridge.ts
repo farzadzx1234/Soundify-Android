@@ -25,9 +25,15 @@ export interface NativePlayStreamOptions {
 }
 
 export interface NativeAudioStateEvent {
-  event: "buffering" | "ready" | "state" | "ended" | "error" | "crossfadeStarted" | "crossfadeComplete" | "crossfadeFailed";
+  event: "buffering" | "ready" | "state" | "ended" | "error" | "crossfadeStarted" | "crossfadeComplete" | "crossfadeFailed" | "trackChanged";
   active?: boolean;
   trackId?: string;
+  title?: string;
+  artist?: string;
+  coverUrl?: string;
+  queueIndex?: number;
+  repeatMode?: "off" | "all" | "one";
+  shuffle?: boolean;
   isPlaying?: boolean;
   isBuffering?: boolean;
   position?: number;
@@ -35,6 +41,16 @@ export interface NativeAudioStateEvent {
   playbackRate?: number;
   errorCode?: number;
   errorMessage?: string;
+}
+
+export interface NativeQueueTrackItem {
+  id: string;
+  url: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverUrl?: string;
+  duration?: number;
 }
 
 export interface NativePrepareNextOptions {
@@ -83,6 +99,16 @@ interface NativeAudioPluginInterface {
   stop?: () => Promise<void>;
   seek?: (opts: { position: number }) => Promise<void>;
   setRepeatMode?: (opts: { mode: string }) => Promise<void>;
+  syncQueue?: (opts: {
+    queueJson: string;
+    currentIndex: number;
+    currentTrackId: string;
+    shuffle: boolean;
+    repeatMode: string;
+    autoMixEnabled: boolean;
+    authToken?: string;
+  }) => Promise<void>;
+  setAutoMixEnabled?: (opts: { enabled: boolean }) => Promise<void>;
   replay?: () => Promise<void>;
   setVolume?: (opts: { volume: number }) => Promise<void>;
   setPlaybackRate?: (opts: { rate: number }) => Promise<void>;
@@ -182,6 +208,49 @@ export async function nativeAudioSetRepeatMode(mode: "off" | "all" | "one"): Pro
   const plugin = getNativeAudioPlugin();
   if (plugin?.setRepeatMode) {
     await plugin.setRepeatMode({ mode }).catch(() => {});
+  }
+}
+
+export async function nativeAudioSyncQueue(opts: {
+  queue: NativeQueueTrackItem[];
+  currentIndex: number;
+  currentTrackId: string;
+  shuffle: boolean;
+  repeatMode: "off" | "all" | "one";
+  autoMixEnabled: boolean;
+  authToken?: string;
+}): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.syncQueue) {
+    await plugin
+      .syncQueue({
+        queueJson: JSON.stringify(opts.queue),
+        currentIndex: opts.currentIndex,
+        currentTrackId: opts.currentTrackId,
+        shuffle: opts.shuffle,
+        repeatMode: opts.repeatMode,
+        autoMixEnabled: opts.autoMixEnabled,
+        authToken: opts.authToken || "",
+      })
+      .catch(() => {});
+  }
+}
+
+export async function nativeAudioSetAutoMixEnabled(enabled: boolean): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.setAutoMixEnabled) {
+    await plugin.setAutoMixEnabled({ enabled: Boolean(enabled) }).catch(() => {});
+  }
+}
+
+export async function nativeAudioGetState(): Promise<NativeAudioStateEvent | null> {
+  const plugin = getNativeAudioPlugin();
+  if (!plugin?.getState) return null;
+  try {
+    const raw = await plugin.getState();
+    return raw ? (raw as unknown as NativeAudioStateEvent) : null;
+  } catch {
+    return null;
   }
 }
 

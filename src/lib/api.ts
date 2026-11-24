@@ -109,7 +109,7 @@ export {
  * Client-side YouTube ID extractor supporting URLs, queries, and prefixed IDs.
  */
 export function extractYouTubeIdClient(input: string): string | null {
-  if (!input) return null;
+  if (!input || typeof input !== "string") return null;
   let str = input.trim();
   if (!str) return null;
 
@@ -698,13 +698,29 @@ function writeCatalogCache<T>(key: string, data: T): void {
 }
 
 export function getCachedCatalogTracks(): Track[] | null {
-  const cached = readCatalogCache<Track[]>("tracks");
-  return Array.isArray(cached) && cached.length > 0 ? cached.map(normalizeTrack) : null;
+  try {
+    const cached = readCatalogCache<Track[]>("tracks");
+    if (!Array.isArray(cached) || cached.length === 0) return null;
+    const sanitized = cached
+      .filter((tr): tr is Track => Boolean(tr && typeof tr === "object" && typeof tr.id === "string" && tr.id))
+      .map(normalizeTrack);
+    return sanitized.length > 0 ? sanitized : null;
+  } catch {
+    return null;
+  }
 }
 
 export function getCachedCatalogPlaylists(): Playlist[] | null {
-  const cached = readCatalogCache<Playlist[]>("playlists");
-  return Array.isArray(cached) && cached.length > 0 ? cached.map(normalizePlaylist) : null;
+  try {
+    const cached = readCatalogCache<Playlist[]>("playlists");
+    if (!Array.isArray(cached) || cached.length === 0) return null;
+    const sanitized = cached
+      .filter((pl): pl is Playlist => Boolean(pl && typeof pl === "object" && typeof pl.id === "string" && pl.id))
+      .map(normalizePlaylist);
+    return sanitized.length > 0 ? sanitized : null;
+  } catch {
+    return null;
+  }
 }
 
 export function getCachedCatalogArtists(): Artist[] | null {
@@ -869,20 +885,24 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export function normalizeTrack(track: Track): Track {
-  if (!track) return track;
+  if (!track || typeof track !== "object") return track;
   return {
     ...track,
-    audioUrl: resolveMediaUrl(track.audioUrl),
-    coverUrl: resolveMediaUrl(track.coverUrl),
+    title: typeof track.title === "string" ? track.title : String(track.title ?? ""),
+    artistName: typeof track.artistName === "string" ? track.artistName : String(track.artistName ?? ""),
+    audioUrl: resolveMediaUrl(typeof track.audioUrl === "string" ? track.audioUrl : ""),
+    coverUrl: resolveMediaUrl(typeof track.coverUrl === "string" ? track.coverUrl : ""),
   };
 }
 
 export function normalizePlaylist(playlist: Playlist): Playlist {
-  if (!playlist) return playlist;
+  if (!playlist || typeof playlist !== "object") return playlist;
   return {
     ...playlist,
     coverUrls: Array.isArray(playlist.coverUrls)
-      ? playlist.coverUrls.map((u) => resolveMediaUrl(u))
+      ? playlist.coverUrls
+          .filter((u): u is string => typeof u === "string" && u.length > 0)
+          .map((u) => resolveMediaUrl(u))
       : [],
   };
 }

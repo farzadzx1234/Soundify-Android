@@ -171,12 +171,13 @@ export function PlaylistMosaic({
     const seenIds = new Set<string>();
     const seenUrls = new Set<string>();
     for (const tr of tracks) {
-      if (!tr || !tr.id || seenIds.has(tr.id)) continue;
+      if (!tr || typeof tr.id !== "string" || !tr.id || seenIds.has(tr.id)) continue;
+      const rawCover = typeof tr.coverUrl === "string" ? tr.coverUrl : "";
       const validUrl =
-        tr.coverUrl &&
-        !tr.coverUrl.startsWith("blob:") &&
-        !(tr.id !== "track-01" && tr.coverUrl === "/covers/track-01.jpg")
-          ? tr.coverUrl.trim()
+        rawCover &&
+        !rawCover.startsWith("blob:") &&
+        !(tr.id !== "track-01" && rawCover === "/covers/track-01.jpg")
+          ? rawCover.trim()
           : "";
       const hasOfflineCover =
         Boolean(getCachedCoverBlobUrl(tr.id)) ||

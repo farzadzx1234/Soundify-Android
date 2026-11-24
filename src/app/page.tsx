@@ -36,10 +36,34 @@ function getDailyPlaysScore(tr: Track): number {
 }
 
 function getExplicitDailyPlays(tr: Track): number | null {
+  if (!tr) return null;
   if (typeof tr.dailyPlaysCount === "number" && tr.dailyPlaysCount > 0) return tr.dailyPlaysCount;
   if (typeof tr.playsToday === "number" && tr.playsToday > 0) return tr.playsToday;
   if (typeof tr.todayPlays === "number" && tr.todayPlays > 0) return tr.todayPlays;
   return null;
+}
+
+class HomeSectionErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(err: unknown) {
+    console.warn("HomeSectionErrorBoundary recovered section:", err);
+  }
+
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
 }
 
 export default function HomePage() {
@@ -53,19 +77,31 @@ export default function HomePage() {
   const [playlists, setPlaylists] = useState<Playlist[]>(() => getCachedCatalogPlaylists() ?? FALLBACK_PLAYLISTS);
   const [genre, setGenre] = useState("all");
 
+  const safeTracks = useMemo(
+    () =>
+      (Array.isArray(tracks) ? tracks : FALLBACK_TRACKS).filter(
+        (tr): tr is Track => Boolean(tr && typeof tr === "object" && typeof tr.id === "string" && tr.id),
+      ),
+    [tracks],
+  );
+
   useEffect(() => {
     let active = true;
     const fetchCatalog = () => {
       // Fetch each independently so one slow endpoint doesn't block or cancel the others
       api.getTracks()
         .then((tRes) => {
-          if (active && tRes?.tracks && tRes.tracks.length > 0) setTracks(tRes.tracks);
+          if (active && Array.isArray(tRes?.tracks) && tRes.tracks.length > 0) {
+            setTracks(tRes.tracks.filter((tr): tr is Track => Boolean(tr && typeof tr.id === "string" && tr.id)));
+          }
         })
         .catch(() => {});
 
       api.getPlaylists()
         .then((pRes) => {
-          if (active && pRes?.playlists && pRes.playlists.length > 0) setPlaylists(pRes.playlists);
+          if (active && Array.isArray(pRes?.playlists) && pRes.playlists.length > 0) {
+            setPlaylists(pRes.playlists.filter((pl): pl is Playlist => Boolean(pl && typeof pl.id === "string" && pl.id)));
+          }
         })
         .catch(() => {});
     };
@@ -84,39 +120,48 @@ export default function HomePage() {
   }, [user?.id]);
 
   const genres = useMemo(
-    () => ["all", ...Array.from(new Set(tracks.map((tr) => tr?.genre).filter((g): g is string => Boolean(g))))],
-    [tracks],
+    () => [
+      "all",
+      ...Array.from(
+        new Set(
+          safeTracks
+            .map((tr) => tr.genre)
+            .filter((g): g is string => typeof g === "string" && g.trim().length > 0),
+        ),
+      ),
+    ],
+    [safeTracks],
   );
 
   const filteredTracks = useMemo(() => {
-    if (genre === "all") return tracks;
-    return tracks.filter((tr) => (tr?.genre || "").toLowerCase() === genre.toLowerCase());
-  }, [genre, tracks]);
+    if (genre === "all") return safeTracks;
+    return safeTracks.filter((tr) => (typeof tr.genre === "string" ? tr.genre : "").toLowerCase() === genre.toLowerCase());
+  }, [genre, safeTracks]);
 
   const featured = useMemo(() => {
-    if (!tracks.length) return null;
+    if (!safeTracks.length) return null;
     return (
-      [...tracks].sort((a, b) => {
+      [...safeTracks].sort((a, b) => {
         const diff = getDailyPlaysScore(b) - getDailyPlaysScore(a);
         if (diff !== 0) return diff;
         return (b.playsCount ?? 0) - (a.playsCount ?? 0);
-      })[0] ?? tracks[0]
+      })[0] ?? safeTracks[0]
     );
-  }, [tracks]);
+  }, [safeTracks]);
   const featuredPlaying = featured && currentTrack?.id === featured.id && isPlaying;
   const featuredDailyPlays = featured ? getExplicitDailyPlays(featured) : null;
 
   const personalizedMixes = useMemo(() => {
     try {
-      const dlTrackObjects = downloadedTracks
+      const dlTrackObjects = (Array.isArray(downloadedTracks) ? downloadedTracks : [])
         .map((d) => d?.track)
-        .filter((tr): tr is Track => Boolean(tr && tr.id));
-      const likedOnly = tracks.filter((tr) => Boolean(tr?.likedByMe));
-      return buildPersonalizedMixes(tracks, dlTrackObjects, likedOnly, lang);
+        .filter((tr): tr is Track => Boolean(tr && typeof tr.id === "string" && tr.id));
+      const likedOnly = safeTracks.filter((tr) => Boolean(tr.likedByMe));
+      return buildPersonalizedMixes(safeTracks, dlTrackObjects, likedOnly, lang);
     } catch {
       return [];
     }
-  }, [downloadedTracks, lang, tracks]);
+  }, [downloadedTracks, lang, safeTracks]);
 
   const handleRefresh = async () => {
     try {
@@ -124,8 +169,12 @@ export default function HomePage() {
         api.getTracks(),
         api.getPlaylists(),
       ]);
-      if (tRes.status === "fulfilled" && tRes.value.tracks.length > 0) setTracks(tRes.value.tracks);
-      if (pRes.status === "fulfilled" && pRes.value.playlists.length > 0) setPlaylists(pRes.value.playlists);
+      if (tRes.status === "fulfilled" && Array.isArray(tRes.value?.tracks) && tRes.value.tracks.length > 0) {
+        setTracks(tRes.value.tracks.filter((tr): tr is Track => Boolean(tr && typeof tr.id === "string" && tr.id)));
+      }
+      if (pRes.status === "fulfilled" && Array.isArray(pRes.value?.playlists) && pRes.value.playlists.length > 0) {
+        setPlaylists(pRes.value.playlists.filter((pl): pl is Playlist => Boolean(pl && typeof pl.id === "string" && pl.id)));
+      }
     } catch {
       // ignore
     }
@@ -136,7 +185,8 @@ export default function HomePage() {
       <div className="mx-auto max-w-7xl space-y-7">
         {/* Hero Spotlight (Apple Music Style Immersive Card) */}
         {featured && (
-          <section aria-label={t("heroBadge")}>
+          <HomeSectionErrorBoundary>
+            <section aria-label={t("heroBadge")}>
             <div className="sf-content-surface relative overflow-hidden rounded-[28px] sm:rounded-3xl p-5 sm:p-8 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_20px_50px_rgba(0,0,0,0.4)] border border-white/[0.08]">
               {/* Vibrant blurred artwork glow inside Hero (desktop only for Android scroll fps) */}
               <img
@@ -203,7 +253,7 @@ export default function HomePage() {
                     {pickText(featured.artistName, featured.artistNameFa)} • {pickText(featured.album, featured.albumFa)} •{" "}
                     {featuredDailyPlays !== null
                       ? `${formatNum(featuredDailyPlays)} ${pickText("plays today", "پخش امروز")}`
-                      : `${formatNum(featured.playsCount)} ${t("plays")}`}
+                      : `${formatNum(featured.playsCount ?? 0)} ${t("plays")}`}
                   </p>
 
                   <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 pt-1">
@@ -213,7 +263,7 @@ export default function HomePage() {
                       tint={featured.accentColor}
                       onClick={() => {
                         void triggerHapticFeedback("playPause");
-                        playTrack(featured, tracks);
+                        playTrack(featured, safeTracks);
                       }}
                       icon={
                         featuredPlaying ? (
@@ -237,12 +287,14 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
-          </section>
+            </section>
+          </HomeSectionErrorBoundary>
         )}
 
         {/* Personalized Spotify-style Mixes Built from User Taste */}
         {personalizedMixes.length > 0 && (
-          <section className="space-y-3">
+          <HomeSectionErrorBoundary>
+            <section className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-slate-900 dark:text-white">
                 <SparkleIcon size={20} weight="duotone" className="text-emerald-500 dark:text-emerald-400" aria-hidden="true" />
@@ -304,37 +356,40 @@ export default function HomePage() {
                 );
               })}
             </div>
-          </section>
+            </section>
+          </HomeSectionErrorBoundary>
         )}
 
         {/* Genre Filter + Trending Tracks */}
-        <section className="space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-slate-900 dark:text-white">
-              <FireIcon size={22} weight="duotone" className="text-pink-600 dark:text-pink-400" aria-hidden="true" />
-              <span>{t("trendingNow")}</span>
-            </h2>
+        <HomeSectionErrorBoundary>
+          <section className="space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2 text-slate-900 dark:text-white">
+                <FireIcon size={22} weight="duotone" className="text-pink-600 dark:text-pink-400" aria-hidden="true" />
+                <span>{t("trendingNow")}</span>
+              </h2>
 
-            <GlassSegmented
-              aria-label="Filter by genre"
-              value={genre}
-              onValueChange={setGenre}
-              items={genres.map((g) => ({
-                value: g,
-                label: g === "all" ? t("allGenres") : g,
-              }))}
+              <GlassSegmented
+                aria-label="Filter by genre"
+                value={genre}
+                onValueChange={setGenre}
+                items={genres.map((g) => ({
+                  value: g,
+                  label: g === "all" ? t("allGenres") : g,
+                }))}
+              />
+            </div>
+
+            <VirtualizedTrackGrid
+              tracks={filteredTracks}
+              queue={filteredTracks}
+              playlists={playlists}
+              onTrackUpdated={(updated) =>
+                setTracks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+              }
             />
-          </div>
-
-          <VirtualizedTrackGrid
-            tracks={filteredTracks}
-            queue={filteredTracks}
-            playlists={playlists}
-            onTrackUpdated={(updated) =>
-              setTracks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
-            }
-          />
-        </section>
+          </section>
+        </HomeSectionErrorBoundary>
       </div>
     </PullToRefresh>
   );

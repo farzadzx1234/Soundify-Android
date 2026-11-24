@@ -130,9 +130,10 @@ export function analyzePcmAutoMixPoints(
     mixInSec = Math.max(0, Math.min(maxMixIn, firstAudibleSec - 0.25));
   }
 
-  // 2. Trailing dead-silence trim (`effectiveEndSec`)
+  // 2. Trailing perceptual fade-out & dead-silence trim (`effectiveEndSec`)
+  const fadeTailFloor = Math.max(0.012, bodyRms * 0.08);
   let lastAudibleWin = winCount - 1;
-  while (lastAudibleWin > Math.floor(winCount * 0.5) && rms[lastAudibleWin] < 0.012) {
+  while (lastAudibleWin > Math.floor(winCount * 0.5) && rms[lastAudibleWin] < fadeTailFloor) {
     lastAudibleWin--;
   }
   const effectiveEndSec = Math.min(durationSec, Math.max(durationSec * 0.55, (lastAudibleWin + 1) * winSec + 0.15));

@@ -82,8 +82,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.36";
-    private static final String APP_VERSION_HEADER = "1.0.36";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.37";
+    private static final String APP_VERSION_HEADER = "1.0.37";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -130,6 +130,8 @@ public class SoundifyMediaService extends Service {
     private int silenceOutroTicks = 0;
     private int instrumentalOutroTicks = 0;
     private int vocalDipTicks = 0;
+    private int fadeOutSlopeTicks = 0;
+    private float prevFadeLiveRms = 1.0f;
     private volatile boolean nextDeckIntroScanning = false;
     private volatile boolean nextDeckIntroScanDone = false;
     private volatile boolean nextDeckIntroScanStartedPlayback = false;
@@ -191,6 +193,8 @@ public class SoundifyMediaService extends Service {
         silenceOutroTicks = 0;
         instrumentalOutroTicks = 0;
         vocalDipTicks = 0;
+        fadeOutSlopeTicks = 0;
+        prevFadeLiveRms = 1.0f;
     }
 
     private long computeSmartScannedCueMs() {
@@ -352,20 +356,23 @@ public class SoundifyMediaService extends Service {
 
                 // Sample-Accurate Stage 2 Native Plan Trigger (zero JS timer jitter)
                 AutoMixPcmAnalyzer.AutoMixPlanNative activePlan = scheduledAutoMixPlan;
+                boolean hasValidPlanForPair =
+                    activePlan != null &&
+                    currentTrackId.equals(activePlan.trackAId) &&
+                    !nextDeckTrackId.isEmpty() &&
+                    nextDeckTrackId.equals(activePlan.trackBId);
+
                 if (
                     !isCrossfading &&
                     !pendingCrossfade &&
                     !"one".equals(nativeRepeatMode) &&
-                    activePlan != null &&
-                    currentTrackId.equals(activePlan.trackAId) &&
-                    !nextDeckTrackId.isEmpty() &&
-                    nextDeckTrackId.equals(activePlan.trackBId) &&
+                    hasValidPlanForPair &&
                     nextDeckPlayer != null &&
                     nextDeckPlayer.getPlaybackState() == Player.STATE_READY
                 ) {
                     long planStartMsA = (activePlan.startSampleOnTrackA * 1000L) / Math.max(8000, activePlan.sampleRate);
                     if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
-                        planStartMsA = Math.max(planStartMsA, Math.max(0L, durMs - 7000L));
+                        planStartMsA = Math.max(planStartMsA, Math.max(0L, durMs - 20000L));
                     }
                     long planDurMs = Math.min(7000L, Math.max(1200L, (activePlan.durationSamples * 1000L) / Math.max(8000, activePlan.sampleRate)));
                     if (posMs >= planStartMsA) {
@@ -383,7 +390,10 @@ public class SoundifyMediaService extends Service {
                         );
                         return;
                     }
-                } else if (
+                }
+
+                // Live DSP Fade-Out & Tail Safety Net (runs even when activePlan != null so fade-outs are never missed)
+                if (
                     !isCrossfading &&
                     !pendingCrossfade &&
                     !"one".equals(nativeRepeatMode) &&
@@ -391,7 +401,6 @@ public class SoundifyMediaService extends Service {
                     nativeDeckDsp.getProcessedBlocks() >= 16 &&
                     nextDeckPlayer != null &&
                     !nextDeckTrackId.isEmpty() &&
-                    !nextDeckIntroScanning &&
                     nextDeckPlayer.getPlaybackState() == Player.STATE_READY &&
                     currentDurationSec >= 24.0
                 ) {
@@ -403,69 +412,95 @@ public class SoundifyMediaService extends Service {
                     float bodyVocal = nativeDeckDsp.getBodyVocalRms();
                     float vocal = nativeDeckDsp.getVocalMidRms();
 
-                    // Hard <=7.0s ceiling before EOF with vocal-safe gating
-                    boolean vocalSafeNow = (bodyVocal <= 0.02f || vocal < bodyVocal * 0.48f);
-
-                    // 1. Dead silence trim at end (strictly within final <=7.0s)
-                    if (remSec <= 7.0 && remSec >= 1.2 && live < 0.012f) {
-                        silenceOutroTicks++;
-                    } else {
-                        silenceOutroTicks = 0;
+                    if (nextDeckIntroScanning && (remSec <= 8.0 || live < Math.max(0.014f, body * 0.14f))) {
+                        abortNextDeckIntroScanOnMainThread();
                     }
 
-                    // 2. Sustained quiet fade-out when song chart drops (strictly within final <=7.0s & vocal-safe)
-                    if (remSec <= 7.0 && remSec >= 2.6 && body > 0.055f && live < body * 0.38f && vocalSafeNow) {
-                        quietOutroTicks++;
-                    } else {
-                        quietOutroTicks = 0;
-                    }
+                    if (!nextDeckIntroScanning) {
+                        boolean vocalSafeNow = (bodyVocal <= 0.02f || vocal < bodyVocal * 0.48f);
 
-                    // 3. Drums & vocals dropped out -> clean instrumental tail (strictly within final <=7.0s)
-                    if (
-                        remSec <= 7.0 &&
-                        remSec >= 2.8 &&
-                        bodyBass > 0.025f &&
-                        bass < bodyBass * 0.35f &&
-                        vocalSafeNow
-                    ) {
-                        instrumentalOutroTicks++;
-                    } else {
-                        instrumentalOutroTicks = 0;
-                    }
+                        // 1. Near-silence / whisper fade-out tail (catches slow fades even with activePlan != null)
+                        if (remSec <= 18.0 && remSec >= 1.0 && live < Math.max(0.014f, body * 0.14f)) {
+                            silenceOutroTicks++;
+                        } else {
+                            silenceOutroTicks = 0;
+                        }
 
-                    // 4. Vocal-safe tail phrase near the end (strictly within final <=6.5s)
-                    if (remSec <= 6.5 && remSec >= 2.8 && bodyVocal > 0.025f && vocal < bodyVocal * 0.42f) {
-                        vocalDipTicks++;
-                    } else {
-                        vocalDipTicks = 0;
-                    }
+                        // 2. Sustained monotonic fade-out slope (catches 7..15s fade-outs cleanly)
+                        if (
+                            remSec <= 15.0 &&
+                            remSec >= 2.0 &&
+                            body > 0.025f &&
+                            live < body * 0.42f &&
+                            (live <= prevFadeLiveRms * 1.04f || live < body * 0.24f) &&
+                            (vocalSafeNow || live < body * 0.26f)
+                        ) {
+                            fadeOutSlopeTicks++;
+                        } else {
+                            fadeOutSlopeTicks = 0;
+                        }
+                        prevFadeLiveRms = live;
 
-                    long maxSafeMs = Math.max(2600L, Math.min(6800L, (long) ((remSec - 0.25) * 1000.0)));
-                    long triggerCrossfadeMs = -1L;
-                    if (silenceOutroTicks >= 3) {
-                        triggerCrossfadeMs = Math.min(3200L, maxSafeMs);
-                    } else if (quietOutroTicks >= 4) {
-                        triggerCrossfadeMs = Math.min(5800L, maxSafeMs);
-                    } else if (instrumentalOutroTicks >= 4) {
-                        triggerCrossfadeMs = Math.min(6500L, maxSafeMs);
-                    } else if (vocalDipTicks >= 3) {
-                        triggerCrossfadeMs = Math.min(5400L, maxSafeMs);
-                    }
+                        // 3-5. Normal active-ending triggers strictly inside <=7.0s when no Stage 2 plan is active
+                        if (!hasValidPlanForPair) {
+                            if (remSec <= 7.0 && remSec >= 2.4 && body > 0.025f && live < body * 0.42f && vocalSafeNow) {
+                                quietOutroTicks++;
+                            } else {
+                                quietOutroTicks = 0;
+                            }
 
-                    if (triggerCrossfadeMs > 0L) {
-                        resetOutroCounters();
-                        executeReadyNativeCrossfade(
-                            triggerCrossfadeMs,
-                            currentNativeVolume,
-                            nextDeckTitle,
-                            nextDeckArtist,
-                            nextDeckAlbum,
-                            nextDeckCoverUrl,
-                            nextDeckDurationSec,
-                            nextDeckTrackId,
-                            false
-                        );
-                        return;
+                            if (
+                                remSec <= 7.0 &&
+                                remSec >= 2.6 &&
+                                bodyBass > 0.02f &&
+                                bass < bodyBass * 0.36f &&
+                                vocalSafeNow
+                            ) {
+                                instrumentalOutroTicks++;
+                            } else {
+                                instrumentalOutroTicks = 0;
+                            }
+
+                            if (remSec <= 6.5 && remSec >= 2.6 && bodyVocal > 0.02f && vocal < bodyVocal * 0.44f) {
+                                vocalDipTicks++;
+                            } else {
+                                vocalDipTicks = 0;
+                            }
+                        } else {
+                            quietOutroTicks = 0;
+                            instrumentalOutroTicks = 0;
+                            vocalDipTicks = 0;
+                        }
+
+                        long maxSafeMs = Math.max(2600L, Math.min(6800L, (long) ((remSec - 0.25) * 1000.0)));
+                        long triggerCrossfadeMs = -1L;
+                        if (silenceOutroTicks >= 3) {
+                            triggerCrossfadeMs = Math.min(4200L, maxSafeMs);
+                        } else if (fadeOutSlopeTicks >= 5) {
+                            triggerCrossfadeMs = Math.min(5800L, maxSafeMs);
+                        } else if (!hasValidPlanForPair && quietOutroTicks >= 4) {
+                            triggerCrossfadeMs = Math.min(5800L, maxSafeMs);
+                        } else if (!hasValidPlanForPair && instrumentalOutroTicks >= 4) {
+                            triggerCrossfadeMs = Math.min(6500L, maxSafeMs);
+                        } else if (!hasValidPlanForPair && vocalDipTicks >= 3) {
+                            triggerCrossfadeMs = Math.min(5400L, maxSafeMs);
+                        }
+
+                        if (triggerCrossfadeMs > 0L) {
+                            resetOutroCounters();
+                            executeReadyNativeCrossfade(
+                                triggerCrossfadeMs,
+                                currentNativeVolume,
+                                nextDeckTitle,
+                                nextDeckArtist,
+                                nextDeckAlbum,
+                                nextDeckCoverUrl,
+                                nextDeckDurationSec,
+                                nextDeckTrackId,
+                                false
+                            );
+                            return;
+                        }
                     }
                 } else {
                     resetOutroCounters();

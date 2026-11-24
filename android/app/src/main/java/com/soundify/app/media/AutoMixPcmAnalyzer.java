@@ -540,7 +540,21 @@ public final class AutoMixPcmAnalyzer {
         }
         int lastAud = numVad - 1;
         while (lastAud > 0 && vadRms[lastAud] < SILENCE_MINUS_50_DBFS) lastAud--;
-        double effectiveEndSec = seg.segmentStartSec + (lastAud + 1) * VAD_HOP_SEC;
+        double rawSilentEndSec = seg.segmentStartSec + (lastAud + 1) * VAD_HOP_SEC;
+        List<Double> bodyVals = new ArrayList<>();
+        for (int w = 0; w <= lastAud; w++) {
+            if (vadRms[w] >= 0.015) bodyVals.add(vadRms[w]);
+        }
+        java.util.Collections.sort(bodyVals);
+        double bodyRms = !bodyVals.isEmpty() ? bodyVals.get(bodyVals.size() / 2) : 0.10;
+        double fadeTailFloor = Math.max(0.012, bodyRms * 0.09);
+        int perceptualLast = lastAud;
+        while (perceptualLast > 0 && vadRms[perceptualLast] < fadeTailFloor) perceptualLast--;
+        double perceptualEndSec = seg.segmentStartSec + (perceptualLast + 1) * VAD_HOP_SEC + 0.8;
+        double effectiveEndSec = Math.min(
+            rawSilentEndSec,
+            Math.max(Math.min(rawSilentEndSec, seg.segmentStartSec + 4.0), perceptualEndSec)
+        );
 
         double tVocalStart = effectiveEndSec;
         double tVocalEnd = seg.segmentStartSec;
@@ -709,6 +723,34 @@ public final class AutoMixPcmAnalyzer {
         java.util.Collections.sort(nonSilentA);
         double bodyRmsA = !nonSilentA.isEmpty() ? nonSilentA.get(nonSilentA.size() / 2) : 0.12;
 
+        // Allow up to 12s lookback ONLY when Track A has a contiguous non-vocal fade-out tail reaching effectiveEndSec
+        double maxExtendedStartA = Math.max(segA.segmentStartSec, segA.effectiveEndSec - 12.0);
+        double anchorEndA = Math.max(maxExtendedStartA, segA.effectiveEndSec - 2.5);
+        int tailFramesQuiet = 0;
+        for (double t = anchorEndA; t >= segA.effectiveEndSec - 7.0; t -= 0.5) {
+            int idx = (int) Math.round((t - segA.segmentStartSec) / 0.5);
+            int vIdx = Math.max(0, Math.min(segA.vadProb.length - 1, (int) Math.round((t - segA.segmentStartSec) / VAD_HOP_SEC)));
+            double voc = segA.vadProb.length > 0 ? segA.vadProb[vIdx] : 0.0;
+            if (idx >= 0 && idx < segA.frameRms.length && segA.frameRms[idx] < bodyRmsA * 0.45 && voc < 0.48) {
+                tailFramesQuiet++;
+            } else {
+                tailFramesQuiet = 0;
+                break;
+            }
+        }
+        if (tailFramesQuiet >= 3) {
+            for (double t = segA.effectiveEndSec - 7.5; t >= maxExtendedStartA; t -= 0.5) {
+                int idx = (int) Math.round((t - segA.segmentStartSec) / 0.5);
+                int vIdx = Math.max(0, Math.min(segA.vadProb.length - 1, (int) Math.round((t - segA.segmentStartSec) / VAD_HOP_SEC)));
+                double voc = segA.vadProb.length > 0 ? segA.vadProb[vIdx] : 0.0;
+                if (idx >= 0 && idx < segA.frameRms.length && segA.frameRms[idx] < bodyRmsA * 0.45 && voc < 0.48) {
+                    minOutA = t;
+                } else {
+                    break;
+                }
+            }
+        }
+
         double bestScore = -1e18;
         double bestOutA = Math.max(minOutA, segA.effectiveEndSec - 5.2);
         double bestInB = minInB;
@@ -803,7 +845,7 @@ public final class AutoMixPcmAnalyzer {
         double[] freqPair = findFrequencyMatchPair(segA, segB);
         double freqOutA = freqPair[0];
         double freqInB = freqPair[1];
-        double minCueOutA = Math.max(segA.segmentStartSec, segA.effectiveEndSec - 7.0);
+        double minCueOutA = Math.max(segA.segmentStartSec, Math.min(segA.effectiveEndSec - 7.0, freqOutA));
         double defaultRoom = Math.max(2.8, Math.min(5.2, segA.effectiveEndSec - freqOutA - 0.15));
 
         if (bpmDiff > 0.08 || (bpmDiff > 0.04 && camDist > 2)) {

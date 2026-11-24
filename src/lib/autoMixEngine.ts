@@ -632,12 +632,28 @@ function computeVadMaskAndSignalBoundaries(
     }
   }
 
-  // Last non-silent frame above -50 dBFS
+  // Last non-silent frame above -50 dBFS & perceptual fade-out tail trim (~-21 dB below body RMS)
   let lastAudibleWin = numWins - 1;
   while (lastAudibleWin > 0 && fullRms[lastAudibleWin] < SILENCE_MINUS_50_DBFS_RMS) {
     lastAudibleWin--;
   }
-  const effectiveEndSec = segmentStartSec + (lastAudibleWin + 1) * VAD_HOP_SEC;
+  const rawSilentEndSec = segmentStartSec + (lastAudibleWin + 1) * VAD_HOP_SEC;
+  const bodyVals: number[] = [];
+  for (let w = 0; w <= lastAudibleWin; w++) {
+    if (fullRms[w] >= 0.015) bodyVals.push(fullRms[w]);
+  }
+  bodyVals.sort((a, b) => a - b);
+  const bodyRms = bodyVals.length > 0 ? bodyVals[Math.floor(bodyVals.length / 2)] : 0.10;
+  const fadeTailFloor = Math.max(0.012, bodyRms * 0.09);
+  let perceptualLastWin = lastAudibleWin;
+  while (perceptualLastWin > 0 && fullRms[perceptualLastWin] < fadeTailFloor) {
+    perceptualLastWin--;
+  }
+  const perceptualEndSec = segmentStartSec + (perceptualLastWin + 1) * VAD_HOP_SEC + 0.8;
+  const effectiveEndSec = Math.min(
+    rawSilentEndSec,
+    Math.max(Math.min(rawSilentEndSec, segmentStartSec + 4.0), perceptualEndSec),
+  );
 
   // Sustained vocal streak detection (>= 3 consecutive 50ms windows = 150ms)
   const VAD_THRESH = 0.5;
@@ -873,7 +889,7 @@ export function findBestFrequencyMatchPair(
   segB: SegmentAnalysis,
 ): FrequencyMatchResult {
   const segStartSecA = segA.segmentStartSample / Math.max(8000, segA.sampleRate);
-  const minOutA = Math.max(segStartSecA, segA.effectiveEndSec - 7.0);
+  let minOutA = Math.max(segStartSecA, segA.effectiveEndSec - 7.0);
   const maxOutA = Math.max(minOutA, segA.effectiveEndSec - 2.6);
 
   const minInB = Math.max(0, segB.firstAudibleSec);
@@ -891,6 +907,42 @@ export function findBestFrequencyMatchPair(
   }
   nonSilentRmsA.sort((a, b) => a - b);
   const bodyRmsA = nonSilentRmsA.length > 0 ? nonSilentRmsA[Math.floor(nonSilentRmsA.length / 2)] : 0.12;
+
+  // Only if Track A has a true continuous non-vocal fade-out tail reaching effectiveEndSec, allow up to 12s lookback
+  const maxExtendedStartA = Math.max(segStartSecA, segA.effectiveEndSec - 12.0);
+  const anchorEndA = Math.max(maxExtendedStartA, segA.effectiveEndSec - 2.5);
+  let tailFramesQuiet = 0;
+  for (let t = anchorEndA; t >= segA.effectiveEndSec - 7.0; t -= hopA) {
+    const idx = Math.round((t - segStartSecA) / hopA);
+    const vIdx = clamp(Math.round((t - segStartSecA) / (segA.vocalHopSec || 0.05)), 0, Math.max(0, segA.vocalPresence.length - 1));
+    if (
+      idx >= 0 &&
+      idx < segA.frameRms.length &&
+      segA.frameRms[idx] < bodyRmsA * 0.45 &&
+      (segA.vocalPresence[vIdx] || 0) < 0.48
+    ) {
+      tailFramesQuiet++;
+    } else {
+      tailFramesQuiet = 0;
+      break;
+    }
+  }
+  if (tailFramesQuiet >= 3) {
+    for (let t = segA.effectiveEndSec - 7.0 - hopA; t >= maxExtendedStartA; t -= hopA) {
+      const idx = Math.round((t - segStartSecA) / hopA);
+      const vIdx = clamp(Math.round((t - segStartSecA) / (segA.vocalHopSec || 0.05)), 0, Math.max(0, segA.vocalPresence.length - 1));
+      if (
+        idx >= 0 &&
+        idx < segA.frameRms.length &&
+        segA.frameRms[idx] < bodyRmsA * 0.45 &&
+        (segA.vocalPresence[vIdx] || 0) < 0.48
+      ) {
+        minOutA = t;
+      } else {
+        break;
+      }
+    }
+  }
 
   let bestScore = -Infinity;
   let bestOutA = Math.max(minOutA, segA.effectiveEndSec - 5.2);
@@ -998,10 +1050,13 @@ export function solveAutoMixPlan(
   // Primary frequency-matched Soundify Mix cue pair (strictly <=7.0s from end & Track B opening)
   const freqMatch = findBestFrequencyMatchPair(segA, segB);
 
-  // Fallback helper: clean 2.8s-5.2s equal-power fade aligned inside Track A's final 7.0s & Track B's opening
+  // Fallback helper: clean 2.8s-5.2s equal-power fade aligned inside Track A's tail / fade-out & Track B's opening
   const buildFallbackPlan = (): AutoMixPlan => {
     const fadeSec = Number(clamp(freqMatch.mixDurationSec, 2.8, 5.2).toFixed(2));
-    const minStartA = Math.max(segA.segmentStartSample / safeRate, segA.effectiveEndSec - 7.0);
+    const minStartA = Math.max(
+      segA.segmentStartSample / safeRate,
+      Math.min(segA.effectiveEndSec - 7.0, freqMatch.cueOutASec),
+    );
     const rawStartSecA = clamp(
       Math.min(freqMatch.cueOutASec, segA.effectiveEndSec - fadeSec),
       minStartA,
@@ -1043,7 +1098,10 @@ export function solveAutoMixPlan(
   }
 
   const candidateBoundariesA = segA.phraseBoundariesSec.length > 0 ? segA.phraseBoundariesSec : segA.downbeatsSec;
-  const minCueOutA = Math.max(segA.segmentStartSample / safeRate, segA.effectiveEndSec - 7.0);
+  const minCueOutA = Math.max(
+    segA.segmentStartSample / safeRate,
+    Math.min(segA.effectiveEndSec - 7.0, freqMatch.cueOutASec),
+  );
 
   for (const mixBars of tryBars) {
     const mixDurationSec = mixBars * barSecA;

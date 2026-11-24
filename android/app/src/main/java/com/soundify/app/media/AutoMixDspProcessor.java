@@ -343,37 +343,37 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
                 processedBlocks++;
                 float blockRms = (float) Math.sqrt(sumSq / counted);
                 liveRms = liveRms * 0.65f + blockRms * 0.35f;
-                if (blockRms > 0.03f) {
+                if (blockRms > 0.02f) {
                     if (bodyRms <= 0.001f) {
                         bodyRms = blockRms;
                     } else if (blockRms > bodyRms) {
                         bodyRms = bodyRms * 0.96f + blockRms * 0.04f;
-                    } else {
-                        bodyRms = bodyRms * 0.996f + blockRms * 0.004f;
+                    } else if (blockRms >= bodyRms * 0.55f) {
+                        bodyRms = bodyRms * 0.9992f + blockRms * 0.0008f;
                     }
                 }
 
                 float blockBass = (float) Math.sqrt(sumBassSq / counted);
                 bassRms = bassRms * 0.65f + blockBass * 0.35f;
-                if (blockBass > 0.02f) {
+                if (blockBass > 0.015f) {
                     if (bodyBassRms <= 0.001f) {
                         bodyBassRms = blockBass;
                     } else if (blockBass > bodyBassRms) {
                         bodyBassRms = bodyBassRms * 0.96f + blockBass * 0.04f;
-                    } else {
-                        bodyBassRms = bodyBassRms * 0.996f + blockBass * 0.004f;
+                    } else if (blockBass >= bodyBassRms * 0.55f) {
+                        bodyBassRms = bodyBassRms * 0.9992f + blockBass * 0.0008f;
                     }
                 }
 
                 float blockVocal = (float) Math.sqrt(sumVocalSq / counted);
                 vocalMidRms = vocalMidRms * 0.65f + blockVocal * 0.35f;
-                if (blockVocal > 0.02f) {
+                if (blockVocal > 0.015f) {
                     if (bodyVocalRms <= 0.001f) {
                         bodyVocalRms = blockVocal;
                     } else if (blockVocal > bodyVocalRms) {
                         bodyVocalRms = bodyVocalRms * 0.96f + blockVocal * 0.04f;
-                    } else {
-                        bodyVocalRms = bodyVocalRms * 0.996f + blockVocal * 0.004f;
+                    } else if (blockVocal >= bodyVocalRms * 0.55f) {
+                        bodyVocalRms = bodyVocalRms * 0.9992f + blockVocal * 0.0008f;
                     }
                 }
             }

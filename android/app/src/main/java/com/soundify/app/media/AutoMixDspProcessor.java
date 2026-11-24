@@ -30,6 +30,7 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
     private volatile float bodyBassRms = 0.0f;
     private volatile float vocalMidRms = 0.0f;
     private volatile float bodyVocalRms = 0.0f;
+    private volatile int processedBlocks = 0;
 
     private float smoothedHighPassHz = 0.0f;
     private float hpWet = 0.0f;
@@ -54,8 +55,13 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         this.bodyBassRms = 0.0f;
         this.vocalMidRms = 0.0f;
         this.bodyVocalRms = 0.0f;
+        this.processedBlocks = 0;
         this.lastCoeffHz = -1.0;
         clearBiquadState();
+    }
+
+    public int getProcessedBlocks() {
+        return processedBlocks;
     }
 
     public float getLiveRms() {
@@ -114,7 +120,7 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
 
     @Override
     protected AudioFormat onConfigure(AudioFormat inputAudioFormat) throws UnhandledAudioFormatException {
-        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
+        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT && inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT) {
             return AudioFormat.NOT_SET;
         }
         return inputAudioFormat;
@@ -127,9 +133,12 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
             return;
         }
 
+        boolean isFloat = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT;
         int channels = Math.max(1, Math.min(MAX_CHANNELS, inputAudioFormat.channelCount));
         int sampleRate = Math.max(8000, inputAudioFormat.sampleRate);
-        int bytesPerFrame = Math.max(2, inputAudioFormat.bytesPerFrame);
+        int defaultBpf = isFloat ? channels * 4 : channels * 2;
+        int bytesPerFrame = Math.max(defaultBpf, inputAudioFormat.bytesPerFrame);
+        int sampleStrideBytes = isFloat ? 4 : 2;
         int frameCount = remaining / bytesPerFrame;
         int startPos = inputBuffer.position();
 
@@ -151,8 +160,13 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
                 int byteOffset = startPos + f * bytesPerFrame;
                 double frameMono = 0.0;
                 for (int c = 0; c < channels; c++) {
-                    short s = inputBuffer.getShort(byteOffset + c * 2);
-                    frameMono += s / 32768.0;
+                    if (isFloat) {
+                        double val = inputBuffer.getFloat(byteOffset + c * sampleStrideBytes);
+                        if (Double.isFinite(val)) frameMono += val;
+                    } else {
+                        short s = inputBuffer.getShort(byteOffset + c * sampleStrideBytes);
+                        frameMono += s / 32768.0;
+                    }
                 }
                 frameMono /= channels;
                 sumSq += frameMono * frameMono;
@@ -168,6 +182,7 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
                 counted++;
             }
             if (counted > 0) {
+                processedBlocks++;
                 float blockRms = (float) Math.sqrt(sumSq / counted);
                 liveRms = liveRms * 0.65f + blockRms * 0.35f;
                 if (blockRms > 0.03f) {
@@ -237,16 +252,32 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         float wet = hpWet;
         int limit = startPos + remaining;
         int strideFrames = frameCount;
-        for (int f = 0; f < strideFrames; f++) {
-            for (int c = 0; c < channels; c++) {
-                double x = inputBuffer.getShort();
-                double y = b0 * x + z1[c];
-                z1[c] = b1 * x - a1 * y + z2[c];
-                z2[c] = b2 * x - a2 * y;
-                double mixed = x + wet * (y - x);
-                if (mixed > 32767.0) mixed = 32767.0;
-                else if (mixed < -32768.0) mixed = -32768.0;
-                out.putShort((short) Math.round(mixed));
+        if (isFloat) {
+            for (int f = 0; f < strideFrames; f++) {
+                for (int c = 0; c < channels; c++) {
+                    double x = inputBuffer.getFloat();
+                    if (!Double.isFinite(x)) x = 0.0;
+                    double y = b0 * x + z1[c];
+                    z1[c] = b1 * x - a1 * y + z2[c];
+                    z2[c] = b2 * x - a2 * y;
+                    double mixed = x + wet * (y - x);
+                    if (mixed > 1.0) mixed = 1.0;
+                    else if (mixed < -1.0) mixed = -1.0;
+                    out.putFloat((float) mixed);
+                }
+            }
+        } else {
+            for (int f = 0; f < strideFrames; f++) {
+                for (int c = 0; c < channels; c++) {
+                    double x = inputBuffer.getShort();
+                    double y = b0 * x + z1[c];
+                    z1[c] = b1 * x - a1 * y + z2[c];
+                    z2[c] = b2 * x - a2 * y;
+                    double mixed = x + wet * (y - x);
+                    if (mixed > 32767.0) mixed = 32767.0;
+                    else if (mixed < -32768.0) mixed = -32768.0;
+                    out.putShort((short) Math.round(mixed));
+                }
             }
         }
         while (inputBuffer.position() < limit && out.hasRemaining()) {
@@ -272,6 +303,7 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         bodyBassRms = 0.0f;
         vocalMidRms = 0.0f;
         bodyVocalRms = 0.0f;
+        processedBlocks = 0;
         lastCoeffHz = -1.0;
     }
 }

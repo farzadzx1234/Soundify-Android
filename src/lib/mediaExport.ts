@@ -92,11 +92,12 @@ export async function blobToBase64(blob: Blob): Promise<string> {
       return Buffer.from(arrayBuffer).toString("base64");
     }
     const bytes = new Uint8Array(arrayBuffer);
-    let binary = "";
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    const chunkSize = 0x8000;
+    const chunks: string[] = [];
+    for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+      chunks.push(String.fromCharCode(...bytes.subarray(i, Math.min(bytes.byteLength, i + chunkSize))));
     }
+    const binary = chunks.join("");
     if (typeof btoa === "function") {
       return btoa(binary);
     }

@@ -74,6 +74,7 @@ import {
   subscribeNativeAudioState,
 } from "@/lib/nativeAudioBridge";
 import {
+  analyzeDownloadedBlobAutoMix,
   computeAutoMixPlan,
   djCrossfadeGains,
   getAutoMixEnabled,
@@ -343,6 +344,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const autoMixPlanDurRef = useRef<number>(0);
   const autoMixModeRef = useRef<"native" | "web" | "native-to-web" | "web-to-native" | null>(null);
   const autoMixStartedRef = useRef<boolean>(false);
+  const autoMixOutgoingAnalyzedKeyRef = useRef<string | null>(null);
+  const crossfadePositionGuardUntilRef = useRef<number>(0);
+  const crossfadePositionFloorRef = useRef<number>(0);
   const finalizeWebAutoMixRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -891,6 +895,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     autoMixPlanDurRef.current = 0;
     autoMixModeRef.current = null;
     autoMixStartedRef.current = false;
+    autoMixOutgoingAnalyzedKeyRef.current = null;
     finalizeWebAutoMixRef.current = null;
     setIsCrossfading(false);
     setCrossfadeFromTrack(null);
@@ -986,6 +991,29 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
 
       const pairKey = `${curr.id}::${nextTrack.id}`;
+      // For offline/downloaded WebView tracks, analyze real decoded PCM energy to refine mixOutSec & crossfadeSec
+      if (!nativeAudioActiveRef.current && autoMixOutgoingAnalyzedKeyRef.current !== pairKey) {
+        const offlineOutId = resolveDownloadedTrackId(curr);
+        if (offlineOutId) {
+          autoMixOutgoingAnalyzedKeyRef.current = pairKey;
+          void (async () => {
+            try {
+              const rec = await getDownloadedTrack(offlineOutId);
+              if (!rec?.audioBlob) return;
+              const analysis = await analyzeDownloadedBlobAutoMix(offlineOutId, rec.audioBlob);
+              if (!analysis || currentTrackRef.current?.id !== curr.id || autoMixStartedRef.current) return;
+              if (autoMixPlanRef.current && autoMixTargetTrackRef.current?.id === nextTrack.id) {
+                autoMixPlanRef.current = {
+                  ...autoMixPlanRef.current,
+                  mixOutSec: analysis.mixOutSec,
+                  crossfadeSec: analysis.crossfadeSec,
+                };
+              }
+            } catch {}
+          })();
+        }
+      }
+
       const prebufferTriggerSec = hasKnownDur ? Math.max(6, plan.mixOutSec - 45) : 12;
 
       if (
@@ -1067,7 +1095,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
             // 3. Native -> Web (downloaded incoming track) OR 4. Web -> Web
             let nextSrc = "";
+            let resolvedMixInSec = targetPlan.mixInSec;
             if (isNextDownloaded) {
+              const offlineRec = await getDownloadedTrack(offlineNextStorageId).catch(() => null);
+              if (offlineRec?.audioBlob) {
+                const pcmIn = await analyzeDownloadedBlobAutoMix(offlineNextStorageId, offlineRec.audioBlob);
+                if (pcmIn && pcmIn.mixInSec >= 0) {
+                  resolvedMixInSec = pcmIn.mixInSec;
+                  if (autoMixPlanRef.current && autoMixTargetTrackRef.current?.id === targetNext.id) {
+                    autoMixPlanRef.current = { ...autoMixPlanRef.current, mixInSec: pcmIn.mixInSec };
+                  }
+                }
+              }
               const cachedBlob =
                 getCachedAudioBlobUrl(offlineNextStorageId) || (await getDownloadedTrackBlobUrl(offlineNextStorageId));
               if (cachedBlob) nextSrc = cachedBlob;
@@ -1099,10 +1138,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             deckB.volume = 0;
             deckB.playbackRate = playbackRateRef.current || 1;
             deckB.src = nextSrc;
-            if (targetPlan.mixInSec > 0) {
+            if (resolvedMixInSec > 0) {
               const seekDeckB = () => {
                 try {
-                  deckB.currentTime = targetPlan.mixInSec;
+                  deckB.currentTime = resolvedMixInSec;
                 } catch {}
                 deckB.removeEventListener("loadedmetadata", seekDeckB);
               };
@@ -3712,7 +3751,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
 
     const onPlay = () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       if (audioCtxRef.current?.state === "suspended") {
         void audioCtxRef.current.resume().catch(() => {});
       }
@@ -3742,7 +3781,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       });
     };
     const onPlaying = () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       isSettingSourceRef.current = false;
       isRetryingPlayRef.current = false;
       setIsBuffering(false);
@@ -3763,7 +3802,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
     };
     const onStalledOrWaiting = () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       // Keep UI in playing/buffering state during VPN/mobile network stalls instead of auto-pausing
       const curr = currentTrackRef.current;
       if (curr && !userPausedIntentRef.current && (isPlayingRef.current || isRetryingPlayRef.current)) {
@@ -3815,7 +3854,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
     };
     const onPause = () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       if (autoMixStartedRef.current && !userPausedIntentRef.current) return;
       // Ignore synthetic pause events fired by the browser during audio.src swaps or active retries
       if (isSettingSourceRef.current || isRetryingPlayRef.current) {
@@ -3848,7 +3887,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
     let lastTimeUpdate = 0;
     const onTimeUpdate = () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       const playbackPos = audio.currentTime;
       currentTimeRef.current = playbackPos;
       const now = performance.now();
@@ -3943,7 +3982,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
     };
     const onLoadedMetadata = () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       if (Number.isFinite(audio.duration) && audio.duration > 0) {
         durationRef.current = audio.duration;
         setDuration(audio.duration);
@@ -3952,7 +3991,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
 
     const onError = async () => {
-      if (audio !== getSingletonAudio()) return;
+      if (audio !== getSingletonAudio() || nativeAudioActiveRef.current) return;
       if (isRetryingPlayRef.current) {
         // Retry engine is actively handling transient network/VPN hiccups
         return;
@@ -4263,7 +4302,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     audio.addEventListener("error", onError);
 
     const unsubApp = subscribeToAppState((inFg) => {
-      if (inFg && audio) {
+      if (inFg && audio && !nativeAudioActiveRef.current) {
         currentTimeRef.current = audio.currentTime;
         setCurrentTime(audio.currentTime);
       }
@@ -4554,6 +4593,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (!nativeAudioActiveRef.current) return;
 
       if (state.event === "crossfadeStarted") {
+        autoMixStartedRef.current = true;
         const outgoingTrack = currentTrackRef.current;
         const promoted =
           autoMixTargetTrackRef.current ||
@@ -4571,6 +4611,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             typeof state.duration === "number" && Number.isFinite(state.duration) && state.duration > 0
               ? state.duration
               : promoted.durationSec || 0;
+          crossfadePositionFloorRef.current = newPos;
+          crossfadePositionGuardUntilRef.current = Date.now() + 850;
           currentTimeRef.current = newPos;
           setCurrentTime(newPos);
           durationRef.current = newDur;
@@ -4660,16 +4702,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setDuration(state.duration);
       }
       if (typeof state.position === "number" && Number.isFinite(state.position) && state.position >= 0) {
-        currentTimeRef.current = state.position;
+        const inCrossfadeGuard =
+          Date.now() < crossfadePositionGuardUntilRef.current &&
+          Math.abs(state.position - crossfadePositionFloorRef.current) > 2.5;
+        const stablePos = inCrossfadeGuard ? crossfadePositionFloorRef.current : state.position;
+        if (!inCrossfadeGuard && Date.now() >= crossfadePositionGuardUntilRef.current) {
+          crossfadePositionGuardUntilRef.current = 0;
+        }
+        currentTimeRef.current = stablePos;
         const inForeground = isAppInForeground() && (typeof document === "undefined" || !document.hidden);
         if (inForeground) {
-          setCurrentTime(state.position);
+          setCurrentTime(stablePos);
         }
-        if (Math.abs(state.position - lastSavedStateTimeRef.current) >= 5) {
-          lastSavedStateTimeRef.current = state.position;
-          savePlayerState(state.position);
+        if (Math.abs(stablePos - lastSavedStateTimeRef.current) >= 5) {
+          lastSavedStateTimeRef.current = stablePos;
+          savePlayerState(stablePos);
         }
-        if (curr && state.position >= 3 && recordedPlayForIdRef.current !== curr.id) {
+        if (curr && stablePos >= 3 && recordedPlayForIdRef.current !== curr.id) {
           recordedPlayForIdRef.current = curr.id;
           recordListeningEvent(curr);
           void api
@@ -4683,7 +4732,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }
         if (curr && isPlayingRef.current) {
           checkAutoMixProgressRef.current(
-            state.position,
+            stablePos,
             durationRef.current || curr.durationSec || 0,
           );
         }

@@ -81,8 +81,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.31";
-    private static final String APP_VERSION_HEADER = "1.0.31";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.32";
+    private static final String APP_VERSION_HEADER = "1.0.32";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -150,6 +150,8 @@ public class SoundifyMediaService extends Service {
     private volatile String nativeRepeatMode = "off";
     private long crossfadeStartMs = 0L;
     private long crossfadeInvokedMs = 0L;
+    private long crossfadePositionFloorMs = 0L;
+    private long crossfadePositionGuardUntilMs = 0L;
     private boolean crossfadeIncomingReady = false;
     private boolean crossfadeFadeInOnly = false;
     private long crossfadeDurationMs = 7500L;
@@ -270,7 +272,7 @@ public class SoundifyMediaService extends Service {
                     try {
                         nextDeckPlayer.setAudioAttributes(buildMediaAudioAttributes(), false);
                         nextDeckPlayer.setVolume(0.0f);
-                        nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(4.0f));
+                        nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(3.0f));
                         nextDeckPlayer.setPlayWhenReady(true);
                         nextDeckPlayer.play();
                     } catch (Exception ignored) {
@@ -288,11 +290,20 @@ public class SoundifyMediaService extends Service {
                 return;
             }
 
+            if (nextDeckDsp.getProcessedBlocks() < 2) {
+                if ((now - nextDeckIntroScanStartWallMs) >= 4800L) {
+                    finishNextDeckIntroScanOnMainThread(nextDeckStartMs);
+                    return;
+                }
+                mainHandler.postDelayed(this, 40L);
+                return;
+            }
+
             long posMs = Math.max(0L, nextDeckPlayer.getCurrentPosition());
             float live = nextDeckDsp.getLiveRms();
             float bass = nextDeckDsp.getBassRms();
 
-            if (live >= 0.028f || bass >= 0.016f) {
+            if (live >= 0.024f || bass >= 0.015f) {
                 nextDeckAudibleTicks++;
                 if (nextDeckAudibleTicks >= 2 && nextDeckFirstAudibleMs < 0L) {
                     nextDeckFirstAudibleMs = Math.max(0L, posMs - 160L);
@@ -301,12 +312,12 @@ public class SoundifyMediaService extends Service {
                 nextDeckAudibleTicks = 0;
             }
 
-            if (live >= 0.068f || bass >= 0.042f) {
+            if (live >= 0.062f || bass >= 0.038f) {
                 nextDeckFirstMusicBodyMs = posMs;
             }
 
-            boolean timedOut = (now - nextDeckIntroScanStartWallMs) >= 3200L;
-            if (nextDeckFirstMusicBodyMs >= 0L || posMs >= 14000L || timedOut || st == Player.STATE_ENDED) {
+            boolean timedOut = (now - nextDeckIntroScanStartWallMs) >= 4800L;
+            if (nextDeckFirstMusicBodyMs >= 0L || posMs >= 14500L || timedOut || st == Player.STATE_ENDED) {
                 finishNextDeckIntroScanOnMainThread(computeSmartScannedCueMs());
                 return;
             }
@@ -319,6 +330,12 @@ public class SoundifyMediaService extends Service {
         public void run() {
             if (nativeAudioActive && nativePlayer != null && nativePlayer.isPlaying()) {
                 long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+                long nowMs = SystemClock.elapsedRealtime();
+                if (nowMs < crossfadePositionGuardUntilMs && Math.abs(posMs - crossfadePositionFloorMs) > 2500L) {
+                    posMs = crossfadePositionFloorMs;
+                } else if (nowMs >= crossfadePositionGuardUntilMs) {
+                    crossfadePositionGuardUntilMs = 0L;
+                }
                 long durMs = nativePlayer.getDuration();
                 currentPositionSec = posMs / 1000.0;
                 if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
@@ -333,6 +350,7 @@ public class SoundifyMediaService extends Service {
                     !pendingCrossfade &&
                     !"one".equals(nativeRepeatMode) &&
                     nativeDeckDsp != null &&
+                    nativeDeckDsp.getProcessedBlocks() >= 16 &&
                     nextDeckPlayer != null &&
                     !nextDeckTrackId.isEmpty() &&
                     !nextDeckIntroScanning &&
@@ -1693,8 +1711,8 @@ public class SoundifyMediaService extends Service {
                 boolean enableAudioTrackPlaybackParams
             ) {
                 return new DefaultAudioSink.Builder(context)
-                    .setEnableFloatOutput(enableFloatOutput)
-                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setEnableFloatOutput(false)
+                    .setEnableAudioTrackPlaybackParams(false)
                     .setAudioProcessors(new AudioProcessor[] { dspProcessor })
                     .build();
             }
@@ -1750,6 +1768,10 @@ public class SoundifyMediaService extends Service {
         if (nativePlayer != null && nativeAudioActive) {
             int state = nativePlayer.getPlaybackState();
             long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+            long nowMs = SystemClock.elapsedRealtime();
+            if (nowMs < crossfadePositionGuardUntilMs && Math.abs(posMs - crossfadePositionFloorMs) > 2500L) {
+                posMs = crossfadePositionFloorMs;
+            }
             long durMs = nativePlayer.getDuration();
             double durSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
                 ? durMs / 1000.0
@@ -1878,7 +1900,7 @@ public class SoundifyMediaService extends Service {
             nextDeckAlbum = album != null ? album : "";
             nextDeckCoverUrl = coverUrl != null ? coverUrl : "";
             nextDeckDurationSec = Math.max(0.0, durationSec);
-            nextDeckStartMs = startSec > 0 ? (long) (startSec * 1000.0) : 0L;
+            nextDeckStartMs = 0L;
             nextDeckPlayer.setPlayWhenReady(false);
             nextDeckPlayer.pause();
             nextDeckPlayer.stop();
@@ -1889,7 +1911,7 @@ public class SoundifyMediaService extends Service {
             nextDeckPlayer.seekTo(nextDeckStartMs);
             nextDeckPlayer.prepare();
 
-            if (nextDeckStartMs <= 1500L && !isCrossfading) {
+            if (!isCrossfading) {
                 nextDeckIntroScanning = true;
                 nextDeckIntroScanPrepWallMs = SystemClock.elapsedRealtime();
                 mainHandler.postDelayed(nextDeckIntroScanTicker, 60L);
@@ -1994,9 +2016,11 @@ public class SoundifyMediaService extends Service {
         nextDeckStreamUrl = "";
         nextDeckTrackId = "";
 
-        long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
+        long initialPosMs = Math.max(0L, nextDeckStartMs);
+        crossfadePositionFloorMs = initialPosMs;
+        crossfadePositionGuardUntilMs = SystemClock.elapsedRealtime() + 750L;
         long durMs = nativePlayer.getDuration();
-        currentPositionSec = posMs / 1000.0;
+        currentPositionSec = initialPosMs / 1000.0;
         currentDurationSec = (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET)
             ? durMs / 1000.0
             : (crossfadeNextDurationSec > 0 ? crossfadeNextDurationSec : currentDurationSec);
@@ -2182,6 +2206,7 @@ public class SoundifyMediaService extends Service {
             if (isCrossfading || pendingCrossfade) {
                 cancelCrossfadeOnMainThread();
             }
+            crossfadePositionGuardUntilMs = 0L;
             resetOutroCounters();
             double safePos = Math.max(0.0, positionSec);
             if (nativeAudioActive && nativePlayer != null) {

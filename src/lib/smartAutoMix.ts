@@ -14,6 +14,195 @@ export interface AutoMixPlan {
   incomingHeadEnergy: number;
 }
 
+export interface DecodedAudioAutoMixAnalysis {
+  durationSec: number;
+  mixInSec: number;
+  mixOutSec: number;
+  effectiveEndSec: number;
+  crossfadeSec: number;
+  bodyRms: number;
+}
+
+const decodedPcmAutoMixCache = new Map<string, DecodedAudioAutoMixAnalysis>();
+const MAX_PCM_ANALYSIS_CACHE = 48;
+
+/**
+ * Pure real-PCM acoustic AutoMix analyzer (zero AI):
+ * Computes 50ms RMS energy envelopes over decoded PCM samples to find:
+ * - True `mixInSec`: skips leading dead silence/slow ambient lead-in and cues onto first musical note/body.
+ * - True `effectiveEndSec`: trims trailing dead air at EOF.
+ * - True `mixOutSec` & `crossfadeSec`: finds sustained outro energy drop into the tail.
+ */
+export function analyzePcmAutoMixPoints(
+  channelData: Float32Array,
+  sampleRate: number,
+): DecodedAudioAutoMixAnalysis {
+  const safeRate = Number.isFinite(sampleRate) && sampleRate > 1000 ? sampleRate : 44100;
+  const totalSamples = channelData?.length || 0;
+  const durationSec = totalSamples / safeRate;
+  if (!totalSamples || !Number.isFinite(durationSec) || durationSec < 12) {
+    return {
+      durationSec: Math.max(0, Number.isFinite(durationSec) ? durationSec : 0),
+      mixInSec: 0,
+      mixOutSec: Math.max(0, (Number.isFinite(durationSec) ? durationSec : 0) - 4),
+      effectiveEndSec: Math.max(0, Number.isFinite(durationSec) ? durationSec : 0),
+      crossfadeSec: 4.0,
+      bodyRms: 0.1,
+    };
+  }
+
+  const winSamples = Math.max(256, Math.round(safeRate * 0.05)); // 50ms windows
+  const stepStride = 4; // downsample 4x for sub-10ms CPU cost on mobile
+  const winCount = Math.max(1, Math.floor(totalSamples / winSamples));
+  const winSec = winSamples / safeRate;
+  const rms = new Float32Array(winCount);
+
+  for (let w = 0; w < winCount; w++) {
+    const start = w * winSamples;
+    const end = Math.min(totalSamples, start + winSamples);
+    let sumSq = 0;
+    let count = 0;
+    for (let i = start; i < end; i += stepStride) {
+      const s = channelData[i];
+      if (Number.isFinite(s)) {
+        sumSq += s * s;
+        count++;
+      }
+    }
+    rms[w] = count > 0 ? Math.sqrt(sumSq / count) : 0;
+  }
+
+  // Median body loudness from 15%..85% of the track (ignoring silence)
+  const bodyStart = Math.floor(winCount * 0.15);
+  const bodyEnd = Math.max(bodyStart + 1, Math.ceil(winCount * 0.85));
+  const nonSilentBody: number[] = [];
+  for (let w = bodyStart; w < bodyEnd; w++) {
+    if (rms[w] >= 0.015) nonSilentBody.push(rms[w]);
+  }
+  const bodyRms = Math.max(0.04, median(nonSilentBody, 0.14));
+
+  // 1. Incoming entry point (`mixInSec`): scan first min(22s, 25% of track)
+  const scanInWins = Math.min(winCount, Math.max(4, Math.floor(Math.min(22, durationSec * 0.25) / winSec)));
+  const audibleThresh = Math.max(0.016, bodyRms * 0.14);
+  const bodyThresh = Math.max(0.045, bodyRms * 0.42);
+  let firstAudibleSec = -1;
+  let firstBodySec = -1;
+  let audibleStreak = 0;
+  let bodyStreak = 0;
+
+  for (let w = 0; w < scanInWins; w++) {
+    if (rms[w] >= audibleThresh) {
+      audibleStreak++;
+      if (audibleStreak >= 3 && firstAudibleSec < 0) {
+        firstAudibleSec = Math.max(0, (w - 2) * winSec);
+      }
+    } else {
+      audibleStreak = 0;
+    }
+    if (rms[w] >= bodyThresh) {
+      bodyStreak++;
+      if (bodyStreak >= 4 && firstBodySec < 0) {
+        firstBodySec = Math.max(0, (w - 3) * winSec);
+        break;
+      }
+    } else {
+      bodyStreak = 0;
+    }
+  }
+
+  const maxMixIn = Math.min(14, durationSec * 0.18);
+  let mixInSec = 0;
+  if (firstBodySec > 1.2) {
+    const anchor = firstAudibleSec >= 0 ? Math.max(firstAudibleSec, firstBodySec - 2.0) : Math.max(0, firstBodySec - 0.85);
+    mixInSec = Math.max(0, Math.min(maxMixIn, Math.min(firstBodySec - 0.5, anchor)));
+  } else if (firstAudibleSec > 0.4) {
+    mixInSec = Math.max(0, Math.min(maxMixIn, firstAudibleSec - 0.25));
+  }
+
+  // 2. Trailing dead-silence trim (`effectiveEndSec`)
+  let lastAudibleWin = winCount - 1;
+  while (lastAudibleWin > Math.floor(winCount * 0.5) && rms[lastAudibleWin] < 0.012) {
+    lastAudibleWin--;
+  }
+  const effectiveEndSec = Math.min(durationSec, Math.max(durationSec * 0.55, (lastAudibleWin + 1) * winSec + 0.15));
+
+  // 3. Sustained outro drop in the last 24s before `effectiveEndSec`
+  const earliestOutSec = Math.max(durationSec * 0.62, effectiveEndSec - 24);
+  const latestOutSec = Math.max(earliestOutSec, effectiveEndSec - 4.2);
+  const outStartWin = Math.max(0, Math.floor(earliestOutSec / winSec));
+  const outEndWin = Math.min(winCount - 1, Math.ceil(latestOutSec / winSec));
+  const quietOutThresh = bodyRms * 0.36;
+  let quietOutStreak = 0;
+  let mixOutSec = Math.max(earliestOutSec, effectiveEndSec - 7.5 - 0.35);
+
+  for (let w = outStartWin; w <= outEndWin; w++) {
+    if (rms[w] <= quietOutThresh) {
+      quietOutStreak++;
+      if (quietOutStreak >= 14) {
+        // Sustained 0.7s+ fade-out detected -> mix cleanly at the start of the outro drop
+        const dropSec = Math.max(earliestOutSec, (w - 13) * winSec);
+        mixOutSec = Math.min(latestOutSec, dropSec);
+        break;
+      }
+    } else {
+      quietOutStreak = 0;
+    }
+  }
+
+  const headTailRoom = Math.max(3.8, effectiveEndSec - mixOutSec - 0.3);
+  const crossfadeSec = Math.max(3.8, Math.min(7.5, headTailRoom));
+
+  return {
+    durationSec: Number(durationSec.toFixed(2)),
+    mixInSec: Number(mixInSec.toFixed(2)),
+    mixOutSec: Number(mixOutSec.toFixed(2)),
+    effectiveEndSec: Number(effectiveEndSec.toFixed(2)),
+    crossfadeSec: Number(crossfadeSec.toFixed(2)),
+    bodyRms: Number(bodyRms.toFixed(4)),
+  };
+}
+
+/**
+ * Decodes an offline downloaded audio Blob via Web Audio API and extracts real PCM mix points.
+ */
+export async function analyzeDownloadedBlobAutoMix(
+  trackId: string,
+  audioBlob: Blob,
+): Promise<DecodedAudioAutoMixAnalysis | null> {
+  if (!trackId || !audioBlob) return null;
+  const cached = decodedPcmAutoMixCache.get(trackId);
+  if (cached) return cached;
+
+  if (typeof window === "undefined") return null;
+  const AudioCtx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx || typeof audioBlob.arrayBuffer !== "function") return null;
+
+  let ctx: AudioContext | null = null;
+  try {
+    ctx = new AudioCtx();
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    const ch0 = audioBuffer.getChannelData(0);
+    const result = analyzePcmAutoMixPoints(ch0, audioBuffer.sampleRate);
+    if (decodedPcmAutoMixCache.size >= MAX_PCM_ANALYSIS_CACHE) {
+      const oldestKey = decodedPcmAutoMixCache.keys().next().value;
+      if (oldestKey) decodedPcmAutoMixCache.delete(oldestKey);
+    }
+    decodedPcmAutoMixCache.set(trackId, result);
+    return result;
+  } catch {
+    return null;
+  } finally {
+    if (ctx && typeof ctx.close === "function") {
+      try {
+        await ctx.close();
+      } catch {}
+    }
+  }
+}
+
 export function getAutoMixEnabled(): boolean {
   if (typeof window === "undefined") return false;
   try {

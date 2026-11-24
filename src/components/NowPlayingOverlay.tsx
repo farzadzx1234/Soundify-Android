@@ -561,6 +561,7 @@ function DesktopBottomDock({
       {/* Center Dock Waveform */}
       <div className="flex-1 min-w-[100px] min-[1024px]:min-w-[155px] max-w-[340px]">
         <NowPlayingDockTimeline
+          key={currentTrack.id}
           peaks={currentTrack.waveform}
           defaultDuration={safeDuration}
           accentColor={accent}
@@ -635,6 +636,7 @@ function MobileBottomDock({
   return (
     <div className="sf-1c-capsule flex flex-col gap-1.5 min-[375px]:gap-2.5 mx-auto w-full max-w-[368px] sm:max-w-md rounded-[26px] min-[375px]:rounded-[30px] px-3.5 min-[375px]:px-4 pt-2.5 min-[375px]:pt-3.5 pb-2.5 min-[375px]:pb-3.5 overflow-visible">
       <NowPlayingDockTimeline
+        key={currentTrack.id}
         peaks={currentTrack.waveform}
         defaultDuration={safeDuration}
         accentColor={accent}

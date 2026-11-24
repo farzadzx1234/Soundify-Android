@@ -22,6 +22,7 @@ import {
   clearAllDownloadedTracks,
   clearOfflineCache,
   estimateStorageUsage,
+  getAllDownloadedTrackMeta,
   getAllDownloadedTracks,
   getDownloadedCoverBlobUrl,
   getStorageBudgetInfo,
@@ -86,7 +87,11 @@ const pausedTrackIds = new Set<string>();
 const downloadedTrackIds = new Set<string>();
 const downloadedByPageUrl = new Map<string, string>();
 const downloadedByFingerprint = new Map<string, string>();
-const downloadedMetaById = new Map<string, { pageUrlKey?: string; fingerprint?: string }>();
+const downloadedMetaById = new Map<
+  string,
+  { id: string; title: string; artistName: string; pageUrl?: string; pageUrlKey?: string; fingerprints: string[] }
+>();
+const DOWNLOADED_INDEX_LS_KEY = "soundify_downloaded_index_v2";
 const errorStates = new Map<string, string>();
 const pendingDeferreds = new Map<string, DeferredDownload>();
 const listeners = new Set<() => void>();
@@ -106,23 +111,85 @@ function normalizeCanonicalDownloadPageUrl(rawUrl?: string): string {
   return canonical ? canonical.replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase() : "";
 }
 
+function foldDownloadKeyPart(s: string): string {
+  return normalizePersianChars(s)
+    .replace(/\u0131/g, "i")
+    .replace(/\u0130/g, "i")
+    .replace(/[\u015F\u015E]/g, "s")
+    .replace(/[\u011F\u011E]/g, "g")
+    .replace(/[\u00FC\u00DC]/g, "u")
+    .replace(/[\u00F6\u00D6]/g, "o")
+    .replace(/[\u00E7\u00C7]/g, "c")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+export function computeTrackDownloadFingerprints(
+  track: Pick<Track, "title" | "artistName"> | null | undefined,
+): string[] {
+  if (!track) return [];
+  const results = new Set<string>();
+  const addPair = (a: string, t: string) => {
+    const normA = foldDownloadKeyPart(a);
+    const normT = foldDownloadKeyPart(t);
+    if (normA.length >= 2 && normT.length >= 2) {
+      results.add(`${normA}::${normT}`);
+    }
+  };
+  const primary = extractCleanTitleAndArtist(track.title || "", track.artistName || "");
+  addPair(primary.artist || track.artistName || "", primary.title || track.title || "");
+  const titleParsed = extractCleanTitleAndArtist(track.title || "", "");
+  if (titleParsed.artist && titleParsed.title) {
+    addPair(titleParsed.artist, titleParsed.title);
+  }
+  return Array.from(results);
+}
+
 export function computeTrackDownloadFingerprint(
   track: Pick<Track, "title" | "artistName"> | null | undefined,
 ): string {
-  if (!track) return "";
-  const { title: cleanT, artist: cleanA } = extractCleanTitleAndArtist(
-    track.title || "",
-    track.artistName || "",
-  );
-  const fold = (s: string) =>
-    normalizePersianChars(s)
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, " ")
-      .trim();
-  const normA = fold(cleanA || track.artistName || "");
-  const normT = fold(cleanT || track.title || "");
-  if (normA.length < 2 || normT.length < 2) return "";
-  return `${normA}::${normT}`;
+  return computeTrackDownloadFingerprints(track)[0] || "";
+}
+
+function persistDownloadedIndexToLocalStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entries = Array.from(downloadedMetaById.values()).map((m) => ({
+      id: m.id,
+      title: m.title,
+      artistName: m.artistName,
+      ...(m.pageUrl ? { pageUrl: m.pageUrl } : {}),
+    }));
+    window.localStorage?.setItem(DOWNLOADED_INDEX_LS_KEY, JSON.stringify(entries));
+  } catch {}
+}
+
+function hydrateDownloadedIndexFromLocalStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage?.getItem(DOWNLOADED_INDEX_LS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Array<{
+      id?: string;
+      title?: string;
+      artistName?: string;
+      pageUrl?: string;
+    }>;
+    if (!Array.isArray(parsed)) return;
+    for (const item of parsed) {
+      if (item && typeof item.id === "string" && item.id) {
+        registerDownloadedTrackIndex({
+          id: item.id,
+          title: item.title || "",
+          artistName: item.artistName || "",
+          pageUrl: item.pageUrl,
+        });
+      }
+    }
+  } catch {}
 }
 
 function registerDownloadedTrackIndex(
@@ -132,16 +199,20 @@ function registerDownloadedTrackIndex(
   const trackId = track.id;
   downloadedTrackIds.add(trackId);
   const pageUrlKey = normalizeCanonicalDownloadPageUrl(track.pageUrl);
-  const fingerprint = computeTrackDownloadFingerprint(track);
+  const fingerprints = computeTrackDownloadFingerprints(track);
   downloadedMetaById.set(trackId, {
+    id: trackId,
+    title: track.title || "",
+    artistName: track.artistName || "",
+    pageUrl: track.pageUrl,
     pageUrlKey: pageUrlKey || undefined,
-    fingerprint: fingerprint || undefined,
+    fingerprints,
   });
   if (pageUrlKey) {
     downloadedByPageUrl.set(pageUrlKey, trackId);
   }
-  if (fingerprint) {
-    downloadedByFingerprint.set(fingerprint, trackId);
+  for (const fp of fingerprints) {
+    downloadedByFingerprint.set(fp, trackId);
   }
 }
 
@@ -153,8 +224,10 @@ function unregisterDownloadedTrackIndex(trackId: string): void {
     if (meta.pageUrlKey && downloadedByPageUrl.get(meta.pageUrlKey) === trackId) {
       downloadedByPageUrl.delete(meta.pageUrlKey);
     }
-    if (meta.fingerprint && downloadedByFingerprint.get(meta.fingerprint) === trackId) {
-      downloadedByFingerprint.delete(meta.fingerprint);
+    for (const fp of meta.fingerprints) {
+      if (downloadedByFingerprint.get(fp) === trackId) {
+        downloadedByFingerprint.delete(fp);
+      }
     }
     downloadedMetaById.delete(trackId);
   }
@@ -176,8 +249,7 @@ export function resolveDownloadedTrackId(
     }
   }
   if (options.matchFingerprint !== false) {
-    const fingerprint = computeTrackDownloadFingerprint(track);
-    if (fingerprint) {
+    for (const fingerprint of computeTrackDownloadFingerprints(track)) {
       const matchedByFp = downloadedByFingerprint.get(fingerprint);
       if (matchedByFp && downloadedTrackIds.has(matchedByFp)) {
         return matchedByFp;
@@ -191,6 +263,8 @@ export async function resolveDownloadedTrackIdAsync(
   track: Pick<Track, "id" | "title" | "artistName" | "pageUrl"> | null | undefined,
 ): Promise<string | null> {
   if (!track) return null;
+  const syncMatch = resolveDownloadedTrackId(track);
+  if (syncMatch) return syncMatch;
   if (!initialized) {
     try {
       await initializeDownloadManager();
@@ -202,6 +276,7 @@ export async function resolveDownloadedTrackIdAsync(
     try {
       if (await isTrackDownloaded(track.id)) {
         registerDownloadedTrackIndex(track);
+        persistDownloadedIndexToLocalStorage();
         notifyListeners();
         return track.id;
       }
@@ -259,6 +334,11 @@ export function resetDownloadManagerState(): void {
   downloadedByPageUrl.clear();
   downloadedByFingerprint.clear();
   downloadedMetaById.clear();
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage?.removeItem(DOWNLOADED_INDEX_LS_KEY);
+    }
+  } catch {}
   errorStates.clear();
   snapshotCache.clear();
   initialized = false;
@@ -267,7 +347,8 @@ export function resetDownloadManagerState(): void {
 }
 
 /**
- * Initializes the downloaded tracks cache from storage.
+ * Initializes the downloaded tracks cache from storage using lightweight cursor metadata
+ * (zero multi-MB audio blob allocation) while preserving the instant localStorage mirror.
  */
 export async function initializeDownloadManager(force = false): Promise<void> {
   if (initialized && !force) return;
@@ -275,24 +356,26 @@ export async function initializeDownloadManager(force = false): Promise<void> {
 
   initPromise = (async () => {
     try {
-      const records = await getAllDownloadedTracks();
+      const metas = await getAllDownloadedTrackMeta();
       downloadedTrackIds.clear();
       downloadedByPageUrl.clear();
       downloadedByFingerprint.clear();
       downloadedMetaById.clear();
-      for (const rec of records) {
-        if (rec.trackId) {
+      for (const meta of metas) {
+        if (meta.trackId) {
           registerDownloadedTrackIndex({
-            id: rec.trackId,
-            title: rec.track?.title || "",
-            artistName: rec.track?.artistName || "",
-            pageUrl: rec.track?.pageUrl,
+            id: meta.trackId,
+            title: meta.title || "",
+            artistName: meta.artistName || "",
+            pageUrl: meta.pageUrl,
           });
         }
       }
+      persistDownloadedIndexToLocalStorage();
       initialized = true;
       notifyListeners();
     } catch {
+      hydrateDownloadedIndexFromLocalStorage();
       initialized = true;
     } finally {
       initPromise = null;
@@ -310,11 +393,13 @@ registerEvictionListener((evictedTrackIds) => {
     errorStates.delete(id);
     pausedTrackIds.delete(id);
   }
+  persistDownloadedIndexToLocalStorage();
   notifyStoreChangeListeners();
 });
 
-// Auto-trigger initialization on client-side import and bind network listeners
+// Synchronously hydrate cached checkmark index & kick off background IDB reconciliation on client import
 if (typeof window !== "undefined") {
+  hydrateDownloadedIndexFromLocalStorage();
   void initializeDownloadManager();
 
   window.addEventListener("online", () => {
@@ -757,22 +842,20 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       notifyListeners();
     }
 
-    // Save record to IndexedDB
+    // Save record to IndexedDB (commits on tx.oncomplete)
     await saveDownloadedTrack(track, audioBlob, lyricsData, coverBlob, license);
+    activeDownloads.delete(trackId);
     registerDownloadedTrackIndex(track);
+    persistDownloadedIndexToLocalStorage();
+    notifyStoreChangeListeners();
+    void triggerHapticFeedback("downloadComplete");
 
-    // Automatically export track to device's public storage (MediaStore on Android, download trigger on web)
-    // without requiring user prompt or second button tap
+    // Export to device public Music/Soundify storage immediately after UI checkmark locks
     try {
       await exportTrackToDeviceStorage(track, audioBlob);
     } catch (autoExpErr) {
       console.warn("Auto-export to device storage non-fatal error:", autoExpErr);
     }
-
-    activeDownloads.delete(trackId);
-    registerDownloadedTrackIndex(track);
-    notifyStoreChangeListeners();
-    void triggerHapticFeedback("downloadComplete");
 
     const def = pendingDeferreds.get(trackId);
     if (def) {
@@ -977,6 +1060,7 @@ export async function removeTrackDownload(trackId: string): Promise<boolean> {
 
   const success = await removeDownloadedTrack(trackId);
   unregisterDownloadedTrackIndex(trackId);
+  persistDownloadedIndexToLocalStorage();
   notifyStoreChangeListeners();
   return success;
 }
@@ -1000,6 +1084,7 @@ export async function batchDeleteTracks(trackIds: string[]): Promise<boolean> {
     unregisterDownloadedTrackIndex(id);
   }
 
+  persistDownloadedIndexToLocalStorage();
   notifyStoreChangeListeners();
   return allSuccess;
 }
@@ -1026,6 +1111,11 @@ export async function clearAllDownloads(): Promise<void> {
   downloadedByPageUrl.clear();
   downloadedByFingerprint.clear();
   downloadedMetaById.clear();
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage?.removeItem(DOWNLOADED_INDEX_LS_KEY);
+    }
+  } catch {}
   errorStates.clear();
   await clearAllDownloadedTracks();
   notifyStoreChangeListeners();

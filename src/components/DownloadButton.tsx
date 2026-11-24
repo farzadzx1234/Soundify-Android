@@ -20,6 +20,7 @@ export interface DownloadButtonProps {
   size?: "sm" | "md" | "lg";
   variant?: "ghost" | "glass" | "pill";
   showLabel?: boolean;
+  allowManageSheet?: boolean;
   className?: string;
   onDownloaded?: () => void;
   onRemoved?: () => void;
@@ -31,6 +32,7 @@ export const DownloadButton = memo(function DownloadButton({
   size = "md",
   variant = "ghost",
   showLabel = false,
+  allowManageSheet = false,
   className = "",
   onDownloaded,
   onRemoved,
@@ -107,8 +109,9 @@ export const DownloadButton = memo(function DownloadButton({
     }
 
     if (isDownloaded) {
-      // Apple HIG: Do NOT delete or re-download; lock download & open read-only offline options sheet
-      setShowActionSheet(true);
+      if (allowManageSheet) {
+        setShowActionSheet(true);
+      }
       return;
     }
 
@@ -155,19 +158,20 @@ export const DownloadButton = memo(function DownloadButton({
       "hover:bg-black/[0.05] dark:hover:bg-white/[0.08] text-[var(--sf-muted)] hover:text-[var(--sf-text)]";
   }
 
-  // Downloaded state
+  // Downloaded state: permanently locked emerald checkmark (zero re-download)
   if (isDownloaded) {
     return (
       <>
         <button
           type="button"
-          onClick={handleClick}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          disabled={busy}
+          onClick={allowManageSheet ? handleClick : undefined}
+          disabled={!allowManageSheet || busy}
+          aria-disabled={!allowManageSheet}
           aria-label={`${trackTitle} - ${t("downloaded")}`}
           title={t("downloaded")}
-          className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer leading-none ${sizeClasses} ${variantClasses} text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 ${className}`}
+          className={`sf-btn relative inline-flex items-center justify-center rounded-full transition-all leading-none ${
+            allowManageSheet ? "cursor-pointer active:scale-95 hover:bg-emerald-500/20" : "cursor-default opacity-100"
+          } ${sizeClasses} ${variantClasses} text-emerald-500 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 ${className}`}
         >
           <CheckIcon size={iconSize} weight="bold" aria-hidden="true" className="sf-spring-pop text-emerald-500 dark:text-emerald-400" />
           {showLabel && (
@@ -177,7 +181,7 @@ export const DownloadButton = memo(function DownloadButton({
           )}
         </button>
 
-        {showActionSheet && (
+        {allowManageSheet && showActionSheet && (
           <DownloadActionSheet
             track={track}
             isOpen={showActionSheet}

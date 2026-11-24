@@ -462,8 +462,8 @@ export async function saveDownloadedTrack(
       const store = tx.objectStore(STORE_NAME);
       const req = store.put(record);
 
-      req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error || new Error("Error writing track to IndexedDB"));
+      tx.oncomplete = () => resolve();
       tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
     });
   } catch {
@@ -617,6 +617,55 @@ export async function isTrackDownloaded(trackId: string): Promise<boolean> {
     });
   } catch {
     return memoryFallbackStore.has(trackId);
+  }
+}
+
+export interface DownloadedTrackMeta {
+  trackId: string;
+  title: string;
+  artistName: string;
+  pageUrl?: string;
+}
+
+/**
+ * Retrieves lightweight metadata for all downloaded tracks using a cursor without
+ * materializing multi-megabyte audio Blobs simultaneously (prevents WebView OOM on startup).
+ */
+export async function getAllDownloadedTrackMeta(): Promise<DownloadedTrackMeta[]> {
+  try {
+    const db = await openOfflineDatabase();
+    return await new Promise<DownloadedTrackMeta[]>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const metas: DownloadedTrackMeta[] = [];
+      const req = store.openCursor();
+
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve(metas);
+          return;
+        }
+        const rec = cursor.value as DownloadedTrackRecord | undefined;
+        if (rec?.trackId) {
+          metas.push({
+            trackId: rec.trackId,
+            title: rec.track?.title || "",
+            artistName: rec.track?.artistName || "",
+            pageUrl: rec.track?.pageUrl,
+          });
+        }
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error || new Error("Error scanning downloaded metadata"));
+    });
+  } catch {
+    return Array.from(memoryFallbackStore.values()).map((rec) => ({
+      trackId: rec.trackId,
+      title: rec.track?.title || "",
+      artistName: rec.track?.artistName || "",
+      pageUrl: rec.track?.pageUrl,
+    }));
   }
 }
 

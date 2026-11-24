@@ -81,7 +81,7 @@ function MosaicTile({
       trackId || title || artistName
         ? { id: trackId, title, artistName, pageUrl }
         : null;
-    if (!offlineSync && (offlineId || !cleanRaw)) {
+    if (!offlineSync && (offlineId || cleanRaw)) {
       void (async () => {
         if (offlineId) {
           const blobUrl = await getDownloadedCoverBlobUrl(offlineId).catch(() => null);

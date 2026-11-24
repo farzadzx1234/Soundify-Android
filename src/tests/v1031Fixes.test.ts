@@ -47,33 +47,33 @@ describe("Soundify v1.0.31 Smart AutoMix Intro/Outro DSP, Lyrics Guard, Loop All
   });
 
   it("synchronizes v1.0.31+ / versionCode >= 32 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.3\d$/);
+    expect(APP_VERSION).toMatch(/^1\.0\.[3-9]\d$/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(32);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toMatch(/^1\.0\.3\d$/);
+    expect(pkg.version).toBe(APP_VERSION);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toMatch(/soundify-v1\.0\.3\d-b3\d/);
+    expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode\s+3\d/);
-    expect(gradle).toMatch(/versionName\s+"1\.0\.3\d"/);
+    expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+    expect(gradle).toContain(`versionName "${APP_VERSION}"`);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.3\d"/);
-    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.3\d"/);
+    expect(service).toContain(`APP_USER_AGENT = "Soundify-Android/${APP_VERSION}"`);
+    expect(service).toContain(`APP_VERSION_HEADER = "${APP_VERSION}"`);
   });
 
   it("upgrades AutoMixDspProcessor with 3-band bass/vocal PCM meters and SoundifyMediaService with muted intro pre-scan & 4-condition outro trigger", () => {

@@ -56,6 +56,7 @@ import {
 } from "@/lib/downloadManager";
 import { exportTrackToDeviceStorage, getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
 import { prebufferTrack, recordPlaybackSessionStep } from "@/lib/audioBufferManager";
+import { prefetchCover } from "@/lib/coverCacheManager";
 import {
   initAndroidMediaSession,
   updateAndroidMediaMetadata,
@@ -1811,6 +1812,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     [currentTrack, user],
   );
 
+  useEffect(() => {
+    const cover = currentTrack?.coverUrl;
+    if (!cover || cover.startsWith("data:") || cover.startsWith("blob:")) return;
+    void prefetchCover(resolveMediaUrl(cover)).catch(() => false);
+  }, [currentTrack?.id, currentTrack?.coverUrl]);
+
   const effectiveQueue = useMemo(
     () =>
       !user
@@ -2299,6 +2306,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentlyPlayingTrackId(offlineStorageId);
       setOfflineNotice(null);
+      if (
+        normalizedTrack.coverUrl &&
+        !normalizedTrack.coverUrl.startsWith("data:") &&
+        !normalizedTrack.coverUrl.startsWith("blob:")
+      ) {
+        void prefetchCover(resolveMediaUrl(normalizedTrack.coverUrl)).catch(() => false);
+      }
       if (resolvedAutoPlay) {
         setIsBuffering(true);
         isBufferingRef.current = true;

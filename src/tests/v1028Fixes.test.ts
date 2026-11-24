@@ -36,33 +36,33 @@ function makeLocalTrack(overrides: Partial<Track> = {}): Track {
 
 describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & Single-Slot Badge", () => {
   it("synchronizes v1.0.28+ / versionCode >= 29 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.(2[8-9]|3\d)/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[8-9]|[3-9]\d)/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(29);
 
     const pkg = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"),
     );
-    expect(pkg.version).toMatch(/^1\.0\.(2[8-9]|3\d)/);
+    expect(pkg.version).toBe(APP_VERSION);
 
     const swJs = fs.readFileSync(
       path.resolve(__dirname, "../../public/sw.js"),
       "utf8",
     );
-    expect(swJs).toMatch(/soundify-v1\.0\.(2[8-9]|3\d)-b(29|3\d)/);
+    expect(swJs).toContain(`soundify-v${APP_VERSION}-b${APP_BUILD_NUMBER}`);
 
     const gradle = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode (29|3\d)/);
-    expect(gradle).toMatch(/versionName "1\.0\.(2[8-9]|3\d)"/);
+    expect(gradle).toContain(`versionCode ${APP_BUILD_NUMBER}`);
+    expect(gradle).toContain(`versionName "${APP_VERSION}"`);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),
       "utf8",
     );
-    expect(service).toMatch(/APP_USER_AGENT = "Soundify-Android\/1\.0\.(2[8-9]|3\d)"/);
-    expect(service).toMatch(/APP_VERSION_HEADER = "1\.0\.(2[8-9]|3\d)"/);
+    expect(service).toContain(`APP_USER_AGENT = "Soundify-Android/${APP_VERSION}"`);
+    expect(service).toContain(`APP_VERSION_HEADER = "${APP_VERSION}"`);
   });
 
   it("clears playWhenReady on recycled nextDeckPlayer in prepare, completion, and cancel and guards nextDeckStartMs", () => {

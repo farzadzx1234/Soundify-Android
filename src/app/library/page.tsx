@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   ArrowCircleDownIcon,
@@ -103,7 +104,19 @@ export default function LibraryPage() {
   const [exportedTrackIds, setExportedTrackIds] = useState<Set<string>>(() => getExportedTrackIds());
   const [exportAllRunning, setExportAllRunning] = useState(false);
   const [exportToast, setExportToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [trackPendingDelete, setTrackPendingDelete] = useState<Track | null>(null);
+  const [trackPendingDelete, setTrackPendingDelete] = useState<{ track: Track; trackId: string } | null>(null);
+
+  useEffect(() => {
+    if (!trackPendingDelete && !playlistPendingDelete) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setTrackPendingDelete(null);
+        setPlaylistPendingDelete(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [trackPendingDelete, playlistPendingDelete]);
 
   useEffect(() => {
     if (!user) return;
@@ -953,7 +966,7 @@ export default function LibraryPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setTrackPendingDelete(record.track);
+                            setTrackPendingDelete({ track: record.track, trackId: record.trackId });
                           }}
                           aria-label={`${pickText("Remove download", "حذف دانلود")} ${trackTitle}`}
                           className="sf-press h-10 w-10 min-h-[40px] min-w-[40px] rounded-full flex items-center justify-center text-rose-500/80 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
@@ -1230,124 +1243,135 @@ export default function LibraryPage() {
         />
       )}
 
-      {/* Apple-style floating toast alert for device storage export */}
-      {exportToast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-xl border flex items-center gap-2.5 text-xs sm:text-sm font-bold sf-fade-up ${
-            exportToast.type === "success"
-              ? "bg-emerald-500/90 text-white border-emerald-400/40"
-              : "bg-rose-500/90 text-white border-rose-400/40"
-          }`}
-        >
-          {exportToast.type === "success" ? (
-            <CheckCircleIcon size={18} weight="fill" aria-hidden="true" />
-          ) : (
-            <WarningCircleIcon size={18} weight="fill" aria-hidden="true" />
-          )}
-          <span>{exportToast.message}</span>
-        </div>
-      )}
-      {/* Direct Remove Playlist Confirmation Dialog */}
-      {playlistPendingDelete && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="confirm-remove-playlist-title"
-          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
-          onClick={() => setPlaylistPendingDelete(null)}
-        >
+      {/* Apple-style floating toast alert for device storage export (portaled outside transformed #main-content) */}
+      {exportToast &&
+        typeof document !== "undefined" &&
+        createPortal(
           <div
-            onClick={(e) => e.stopPropagation()}
-            className="sf-sheet-up sm:sf-modal-pop w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.45)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+            role="status"
+            aria-live="polite"
+            className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-[140] px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-xl border flex items-center gap-2.5 text-xs sm:text-sm font-bold sf-fade-up ${
+              exportToast.type === "success"
+                ? "bg-emerald-500/90 text-white border-emerald-400/40"
+                : "bg-rose-500/90 text-white border-rose-400/40"
+            }`}
           >
-            <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/25 mx-auto -mt-1 sm:hidden" />
-            <div className="text-center space-y-2 pt-1">
-              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center ring-1 ring-rose-500/25">
-                <TrashIcon size={24} weight="bold" aria-hidden="true" />
+            {exportToast.type === "success" ? (
+              <CheckCircleIcon size={18} weight="fill" aria-hidden="true" />
+            ) : (
+              <WarningCircleIcon size={18} weight="fill" aria-hidden="true" />
+            )}
+            <span>{exportToast.message}</span>
+          </div>,
+          document.body,
+        )}
+      {/* Direct Remove Playlist Confirmation Dialog (portaled to document.body so fixed positioning covers viewport cleanly) */}
+      {playlistPendingDelete &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-remove-playlist-title"
+            className="fixed inset-0 z-[140] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
+            onClick={() => setPlaylistPendingDelete(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="sf-sheet-up sm:sf-modal-pop w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.45)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+            >
+              <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/25 mx-auto -mt-1 sm:hidden" />
+              <div className="text-center space-y-2 pt-1">
+                <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center ring-1 ring-rose-500/25">
+                  <TrashIcon size={24} weight="bold" aria-hidden="true" />
+                </div>
+                <h3 id="confirm-remove-playlist-title" className="text-base font-bold text-[var(--sf-text)]">
+                  {pickText("Delete Playlist?", "حذف پلی‌لیست؟")}
+                </h3>
+                <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
+                  {pickText(
+                    `"${playlistPendingDelete.title}" will be permanently removed from your playlists.`,
+                    `پلی‌لیست «${playlistPendingDelete.title}» از لیست پلی‌لیست‌های شما حذف می‌شود.`,
+                  )}
+                </p>
               </div>
-              <h3 id="confirm-remove-playlist-title" className="text-base font-bold text-[var(--sf-text)]">
-                {pickText("Delete Playlist?", "حذف پلی‌لیست؟")}
-              </h3>
-              <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
-                {pickText(
-                  `"${playlistPendingDelete.title}" will be permanently removed from your playlists.`,
-                  `پلی‌لیست «${playlistPendingDelete.title}» از لیست پلی‌لیست‌های شما حذف می‌شود.`,
-                )}
-              </p>
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmDeletePlaylist()}
+                  className="sf-press w-full min-h-[48px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm cursor-pointer shadow-sm"
+                >
+                  {pickText("Yes, Delete", "بله، حذف شود")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlaylistPendingDelete(null)}
+                  className="sf-press w-full min-h-[48px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
+                >
+                  {pickText("Cancel", "لغو")}
+                </button>
+              </div>
             </div>
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={() => void handleConfirmDeletePlaylist()}
-                className="sf-press w-full min-h-[48px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm cursor-pointer shadow-sm"
-              >
-                {pickText("Yes, Delete", "بله، حذف شود")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPlaylistPendingDelete(null)}
-                className="sf-press w-full min-h-[48px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
-              >
-                {pickText("Cancel", "لغو")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
 
-      {/* Direct Remove Download Confirmation Dialog */}
-      {trackPendingDelete && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="confirm-remove-download-title"
-          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
-          onClick={() => setTrackPendingDelete(null)}
-        >
+      {/* Direct Remove Download Confirmation Dialog (portaled to document.body so scrolled viewports always render the sheet) */}
+      {trackPendingDelete &&
+        typeof document !== "undefined" &&
+        createPortal(
           <div
-            onClick={(e) => e.stopPropagation()}
-            className="sf-sheet-up w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.45)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-remove-download-title"
+            className="fixed inset-0 z-[140] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
+            onClick={() => setTrackPendingDelete(null)}
           >
-            <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/25 mx-auto -mt-1 sm:hidden" />
-            <div className="text-center space-y-2 pt-1">
-              <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center ring-1 ring-rose-500/25">
-                <TrashIcon size={24} weight="bold" aria-hidden="true" />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="sf-sheet-up w-full max-w-sm sm:max-w-md bg-white/98 dark:bg-[#14161f]/98 text-[var(--sf-text)] rounded-t-[28px] sm:rounded-3xl p-5 sm:p-6 pb-[max(2rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] shadow-[0_25px_60px_rgba(0,0,0,0.45)] border-t border-x sm:border border-black/[0.08] dark:border-white/10 space-y-4"
+            >
+              <div className="w-10 h-1.5 rounded-full bg-black/20 dark:bg-white/25 mx-auto -mt-1 sm:hidden" />
+              <div className="text-center space-y-2 pt-1">
+                <div className="h-12 w-12 rounded-2xl bg-rose-500/15 text-rose-500 mx-auto flex items-center justify-center ring-1 ring-rose-500/25">
+                  <TrashIcon size={24} weight="bold" aria-hidden="true" />
+                </div>
+                <h3 id="confirm-remove-download-title" className="text-base font-bold text-[var(--sf-text)]">
+                  {pickText("Remove Downloaded Track?", "حذف آهنگ از دانلودهای برنامه؟")}
+                </h3>
+                <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
+                  {pickText(
+                    `"${trackPendingDelete.track.title}" will be removed from Soundify offline list. Your exported copy in Music/Soundify remains safe.`,
+                    `آهنگ «${pickText(trackPendingDelete.track.title, trackPendingDelete.track.titleFa)}» از لیست دانلودهای داخل برنامه حذف می‌شود.`,
+                  )}
+                </p>
               </div>
-              <h3 id="confirm-remove-download-title" className="text-base font-bold text-[var(--sf-text)]">
-                {pickText("Remove Downloaded Track?", "حذف آهنگ از دانلودهای برنامه؟")}
-              </h3>
-              <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
-                {pickText(
-                  `"${trackPendingDelete.title}" will be removed from Soundify offline list. Your exported copy in Music/Soundify remains safe.`,
-                  `آهنگ «${pickText(trackPendingDelete.title, trackPendingDelete.titleFa)}» از لیست دانلودهای داخل برنامه حذف می‌شود.`,
-                )}
-              </p>
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const idsToRemove = Array.from(
+                      new Set([trackPendingDelete.trackId, trackPendingDelete.track.id].filter(Boolean)),
+                    );
+                    setTrackPendingDelete(null);
+                    await batchDeleteTracks(idsToRemove);
+                  }}
+                  className="sf-press w-full min-h-[48px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm cursor-pointer shadow-sm"
+                >
+                  {pickText("Yes, Remove", "بله، حذف شود")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrackPendingDelete(null)}
+                  className="sf-press w-full min-h-[48px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
+                >
+                  {pickText("Cancel", "لغو")}
+                </button>
+              </div>
             </div>
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={async () => {
-                  const idToRemove = trackPendingDelete.id;
-                  setTrackPendingDelete(null);
-                  await batchDeleteTracks([idToRemove]);
-                }}
-                className="sf-press w-full min-h-[48px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-sm cursor-pointer shadow-sm"
-              >
-                {pickText("Yes, Remove", "بله، حذف شود")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setTrackPendingDelete(null)}
-                className="sf-press w-full min-h-[48px] rounded-2xl bg-black/[0.05] hover:bg-black/[0.09] dark:bg-white/10 dark:hover:bg-white/15 text-[var(--sf-text)] font-semibold text-sm cursor-pointer border border-black/[0.08] dark:border-white/10"
-              >
-                {pickText("Cancel", "لغو")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
     </PullToRefresh>
   );

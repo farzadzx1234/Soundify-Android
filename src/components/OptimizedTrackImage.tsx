@@ -13,7 +13,7 @@ import {
   getLocalDeviceCoverDataUrl,
   saveLocalDeviceCover,
 } from "@/lib/mediaExport";
-import { cacheCoverImage, getCachedCoverUrl } from "@/lib/coverCacheManager";
+import { cacheCoverImage, getCachedCoverUrl, prefetchCover } from "@/lib/coverCacheManager";
 import {
   getCachedCoverBlobUrl,
   getDownloadedCoverBlobUrl,
@@ -201,15 +201,16 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
       httpTarget &&
       !httpTarget.startsWith("data:") &&
       !httpTarget.startsWith("blob:") &&
-      !httpTarget.startsWith("/covers/")
+      !httpTarget.startsWith("/covers/") &&
+      !httpTarget.startsWith("/icons/")
     ) {
-      if (typeof navigator !== "undefined" && navigator.onLine === false) {
-        void getCachedCoverUrl(httpTarget).then((cachedUrl) => {
-          if (active && cachedUrl) {
-            setCurrentSrc(cachedUrl);
-          }
-        });
-      }
+      void getCachedCoverUrl(httpTarget).then((cachedUrl) => {
+        if (active && cachedUrl) {
+          setCurrentSrc(cachedUrl);
+          setIsLoaded(true);
+          setHasError(false);
+        }
+      });
     }
 
     return () => {
@@ -221,6 +222,15 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
     rememberDecodedCover(currentSrc);
     setIsLoaded(true);
     setHasError(false);
+    if (
+      currentSrc &&
+      !currentSrc.startsWith("data:") &&
+      !currentSrc.startsWith("blob:") &&
+      !currentSrc.startsWith("/covers/") &&
+      !currentSrc.startsWith("/icons/")
+    ) {
+      void prefetchCover(currentSrc).catch(() => false);
+    }
   };
 
   const handleError = () => {

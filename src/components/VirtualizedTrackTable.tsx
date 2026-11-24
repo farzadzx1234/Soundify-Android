@@ -4,11 +4,13 @@ import React, { memo, useCallback, useEffect, useRef, useState } from "react";
 import { PauseIcon, PlayIcon, TrashIcon } from "@phosphor-icons/react";
 import { useI18n } from "@/context/I18nContext";
 import { formatDuration } from "@/lib/lrc";
+import { areTracksSameIdentity } from "@/lib/trackIdentity";
 import { OptimizedTrackImage } from "./OptimizedTrackImage";
 import type { Track } from "@/lib/types";
 
 interface VirtualizedTrackTableProps {
   tracks: Track[];
+  currentTrack?: Track | null;
   currentTrackId?: string | null;
   isPlaying?: boolean;
   isOwner?: boolean;
@@ -21,6 +23,7 @@ interface VirtualizedTrackTableProps {
 
 export const VirtualizedTrackTable = memo(function VirtualizedTrackTable({
   tracks,
+  currentTrack,
   currentTrackId,
   isPlaying = false,
   isOwner = false,
@@ -72,7 +75,9 @@ export const VirtualizedTrackTable = memo(function VirtualizedTrackTable({
   }, [tracks.length, threshold]);
 
   const renderRow = (tr: Track, index: number) => {
-    const active = currentTrackId === tr.id;
+    const active = currentTrack
+      ? areTracksSameIdentity(tr, currentTrack)
+      : Boolean(currentTrackId && (currentTrackId === tr.id || areTracksSameIdentity(tr, { id: currentTrackId })));
     const isPlayingNow = active && isPlaying;
 
     return (

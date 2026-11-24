@@ -45,7 +45,7 @@ describe("Soundify v1.0.25 Global Search Playback, Limit Expansion & Release Dat
   });
 
   it("synchronizes v1.0.25+ / versionCode >= 26 across TS, package.json, sw.js, Gradle, and Java", () => {
-    expect(APP_VERSION).toMatch(/^1\.0\.(2[5-9]|3\d)/);
+    expect(APP_VERSION).toMatch(/^1\.0\.(2[5-9]|[3-9]\d)/);
     expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(26);
 
     const pkg = JSON.parse(
@@ -63,8 +63,8 @@ describe("Soundify v1.0.25 Global Search Playback, Limit Expansion & Release Dat
       path.resolve(__dirname, "../../android/app/build.gradle"),
       "utf8",
     );
-    expect(gradle).toMatch(/versionCode\s+(2[6-9]|3\d)/);
-    expect(gradle).toMatch(/versionName\s+"1\.0\.(2[5-9]|3\d)"/);
+    expect(gradle).toMatch(/versionCode\s+(2[6-9]|[3-9]\d)/);
+    expect(gradle).toMatch(/versionName\s+"1\.0\.(2[5-9]|[3-9]\d)"/);
 
     const service = fs.readFileSync(
       path.resolve(__dirname, "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java"),

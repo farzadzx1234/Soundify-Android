@@ -33,16 +33,11 @@ gradleText = gradleText
   .replace(/versionName\s+"[^"]+"/, `versionName "${nextVersion}"`);
 fs.writeFileSync(gradlePath, gradleText, "utf8");
 
-// 3. Update src/lib/appVersion.ts
-const tsContent = `/**
- * Single Source of Truth for Soundify Android Application Version.
- * Automatically kept in sync with package.json, android/app/build.gradle, and public/sw.js
- * via \`scripts/bump-version.mjs\`.
- */
-export const APP_VERSION = "${nextVersion}";
-export const APP_BUILD_NUMBER = ${nextBuildCode};
-export const APP_CHANNEL = "Android";
-`;
+// 3. Update src/lib/appVersion.ts (preserve update-gate exports)
+let tsContent = fs.readFileSync(appVersionPath, "utf8");
+tsContent = tsContent
+  .replace(/export const APP_VERSION = "[^"]+";/, `export const APP_VERSION = "${nextVersion}";`)
+  .replace(/export const APP_BUILD_NUMBER = \d+;/, `export const APP_BUILD_NUMBER = ${nextBuildCode};`);
 fs.writeFileSync(appVersionPath, tsContent, "utf8");
 
 // 4. Update public/sw.js CACHE_VERSION

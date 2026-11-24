@@ -8,8 +8,11 @@
 
 import { useSyncExternalStore } from "react";
 import { api, extractYouTubeIdClient } from "./api";
+import { areTracksSameIdentity, type TrackIdentityLike } from "./trackIdentity";
 import type { Playlist, Track } from "./types";
 import type { PersonalizedMix } from "./listeningPersonalization";
+
+export { areTracksSameIdentity };
 
 const CUSTOM_PLAYLISTS_KEY = "soundify_custom_playlists_v1";
 const CUSTOM_PLAYLISTS_EVENT = "soundify-custom-playlists-changed";
@@ -206,10 +209,8 @@ export function createCustomPlaylist(input: {
   const cleanDesc = (input.description || "").trim();
   const now = new Date().toISOString();
   const uniqueTracks: Track[] = [];
-  const seen = new Set<string>();
   for (const tr of input.initialTracks || []) {
-    if (!tr || !tr.id || seen.has(tr.id)) continue;
-    seen.add(tr.id);
+    if (!tr || !tr.id || uniqueTracks.some((u) => areTracksSameIdentity(u, tr))) continue;
     uniqueTracks.push(sanitizeTrackForStorage(tr));
   }
 
@@ -266,6 +267,14 @@ export function deleteCustomPlaylist(id: string): boolean {
   return true;
 }
 
+export function isTrackInCustomPlaylist(
+  playlist: Pick<CustomPlaylistRecord, "tracks"> | null | undefined,
+  track: TrackIdentityLike | null | undefined,
+): boolean {
+  if (!playlist || !track || !Array.isArray(playlist.tracks)) return false;
+  return playlist.tracks.some((t) => areTracksSameIdentity(t, track));
+}
+
 export function addTrackToCustomPlaylist(
   playlistId: string,
   track: Track,
@@ -275,7 +284,25 @@ export function addTrackToCustomPlaylist(
   if (idx === -1) return { added: false, playlist: null };
 
   const existing = current[idx];
-  if (existing.tracks.some((t) => t.id === track.id)) {
+  const existingTrackIdx = existing.tracks.findIndex((t) => areTracksSameIdentity(t, track));
+  if (existingTrackIdx !== -1) {
+    // Enrich missing coverUrl/pageUrl on the existing playlist item if incoming copy has better metadata
+    const curItem = existing.tracks[existingTrackIdx];
+    const sanitizedIncoming = sanitizeTrackForStorage(track);
+    const needsCover = isCorruptedOrBlobCover(curItem.id, curItem.coverUrl) && !isCorruptedOrBlobCover(sanitizedIncoming.id, sanitizedIncoming.coverUrl);
+    const needsPage = !curItem.pageUrl && Boolean(sanitizedIncoming.pageUrl);
+    if (needsCover || needsPage) {
+      const nextTracks = [...existing.tracks];
+      nextTracks[existingTrackIdx] = {
+        ...curItem,
+        ...(needsCover ? { coverUrl: sanitizedIncoming.coverUrl } : {}),
+        ...(needsPage ? { pageUrl: sanitizedIncoming.pageUrl } : {}),
+      };
+      const nextList = [...current];
+      nextList[idx] = { ...existing, updatedAt: new Date().toISOString(), tracks: nextTracks };
+      writeCustomPlaylists(nextList);
+      return { added: false, playlist: nextList[idx] };
+    }
     return { added: false, playlist: existing };
   }
 
@@ -296,16 +323,20 @@ export function addTrackToCustomPlaylist(
   return { added: true, playlist: updated };
 }
 
-export function removeTrackFromCustomPlaylist(playlistId: string, trackId: string): CustomPlaylistRecord | null {
+export function removeTrackFromCustomPlaylist(
+  playlistId: string,
+  trackOrId: string | TrackIdentityLike,
+): CustomPlaylistRecord | null {
   const current = readCustomPlaylists();
   const idx = current.findIndex((p) => p.id === playlistId);
   if (idx === -1) return null;
 
   const existing = current[idx];
+  const needle: TrackIdentityLike = typeof trackOrId === "string" ? { id: trackOrId } : trackOrId;
   const updated: CustomPlaylistRecord = {
     ...existing,
     updatedAt: new Date().toISOString(),
-    tracks: existing.tracks.filter((t) => t.id !== trackId),
+    tracks: existing.tracks.filter((t) => !(typeof trackOrId === "string" ? t.id === trackOrId : false) && !areTracksSameIdentity(t, needle)),
   };
 
   const nextList = [...current];
@@ -327,7 +358,7 @@ export function updateTrackCoverInCustomPlaylist(
   const existing = current[idx];
   let changed = false;
   const nextTracks = existing.tracks.map((tr) => {
-    if (tr.id === trackId && isCorruptedOrBlobCover(tr.id, tr.coverUrl)) {
+    if ((tr.id === trackId || areTracksSameIdentity(tr, { id: trackId })) && isCorruptedOrBlobCover(tr.id, tr.coverUrl)) {
       changed = true;
       return { ...tr, coverUrl };
     }

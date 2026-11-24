@@ -14,7 +14,9 @@ import {
   ShuffleIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { api, getCachedCatalogTracks, getPlaylistDetailHref } from "@/lib/api";
+import { api, getCachedCatalogTracks, getPlaylistDetailHref, resolveMediaUrl } from "@/lib/api";
+import { prefetchCoverBatch } from "@/lib/coverCacheManager";
+import { areTracksSameIdentity } from "@/lib/trackIdentity";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -103,7 +105,7 @@ export default function PlaylistClient() {
     };
   }, [id, isCustomPlaylist, isMixPlaylist]);
 
-  // Auto-heal missing/erased covers in custom playlists using offline records or strict mirror artwork lookup
+  // Auto-heal missing/erased covers in custom playlists and pre-cache bounded playlist artwork
   useEffect(() => {
     if (!isCustomPlaylist || !customRecord || customRecord.tracks.length === 0) return;
     const missingTracks = customRecord.tracks.filter((tr) => isCorruptedOrBlobCover(tr.id, tr.coverUrl));
@@ -111,7 +113,7 @@ export default function PlaylistClient() {
 
     let active = true;
     void (async () => {
-      for (const tr of missingTracks.slice(0, 12)) {
+      for (const tr of missingTracks.slice(0, 36)) {
         if (!active) break;
         try {
           const dlRec = await getDownloadedTrack(tr.id).catch(() => null);
@@ -177,11 +179,26 @@ export default function PlaylistClient() {
         : null
       : serverPlaylist;
 
-  const tracks: Track[] = isCustomPlaylist
-    ? customRecord?.tracks ?? []
-    : isMixPlaylist
-      ? resolvedMix?.tracks ?? []
-      : serverTracks;
+  const tracks: Track[] = useMemo(
+    () =>
+      isCustomPlaylist
+        ? (customRecord?.tracks ?? [])
+        : isMixPlaylist
+          ? (resolvedMix?.tracks ?? [])
+          : serverTracks,
+    [customRecord?.tracks, isCustomPlaylist, isMixPlaylist, resolvedMix?.tracks, serverTracks],
+  );
+
+  useEffect(() => {
+    if (!tracks.length) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    const urls = tracks
+      .map((tr) => resolveMediaUrl(tr.coverUrl))
+      .filter((u) => Boolean(u && !u.startsWith("data:") && !u.startsWith("blob:")));
+    if (urls.length > 0) {
+      void prefetchCoverBatch(urls, { concurrency: 3, maxItems: 50 });
+    }
+  }, [tracks]);
 
   if (!id || (!isCustomPlaylist && !isMixPlaylist && notFound) || (isCustomPlaylist && !customRecord) || (isMixPlaylist && !resolvedMix)) {
     if (!isCustomPlaylist && !isMixPlaylist && !notFound && !serverPlaylist && id) {
@@ -209,7 +226,7 @@ export default function PlaylistClient() {
   const isOwner =
     isCustomPlaylist ||
     Boolean(!isMixPlaylist && user && (user.id === playlist.ownerId || user.role === "admin"));
-  const isPlaylistPlaying = tracks.some((tr) => tr.id === currentTrack?.id) && isPlaying;
+  const isPlaylistPlaying = tracks.some((tr) => areTracksSameIdentity(tr, currentTrack)) && isPlaying;
 
   const handlePlayAll = () => {
     if (isPlaylistPlaying) {
@@ -426,6 +443,7 @@ export default function PlaylistClient() {
 
             <VirtualizedTrackTable
               tracks={tracks}
+              currentTrack={currentTrack}
               currentTrackId={currentTrack?.id}
               isPlaying={isPlaying}
               isOwner={isOwner}

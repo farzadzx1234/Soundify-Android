@@ -12,6 +12,7 @@ import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import {
   addTrackToCustomPlaylist,
   createCustomPlaylist,
+  isTrackInCustomPlaylist,
   removeTrackFromCustomPlaylist,
   useCustomPlaylists,
 } from "@/lib/customPlaylists";
@@ -85,7 +86,7 @@ export function PlaylistPickerSheet() {
     if (!targetTrack) return;
     void triggerHapticFeedback("selection");
     if (hasTrack) {
-      removeTrackFromCustomPlaylist(playlistId, targetTrack.id);
+      removeTrackFromCustomPlaylist(playlistId, targetTrack);
       setFeedback(pickText(`Removed from "${playlistTitle}"`, `از «${playlistTitle}» حذف شد`));
     } else {
       addTrackToCustomPlaylist(playlistId, targetTrack);
@@ -232,7 +233,7 @@ export function PlaylistPickerSheet() {
               </div>
             ) : (
               customPlaylists.map((pl) => {
-                const hasTrack = pl.tracks.some((tr) => tr.id === targetTrack.id);
+                const hasTrack = isTrackInCustomPlaylist(pl, targetTrack);
                 const coverUrls = pl.tracks
                   .map((tr) => tr.coverUrl)
                   .filter((u): u is string => Boolean(u && !u.startsWith("blob:")))

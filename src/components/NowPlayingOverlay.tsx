@@ -45,6 +45,7 @@ import { WaveformScrubber } from "./WaveformScrubber";
 import { DownloadButton } from "./DownloadButton";
 import { OptimizedTrackImage } from "./OptimizedTrackImage";
 import { openPlaylistPicker } from "./PlaylistPickerSheet";
+import { isTrackInCustomPlaylist, useCustomPlaylists } from "@/lib/customPlaylists";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import {
   calculateDampedDrag,
@@ -714,11 +715,14 @@ function NowPlayingQueueList({
               }`}
             >
               <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden shadow-sm">
-                <img
+                <OptimizedTrackImage
                   src={item.coverUrl}
                   alt={pickText(item.title, item.titleFa)}
-                  width={44}
-                  height={44}
+                  trackId={item.id}
+                  trackTitle={item.title}
+                  artistName={item.artistName}
+                  pageUrl={item.pageUrl}
+                  accentColor={item.accentColor}
                   className="h-full w-full object-cover"
                 />
                 {active && (
@@ -752,6 +756,7 @@ function NowPlayingQueueList({
 
 export function NowPlayingOverlay() {
   const { user, openAuthDialog } = useAuth();
+  const customPlaylists = useCustomPlaylists();
   const isDesktop = useIsDesktopViewport();
   const { t, pickText, dir, lang } = useI18n();
   const {
@@ -1194,13 +1199,18 @@ export function NowPlayingOverlay() {
                   </div>
 
                   <div className="sf-1c-pill inline-flex items-center gap-2.5 rounded-full ps-1.5 pe-4 py-1 h-10 min-w-0 max-w-sm lg:max-w-md">
-                    <img
-                      src={currentTrack.coverUrl}
-                      alt={title}
-                      width={28}
-                      height={28}
-                      className="h-7 w-7 rounded-full object-cover shadow-sm shrink-0 ring-1 ring-white/20"
-                    />
+                    <div className="h-7 w-7 rounded-full overflow-hidden shadow-sm shrink-0 ring-1 ring-white/20">
+                      <OptimizedTrackImage
+                        src={currentTrack.coverUrl}
+                        alt={title}
+                        trackId={currentTrack.id}
+                        trackTitle={currentTrack.title}
+                        artistName={currentTrack.artistName}
+                        pageUrl={currentTrack.pageUrl}
+                        accentColor={currentTrack.accentColor}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
                     <div className="min-w-0 flex items-baseline gap-1.5">
                       <span className="truncate text-xs font-extrabold text-white">{title}</span>
                       <span className="text-[11px] text-white/40 shrink-0" aria-hidden="true">•</span>
@@ -1283,13 +1293,18 @@ export function NowPlayingOverlay() {
                   </button>
 
                   <div className="sf-1c-pill inline-flex items-center gap-2 rounded-full ps-1.5 pe-3.5 py-1 h-10 min-w-0 max-w-[230px] sm:max-w-xs">
-                    <img
-                      src={currentTrack.coverUrl}
-                      alt={title}
-                      width={26}
-                      height={26}
-                      className="h-6.5 w-6.5 rounded-full object-cover shrink-0 ring-1 ring-white/20"
-                    />
+                    <div className="h-6.5 w-6.5 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
+                      <OptimizedTrackImage
+                        src={currentTrack.coverUrl}
+                        alt={title}
+                        trackId={currentTrack.id}
+                        trackTitle={currentTrack.title}
+                        artistName={currentTrack.artistName}
+                        pageUrl={currentTrack.pageUrl}
+                        accentColor={currentTrack.accentColor}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
                     <div className="min-w-0">
                       <p className="truncate text-xs font-extrabold text-white">{title}</p>
                     </div>
@@ -1859,7 +1874,11 @@ export function NowPlayingOverlay() {
                       onClick={() => openPlaylistPicker(currentTrack)}
                       aria-label={t("addToPlaylist")}
                       title={t("addToPlaylist")}
-                      className="sf-1c-pill inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-white/[0.16] text-white transition-colors cursor-pointer active:scale-95"
+                      className={`sf-1c-pill relative inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-white/[0.16] text-white transition-colors cursor-pointer active:scale-95 ${
+                        customPlaylists.some((pl) => isTrackInCustomPlaylist(pl, currentTrack))
+                          ? "ring-1 ring-emerald-400/70 text-emerald-300"
+                          : ""
+                      }`}
                     >
                       <ListPlusIcon size={19} weight="bold" aria-hidden="true" />
                     </button>
@@ -1909,13 +1928,18 @@ export function NowPlayingOverlay() {
                     aria-label={t("nowPlaying")}
                     className="flex items-center gap-2.5 min-w-0 flex-1 text-start cursor-pointer"
                   >
-                    <img
-                      src={currentTrack.coverUrl}
-                      alt={title}
-                      width={52}
-                      height={52}
-                      className="h-13 w-13 rounded-2xl object-cover shadow-lg border border-white/25 shrink-0"
-                    />
+                    <div className="h-13 w-13 rounded-2xl overflow-hidden shadow-lg border border-white/25 shrink-0">
+                      <OptimizedTrackImage
+                        src={currentTrack.coverUrl}
+                        alt={title}
+                        trackId={currentTrack.id}
+                        trackTitle={currentTrack.title}
+                        artistName={currentTrack.artistName}
+                        pageUrl={currentTrack.pageUrl}
+                        accentColor={currentTrack.accentColor}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-black text-white">{title}</p>
                       <p className="truncate text-[11px] text-white/65">
@@ -1939,7 +1963,11 @@ export function NowPlayingOverlay() {
                       onClick={() => openPlaylistPicker(currentTrack)}
                       aria-label={t("addToPlaylist")}
                       title={t("addToPlaylist")}
-                      className="sf-1c-pill inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full hover:bg-white/[0.16] text-white transition-colors cursor-pointer"
+                      className={`sf-1c-pill inline-flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-full hover:bg-white/[0.16] text-white transition-colors cursor-pointer ${
+                        customPlaylists.some((pl) => isTrackInCustomPlaylist(pl, currentTrack))
+                          ? "ring-1 ring-emerald-400/70 text-emerald-300"
+                          : ""
+                      }`}
                     >
                       <ListPlusIcon size={17} weight="bold" aria-hidden="true" />
                     </button>

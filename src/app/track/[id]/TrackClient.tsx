@@ -33,6 +33,7 @@ import { usePlayer, usePlayerProgress } from "@/context/PlayerContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
 import { Button, Glass, Input } from "@/components/GlassControls";
 import { LyricsPanel } from "@/components/LyricsPanel";
+import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
 import { WaveformScrubber } from "@/components/WaveformScrubber";
 import type { LyricLine, Track, TrackComment } from "@/lib/types";
 
@@ -217,14 +218,17 @@ export default function TrackClient() {
         />
 
         <div className="relative z-10 flex flex-col md:flex-row gap-6 sm:gap-8 items-center md:items-start">
-          <div className="relative group shrink-0">
-            <img
+          <div className="relative group shrink-0 h-56 w-56 sm:h-64 sm:w-64 rounded-3xl overflow-hidden shadow-[0_16px_40px_rgba(0,0,0,0.5)] border border-white/20">
+            <OptimizedTrackImage
               src={track.coverUrl}
+              trackId={track.id}
+              trackTitle={track.title}
+              artistName={track.artistName}
+              pageUrl={track.pageUrl}
+              accentColor={track.accentColor}
               alt={title}
-              width={260}
-              height={260}
-              fetchPriority="high"
-              className="h-56 w-56 sm:h-64 sm:w-64 rounded-3xl object-cover shadow-[0_16px_40px_rgba(0,0,0,0.5)] border border-white/20"
+              priority
+              className="h-full w-full object-cover"
             />
           </div>
 

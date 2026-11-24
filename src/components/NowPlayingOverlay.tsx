@@ -1619,6 +1619,9 @@ export function NowPlayingOverlay() {
                     <OptimizedTrackImage
                       src={currentTrack.coverUrl}
                       trackId={currentTrack.id}
+                      trackTitle={currentTrack.title}
+                      artistName={currentTrack.artistName}
+                      pageUrl={currentTrack.pageUrl}
                       alt={title}
                       priority
                       className="h-full w-full object-cover"
@@ -1631,6 +1634,9 @@ export function NowPlayingOverlay() {
                         <OptimizedTrackImage
                           src={crossfadeFromTrack.coverUrl}
                           trackId={crossfadeFromTrack.id}
+                          trackTitle={crossfadeFromTrack.title}
+                          artistName={crossfadeFromTrack.artistName}
+                          pageUrl={crossfadeFromTrack.pageUrl}
                           alt=""
                           className="h-full w-full object-cover"
                         />
@@ -1786,6 +1792,9 @@ export function NowPlayingOverlay() {
                     <OptimizedTrackImage
                       src={currentTrack.coverUrl}
                       trackId={currentTrack.id}
+                      trackTitle={currentTrack.title}
+                      artistName={currentTrack.artistName}
+                      pageUrl={currentTrack.pageUrl}
                       alt={title}
                       priority
                       className="h-full w-full object-cover pointer-events-none"
@@ -1798,6 +1807,9 @@ export function NowPlayingOverlay() {
                         <OptimizedTrackImage
                           src={crossfadeFromTrack.coverUrl}
                           trackId={crossfadeFromTrack.id}
+                          trackTitle={crossfadeFromTrack.title}
+                          artistName={crossfadeFromTrack.artistName}
+                          pageUrl={crossfadeFromTrack.pageUrl}
                           alt=""
                           className="h-full w-full object-cover pointer-events-none"
                         />

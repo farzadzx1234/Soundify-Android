@@ -45,6 +45,9 @@ function getMediaStorePluginNative(): {
   }>;
   listDeviceSoundifyAudio?: () => Promise<{ files?: DeviceSoundifyAudioFile[] }>;
   getLocalCoverDataUrl?: (options: { trackId?: string; audioUri?: string }) => Promise<{ dataUrl?: string | null }>;
+  saveLocalCover?: (options: { trackId: string; coverBase64: string }) => Promise<{ success?: boolean; coverUri?: string }>;
+  saveLocalLyrics?: (options: { trackId: string; lyricsJson: string }) => Promise<{ success?: boolean }>;
+  getLocalLyrics?: (options: { trackId: string }) => Promise<{ lyricsJson?: string | null }>;
   deleteOfflineFiles?: (options: { trackId: string }) => Promise<void>;
 } | null {
   if (!isAndroidNative()) return null;
@@ -54,6 +57,14 @@ function getMediaStorePluginNative(): {
       : (globalThis as unknown as { window?: Window & typeof globalThis }).window;
   const plugins = win?.Capacitor?.Plugins as Record<string, unknown> | undefined;
   return (plugins?.MediaStorePlugin as ReturnType<typeof getMediaStorePluginNative>) || null;
+}
+
+const localCoverDataUrlCache = new Map<string, string>();
+const MAX_LOCAL_COVER_DATA_URLS = 180;
+
+export function getCachedLocalDeviceCoverDataUrl(trackId?: string): string | null {
+  if (!trackId) return null;
+  return localCoverDataUrlCache.get(trackId) || null;
 }
 
 export async function listDeviceSoundifyAudioFiles(): Promise<DeviceSoundifyAudioFile[]> {
@@ -72,11 +83,72 @@ export async function getLocalDeviceCoverDataUrl(opts: {
   audioUri?: string;
 }): Promise<string | null> {
   if (!opts.trackId && !opts.audioUri) return null;
+  if (opts.trackId && localCoverDataUrlCache.has(opts.trackId)) {
+    return localCoverDataUrlCache.get(opts.trackId) || null;
+  }
   try {
     const plugin = getMediaStorePluginNative();
     if (!plugin?.getLocalCoverDataUrl) return null;
     const res = await plugin.getLocalCoverDataUrl(opts);
-    return typeof res?.dataUrl === "string" && res.dataUrl.startsWith("data:image/") ? res.dataUrl : null;
+    const dataUrl =
+      typeof res?.dataUrl === "string" && res.dataUrl.startsWith("data:image/") ? res.dataUrl : null;
+    if (dataUrl && opts.trackId) {
+      if (localCoverDataUrlCache.size >= MAX_LOCAL_COVER_DATA_URLS) {
+        const oldest = localCoverDataUrlCache.keys().next().value;
+        if (oldest) localCoverDataUrlCache.delete(oldest);
+      }
+      localCoverDataUrlCache.set(opts.trackId, dataUrl);
+    }
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLocalDeviceCover(
+  trackId: string,
+  coverBlob: Blob,
+): Promise<string | null> {
+  if (!trackId || !(coverBlob instanceof Blob) || coverBlob.size <= 0 || coverBlob.size > 2 * 1024 * 1024) {
+    return null;
+  }
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (!plugin?.saveLocalCover) return null;
+    const coverBase64 = await blobToBase64(coverBlob);
+    if (!coverBase64) return null;
+    const res = await plugin.saveLocalCover({ trackId, coverBase64 });
+    return res?.success && res.coverUri ? res.coverUri : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLocalDeviceLyrics(trackId: string, lyrics: unknown): Promise<boolean> {
+  if (!trackId || !lyrics) return false;
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (!plugin?.saveLocalLyrics) return false;
+    const res = await plugin.saveLocalLyrics({
+      trackId,
+      lyricsJson: JSON.stringify(lyrics),
+    });
+    return Boolean(res?.success);
+  } catch {
+    return false;
+  }
+}
+
+export async function getLocalDeviceLyrics<T>(trackId: string): Promise<T | null> {
+  if (!trackId) return null;
+  try {
+    const plugin = getMediaStorePluginNative();
+    if (!plugin?.getLocalLyrics) return null;
+    const res = await plugin.getLocalLyrics({ trackId });
+    if (typeof res?.lyricsJson === "string" && res.lyricsJson.trim()) {
+      return JSON.parse(res.lyricsJson) as T;
+    }
+    return null;
   } catch {
     return null;
   }

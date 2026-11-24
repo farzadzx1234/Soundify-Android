@@ -82,8 +82,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.35";
-    private static final String APP_VERSION_HEADER = "1.0.35";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.36";
+    private static final String APP_VERSION_HEADER = "1.0.36";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -364,7 +364,10 @@ public class SoundifyMediaService extends Service {
                     nextDeckPlayer.getPlaybackState() == Player.STATE_READY
                 ) {
                     long planStartMsA = (activePlan.startSampleOnTrackA * 1000L) / Math.max(8000, activePlan.sampleRate);
-                    long planDurMs = Math.max(1200L, (activePlan.durationSamples * 1000L) / Math.max(8000, activePlan.sampleRate));
+                    if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
+                        planStartMsA = Math.max(planStartMsA, Math.max(0L, durMs - 7000L));
+                    }
+                    long planDurMs = Math.min(7000L, Math.max(1200L, (activePlan.durationSamples * 1000L) / Math.max(8000, activePlan.sampleRate)));
                     if (posMs >= planStartMsA) {
                         resetOutroCounters();
                         executeReadyNativeCrossfade(
@@ -400,49 +403,53 @@ public class SoundifyMediaService extends Service {
                     float bodyVocal = nativeDeckDsp.getBodyVocalRms();
                     float vocal = nativeDeckDsp.getVocalMidRms();
 
-                    // 1. Dead silence trim at end (skips empty YouTube outro screens immediately)
-                    if (remSec <= 26.0 && remSec >= 1.5 && live < 0.012f) {
+                    // Hard <=7.0s ceiling before EOF with vocal-safe gating
+                    boolean vocalSafeNow = (bodyVocal <= 0.02f || vocal < bodyVocal * 0.48f);
+
+                    // 1. Dead silence trim at end (strictly within final <=7.0s)
+                    if (remSec <= 7.0 && remSec >= 1.2 && live < 0.012f) {
                         silenceOutroTicks++;
                     } else {
                         silenceOutroTicks = 0;
                     }
 
-                    // 2. Sustained quiet fade-out (ignores < 1s vocal breaths)
-                    if (remSec <= 22.0 && remSec >= 5.5 && body > 0.055f && live < body * 0.36f) {
+                    // 2. Sustained quiet fade-out when song chart drops (strictly within final <=7.0s & vocal-safe)
+                    if (remSec <= 7.0 && remSec >= 2.6 && body > 0.055f && live < body * 0.38f && vocalSafeNow) {
                         quietOutroTicks++;
                     } else {
                         quietOutroTicks = 0;
                     }
 
-                    // 3. Drums & vocals dropped out -> clean instrumental tail for DJ bass-swap
+                    // 3. Drums & vocals dropped out -> clean instrumental tail (strictly within final <=7.0s)
                     if (
-                        remSec <= 17.0 &&
-                        remSec >= 6.0 &&
+                        remSec <= 7.0 &&
+                        remSec >= 2.8 &&
                         bodyBass > 0.025f &&
-                        bass < bodyBass * 0.30f &&
-                        (bodyVocal <= 0.02f || vocal < bodyVocal * 0.48f)
+                        bass < bodyBass * 0.35f &&
+                        vocalSafeNow
                     ) {
                         instrumentalOutroTicks++;
                     } else {
                         instrumentalOutroTicks = 0;
                     }
 
-                    // 4. Vocal-safe tail phrase when loud beats continue right near the end
-                    if (remSec <= 9.5 && remSec >= 5.0 && bodyVocal > 0.025f && vocal < bodyVocal * 0.40f) {
+                    // 4. Vocal-safe tail phrase near the end (strictly within final <=6.5s)
+                    if (remSec <= 6.5 && remSec >= 2.8 && bodyVocal > 0.025f && vocal < bodyVocal * 0.42f) {
                         vocalDipTicks++;
                     } else {
                         vocalDipTicks = 0;
                     }
 
+                    long maxSafeMs = Math.max(2600L, Math.min(6800L, (long) ((remSec - 0.25) * 1000.0)));
                     long triggerCrossfadeMs = -1L;
                     if (silenceOutroTicks >= 3) {
-                        triggerCrossfadeMs = 3200L;
-                    } else if (quietOutroTicks >= 5) {
-                        triggerCrossfadeMs = 6800L;
-                    } else if (instrumentalOutroTicks >= 6) {
-                        triggerCrossfadeMs = 7500L;
+                        triggerCrossfadeMs = Math.min(3200L, maxSafeMs);
+                    } else if (quietOutroTicks >= 4) {
+                        triggerCrossfadeMs = Math.min(5800L, maxSafeMs);
+                    } else if (instrumentalOutroTicks >= 4) {
+                        triggerCrossfadeMs = Math.min(6500L, maxSafeMs);
                     } else if (vocalDipTicks >= 3) {
-                        triggerCrossfadeMs = Math.max(4500L, Math.min(7200L, (long) ((remSec - 0.5) * 1000.0)));
+                        triggerCrossfadeMs = Math.min(5400L, maxSafeMs);
                     }
 
                     if (triggerCrossfadeMs > 0L) {
@@ -2130,9 +2137,9 @@ public class SoundifyMediaService extends Service {
             matchedPlan = candidatePlan;
         }
 
-        long clampedFadeMs = Math.max(fadeInOnly ? 400L : 1200L, crossfadeMs);
+        long clampedFadeMs = Math.min(7000L, Math.max(fadeInOnly ? 400L : 1200L, crossfadeMs));
         if (matchedPlan != null) {
-            clampedFadeMs = Math.max(1200L, (matchedPlan.durationSamples * 1000L) / Math.max(8000, matchedPlan.sampleRate));
+            clampedFadeMs = Math.min(7000L, Math.max(1200L, (matchedPlan.durationSamples * 1000L) / Math.max(8000, matchedPlan.sampleRate)));
         }
         if (!fadeInOnly && nativePlayer != null) {
             long nativeDurMs = nativePlayer.getDuration();

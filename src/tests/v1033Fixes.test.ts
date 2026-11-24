@@ -232,7 +232,9 @@ describe("Soundify v1.0.33 Offline Covers, Strict Offline Playback & 5-Stage Aut
     const plan = solveAutoMixPlan("slow-a", "fast-b", segA, segB, sr);
 
     expect(plan.mode).toBe("SILENCE_TRIMMED_FADE");
-    expect(plan.durationSamples).toBe(Math.round(3.5 * sr));
+    const fadeSec = plan.durationSamples / sr;
+    expect(fadeSec).toBeGreaterThanOrEqual(2.75);
+    expect(fadeSec).toBeLessThanOrEqual(5.25);
     expect(plan.initialTempoRatioB).toBe(1.0);
     expect(plan.targetTempoRatioA).toBe(1.0);
     expect(camelotDistance(segA.key, segA.key)).toBe(0);

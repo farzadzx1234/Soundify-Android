@@ -795,6 +795,8 @@ export default function LibraryPage() {
                           <OptimizedTrackImage
                             src={record.track.coverUrl}
                             trackId={record.trackId}
+                            trackTitle={record.track.title}
+                            artistName={record.track.artistName}
                             pageUrl={record.track.pageUrl}
                             accentColor={record.track.accentColor}
                             alt={trackTitle}
@@ -860,6 +862,8 @@ export default function LibraryPage() {
                         <OptimizedTrackImage
                           src={record.track.coverUrl}
                           trackId={record.trackId}
+                          trackTitle={record.track.title}
+                          artistName={record.track.artistName}
                           pageUrl={record.track.pageUrl}
                           accentColor={record.track.accentColor}
                           alt={trackTitle}

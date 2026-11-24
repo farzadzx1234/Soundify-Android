@@ -6,11 +6,19 @@ import {
   getTrackDownloadSnapshot,
   resolveDownloadedTrackId,
   resolveLocalDeviceAudioUri,
-  resolveLocalDeviceCoverUri,
+  useDownloadIndexVersion,
 } from "@/lib/downloadManager";
-import { getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
-import { getCachedCoverUrl } from "@/lib/coverCacheManager";
-import { getCachedCoverBlobUrl, getDownloadedCoverBlobUrl } from "@/lib/offlineAudioStorage";
+import {
+  getCachedLocalDeviceCoverDataUrl,
+  getLocalDeviceCoverDataUrl,
+  saveLocalDeviceCover,
+} from "@/lib/mediaExport";
+import { cacheCoverImage, getCachedCoverUrl } from "@/lib/coverCacheManager";
+import {
+  getCachedCoverBlobUrl,
+  getDownloadedCoverBlobUrl,
+  updateDownloadedCover,
+} from "@/lib/offlineAudioStorage";
 
 interface OptimizedTrackImageProps {
   src?: string;
@@ -55,6 +63,7 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
   artistName = "",
   onError,
 }: OptimizedTrackImageProps) {
+  const downloadIndexVersion = useDownloadIndexVersion();
   const lookupTrack = trackId || trackTitle || artistName
     ? { id: trackId, title: trackTitle || alt, artistName, pageUrl }
     : null;
@@ -63,15 +72,19 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
       (trackId && getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
     : "";
   const resolvedTarget = resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
-  const cachedOfflineSync = resolvedOfflineTrackId ? getCachedCoverBlobUrl(resolvedOfflineTrackId) : null;
-  const initialSrc = cachedOfflineSync || resolvedTarget;
+  const cachedOfflineSync = resolvedOfflineTrackId
+    ? getCachedCoverBlobUrl(resolvedOfflineTrackId) ||
+      getCachedLocalDeviceCoverDataUrl(resolvedOfflineTrackId) ||
+      (trackId && trackId !== resolvedOfflineTrackId ? getCachedLocalDeviceCoverDataUrl(trackId) : null)
+    : null;
+  const initialSrc = cachedOfflineSync || (resolvedOfflineTrackId ? "" : resolvedTarget);
   const [currentSrc, setCurrentSrc] = useState<string>(initialSrc);
-  const [isLoaded, setIsLoaded] = useState<boolean>(() => Boolean(cachedOfflineSync || decodedCoverUrls.has(initialSrc)));
+  const [isLoaded, setIsLoaded] = useState<boolean>(() => Boolean(cachedOfflineSync || (!resolvedOfflineTrackId && decodedCoverUrls.has(resolvedTarget))));
   const [hasError, setHasError] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const coverBlobRecoveryAttemptedRef = useRef<string>("");
 
-  // Sync immediate decoded state or downloaded cover without querying IDB/CacheStorage unnecessarily
+  // Resolve downloaded offline covers (IDB blob / native file / CacheStorage) strictly before network fallback
   useEffect(() => {
     let active = true;
     coverBlobRecoveryAttemptedRef.current = "";
@@ -82,61 +95,127 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
       ? resolveDownloadedTrackId(trackMeta) ||
         (trackId && getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
       : "";
-    const offlineSync = offlineId ? getCachedCoverBlobUrl(offlineId) : null;
-    const localSavedCover = trackMeta ? resolveLocalDeviceCoverUri(trackMeta) : null;
-    const target = offlineSync || localSavedCover || resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
-    setCurrentSrc(target);
+    const offlineSync = offlineId
+      ? getCachedCoverBlobUrl(offlineId) ||
+        getCachedLocalDeviceCoverDataUrl(offlineId) ||
+        (trackId && trackId !== offlineId ? getCachedLocalDeviceCoverDataUrl(trackId) : null)
+      : null;
+    const httpTarget = resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
+
+    if (offlineSync) {
+      setCurrentSrc(offlineSync);
+      setHasError(false);
+      setIsLoaded(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    if (offlineId) {
+      setHasError(false);
+      setIsLoaded(false);
+      setCurrentSrc("");
+
+      void (async () => {
+        const blobUrl =
+          (await getDownloadedCoverBlobUrl(offlineId).catch(() => null)) ||
+          (trackId && trackId !== offlineId ? await getDownloadedCoverBlobUrl(trackId).catch(() => null) : null);
+        if (!active) return;
+        if (blobUrl) {
+          setCurrentSrc(blobUrl);
+          setIsLoaded(true);
+          return;
+        }
+
+        const localAudioUri = trackMeta ? resolveLocalDeviceAudioUri(trackMeta) : null;
+        const dataUrl = await getLocalDeviceCoverDataUrl({
+          trackId: offlineId,
+          audioUri: localAudioUri || undefined,
+        }).catch(() => null);
+        if (!active) return;
+        if (dataUrl) {
+          setCurrentSrc(dataUrl);
+          setIsLoaded(true);
+          return;
+        }
+
+        if (httpTarget && !httpTarget.startsWith("data:") && !httpTarget.startsWith("blob:")) {
+          const cachedUrl = await getCachedCoverUrl(httpTarget).catch(() => null);
+          if (!active) return;
+          if (cachedUrl) {
+            setCurrentSrc(cachedUrl);
+            setIsLoaded(true);
+            return;
+          }
+        }
+
+        setCurrentSrc(httpTarget);
+        if (decodedCoverUrls.has(httpTarget)) {
+          setIsLoaded(true);
+        }
+
+        // Backfill missing offline cover permanently when online so subsequent cold launches stay 100% offline
+        if (
+          httpTarget &&
+          httpTarget !== FALLBACK_PLACEHOLDER &&
+          !httpTarget.startsWith("data:") &&
+          !httpTarget.startsWith("blob:") &&
+          (typeof navigator === "undefined" || navigator.onLine !== false)
+        ) {
+          try {
+            const res = await fetch(httpTarget, { cache: "force-cache" });
+            if (res.ok) {
+              const blob = await res.blob();
+              if (blob instanceof Blob && blob.size > 0 && (!blob.type || blob.type.startsWith("image/"))) {
+                const savedObjUrl = await updateDownloadedCover(offlineId, blob).catch(() => null);
+                void saveLocalDeviceCover(offlineId, blob).catch(() => null);
+                void cacheCoverImage(httpTarget, blob).catch(() => null);
+                if (active && savedObjUrl) {
+                  setCurrentSrc(savedObjUrl);
+                  setIsLoaded(true);
+                }
+              }
+            }
+          } catch {}
+        }
+      })();
+
+      return () => {
+        active = false;
+      };
+    }
+
+    setCurrentSrc(httpTarget);
     setHasError(false);
 
-    if (offlineSync || decodedCoverUrls.has(target)) {
+    if (decodedCoverUrls.has(httpTarget)) {
       setIsLoaded(true);
     } else if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
-      rememberDecodedCover(target);
+      rememberDecodedCover(httpTarget);
       setIsLoaded(true);
     } else {
       setIsLoaded(false);
     }
 
-    // Check IndexedDB cover blob or embedded MP3 artwork in Music/Soundify when downloaded locally
-    if (offlineId && !offlineSync) {
-      void getDownloadedCoverBlobUrl(offlineId).then(async (blobUrl) => {
-        if (active && blobUrl) {
-          setCurrentSrc(blobUrl);
-          setIsLoaded(true);
-          return;
-        }
-        const localAudioUri = trackMeta ? resolveLocalDeviceAudioUri(trackMeta) : null;
-        if (localAudioUri || offlineId) {
-          const dataUrl = await getLocalDeviceCoverDataUrl({
-            trackId: offlineId,
-            audioUri: localAudioUri || undefined,
-          });
-          if (active && dataUrl) {
-            setCurrentSrc(dataUrl);
-            setIsLoaded(true);
-          }
-        }
-      });
-    } else if (
-      typeof navigator !== "undefined" &&
-      navigator.onLine === false &&
-      target &&
-      !target.startsWith("data:") &&
-      !target.startsWith("blob:") &&
-      !target.startsWith("/covers/")
+    if (
+      httpTarget &&
+      !httpTarget.startsWith("data:") &&
+      !httpTarget.startsWith("blob:") &&
+      !httpTarget.startsWith("/covers/")
     ) {
-      // Only fall back to CacheStorage cover lookup when offline to avoid 50x redundant async locks while scrolling online
-      void getCachedCoverUrl(target).then((cachedUrl) => {
-        if (active && cachedUrl) {
-          setCurrentSrc(cachedUrl);
-        }
-      });
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        void getCachedCoverUrl(httpTarget).then((cachedUrl) => {
+          if (active && cachedUrl) {
+            setCurrentSrc(cachedUrl);
+          }
+        });
+      }
     }
 
     return () => {
       active = false;
     };
-  }, [src, trackId, pageUrl, alt, trackTitle, artistName]);
+  }, [src, trackId, pageUrl, alt, trackTitle, artistName, downloadIndexVersion]);
 
   const handleLoad = () => {
     rememberDecodedCover(currentSrc);
@@ -236,7 +315,7 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
       {/* Actual Responsive Lazy-Loaded Image */}
       <img
         ref={imgRef}
-        src={currentSrc}
+        src={currentSrc || undefined}
         alt={alt}
         width={320}
         height={320}

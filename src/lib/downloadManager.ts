@@ -23,6 +23,7 @@ import {
   resolveMediaUrl,
 } from "./api";
 import { extractCleanTitleAndArtist, normalizePersianChars } from "./lyricsCleaner";
+import { cacheCoverImage } from "./coverCacheManager";
 import {
   clearAllDownloadedTracks,
   clearOfflineCache,
@@ -35,6 +36,7 @@ import {
   registerEvictionListener,
   removeDownloadedTrack,
   saveDownloadedTrack,
+  savePersistedOfflineLyrics,
   type DownloadedLyrics,
   type DownloadedTrackRecord,
   type StorageBudgetInfo,
@@ -399,13 +401,38 @@ function notifyListeners() {
   }
 }
 
+let downloadIndexVersion = 0;
+
 function notifyStoreChangeListeners() {
+  downloadIndexVersion++;
   notifyListeners();
   for (const listener of storeChangeListeners) {
     try {
       listener();
     } catch {}
   }
+}
+
+export function useDownloadIndexVersion(): number {
+  return useSyncExternalStore(
+    subscribeToStoreChanges,
+    () => downloadIndexVersion,
+    () => 0,
+  );
+}
+
+export function registerLocalDeviceCoverUri(
+  track: Pick<Track, "id" | "title" | "artistName">,
+  coverUri: string,
+): void {
+  if (!track || !coverUri) return;
+  if (track.id) {
+    deviceCoverUriByTrackId.set(track.id, coverUri);
+  }
+  for (const fp of computeTrackDownloadFingerprints(track)) {
+    deviceCoverUriByFingerprint.set(fp, coverUri);
+  }
+  notifyStoreChangeListeners();
 }
 
 /**
@@ -505,7 +532,7 @@ export async function initializeDownloadManager(force = false): Promise<void> {
       }
       persistDownloadedIndexToLocalStorage();
       initialized = true;
-      notifyListeners();
+      notifyStoreChangeListeners();
     } catch {
       hydrateDownloadedIndexFromLocalStorage();
       initialized = true;
@@ -994,7 +1021,7 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       } catch {}
     })();
 
-    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 5000));
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 9000));
     await Promise.race([
       Promise.allSettled([coverFetchPromise, lyricsFetchPromise, licenseFetchPromise]),
       timeoutPromise,
@@ -1005,6 +1032,16 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     if (savingSession) {
       savingSession.progress = 98;
       notifyListeners();
+    }
+
+    if (coverBlob instanceof Blob && coverBlob.size > 0 && track.coverUrl && !track.coverUrl.startsWith("blob:")) {
+      void cacheCoverImage(resolveMediaUrl(track.coverUrl), coverBlob).catch(() => {});
+    }
+    if (lyricsData && Array.isArray(lyricsData.lines) && lyricsData.lines.length > 0) {
+      void savePersistedOfflineLyrics(
+        { trackId, fingerprint: computeTrackDownloadFingerprint(track) },
+        lyricsData,
+      ).catch(() => {});
     }
 
     // Save record to IndexedDB (commits on tx.oncomplete)

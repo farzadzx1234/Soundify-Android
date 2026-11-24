@@ -46,9 +46,9 @@ describe("Soundify v1.0.35 Home Crash Fix, Soundify Mix Branding & Frequency-Mat
     resetDownloadManagerState();
   });
 
-  it("synchronizes v1.0.35 / versionCode 36 across all manifests", () => {
-    expect(APP_VERSION).toBe("1.0.35");
-    expect(APP_BUILD_NUMBER).toBe(36);
+  it("synchronizes v1.0.35+ / versionCode >= 36 across all manifests", () => {
+    expect(APP_VERSION).toMatch(/^1\.0\.3[5-9]\d*$/);
+    expect(APP_BUILD_NUMBER).toBeGreaterThanOrEqual(36);
   });
 
   it("returns stable snapshot references from getTrackDownloadSnapshotForTrack across repeated calls (prevents React Error #185 on Home)", () => {

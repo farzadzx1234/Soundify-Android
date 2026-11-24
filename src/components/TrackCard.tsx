@@ -142,6 +142,8 @@ export const TrackCard = memo(function TrackCard({
           priority={priorityImage}
           pageUrl={activeTrack.pageUrl}
           trackId={activeTrack.id}
+          trackTitle={activeTrack.title}
+          artistName={activeTrack.artistName}
           className="transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
         />
         {/* Subtle Dark Gradient Overlay for Contrast */}

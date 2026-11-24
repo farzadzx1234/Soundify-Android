@@ -39,11 +39,14 @@ import {
   getDownloadedCoverBlobUrl,
   getDownloadedTrack,
   getDownloadedTrackBlobUrl,
+  getPersistedOfflineLyrics,
   isTrackDownloaded,
+  savePersistedOfflineLyrics,
   setCurrentlyPlayingTrackId,
   updateDownloadedLyrics,
 } from "@/lib/offlineAudioStorage";
 import {
+  computeTrackDownloadFingerprint,
   resolveDownloadedTrackId,
   resolveDownloadedTrackIdAsync,
   resolveLocalDeviceAudioUri,
@@ -770,13 +773,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         reqSeq !== lyricsRequestSeqRef.current || currentTrackRef.current?.id !== trackId;
       const offlineStorageId =
         resolveDownloadedTrackId(currentTrackRef.current) || trackId;
+      const trackFingerprint = computeTrackDownloadFingerprint(currentTrackRef.current);
 
       setLyricsLoading(true);
       try {
-        // 1. Check offline storage first
+        // 1. Check offline storage & permanent persisted lyrics first (IndexedDB -> localStorage/native)
         if (!forceFetch && !customQuery?.queryTitle && !customQuery?.queryArtist) {
           try {
-            const offlineRecord = await getDownloadedTrack(offlineStorageId);
+            const offlineRecord =
+              (await getDownloadedTrack(offlineStorageId)) ||
+              (offlineStorageId !== trackId ? await getDownloadedTrack(trackId) : null);
             if (isStaleRequest()) return { found: false, source: "none" };
             if (offlineRecord?.lyrics?.lines && offlineRecord.lyrics.lines.length > 0) {
               const lns = offlineRecord.lyrics.lines;
@@ -787,6 +793,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               setLyricsSource(src);
               lyricsSourceRef.current = src;
               setLyricsOffsetMs(offlineRecord.lyrics.lyricsOffsetMs ?? 0);
+              broadcastLeaderState();
+              return { found: true, source: src };
+            }
+          } catch {}
+
+          try {
+            const persistedLyrics =
+              (await getPersistedOfflineLyrics({
+                trackId: offlineStorageId,
+                fingerprint: trackFingerprint,
+              })) ||
+              (offlineStorageId !== trackId
+                ? await getPersistedOfflineLyrics({ trackId, fingerprint: trackFingerprint })
+                : null);
+            if (isStaleRequest()) return { found: false, source: "none" };
+            if (persistedLyrics?.lines && persistedLyrics.lines.length > 0) {
+              const lns = persistedLyrics.lines;
+              const src = persistedLyrics.source || "offline";
+              lyricsTrackIdRef.current = trackId;
+              setLyrics(lns);
+              lyricsRef.current = lns;
+              setLyricsSource(src);
+              lyricsSourceRef.current = src;
+              setLyricsOffsetMs(persistedLyrics.lyricsOffsetMs ?? 0);
               broadcastLeaderState();
               return { found: true, source: src };
             }
@@ -817,11 +847,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             lyricsSourceRef.current = res.source ?? "lrclib";
             setLyricsOffsetMs(0);
             broadcastLeaderState();
-            void updateDownloadedLyrics(offlineStorageId, {
+            const lyricsPayload = {
               lines: res.lines,
               source: res.source ?? "lrclib",
               lyricsOffsetMs: 0,
-            }).catch(() => {});
+            };
+            void updateDownloadedLyrics(offlineStorageId, lyricsPayload).catch(() => {});
+            void savePersistedOfflineLyrics(
+              { trackId: offlineStorageId, fingerprint: trackFingerprint },
+              lyricsPayload,
+            ).catch(() => {});
+            if (offlineStorageId !== trackId) {
+              void savePersistedOfflineLyrics(
+                { trackId, fingerprint: trackFingerprint },
+                lyricsPayload,
+              ).catch(() => {});
+            }
             return { found: true, source: res.source ?? "lrclib" };
           }
           return { found: false, source: "none" };
@@ -861,11 +902,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setLyricsOffsetMs(res.lyricsOffsetMs ?? 0);
         broadcastLeaderState();
         if (lns.length > 0) {
-          void updateDownloadedLyrics(offlineStorageId, {
+          const lyricsPayload = {
             lines: lns,
             source: src,
             lyricsOffsetMs: res.lyricsOffsetMs ?? 0,
-          }).catch(() => {});
+          };
+          void updateDownloadedLyrics(offlineStorageId, lyricsPayload).catch(() => {});
+          void savePersistedOfflineLyrics(
+            { trackId: offlineStorageId, fingerprint: trackFingerprint },
+            lyricsPayload,
+          ).catch(() => {});
+          if (offlineStorageId !== trackId) {
+            void savePersistedOfflineLyrics(
+              { trackId, fingerprint: trackFingerprint },
+              lyricsPayload,
+            ).catch(() => {});
+          }
         }
         return { found: lns.length > 0, source: src };
       } catch {

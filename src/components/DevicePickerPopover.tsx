@@ -53,6 +53,9 @@ function ActiveOutputCover({
       <OptimizedTrackImage
         src={track.coverUrl}
         trackId={track.id}
+        trackTitle={track.title}
+        artistName={track.artistName}
+        pageUrl={track.pageUrl}
         alt={title}
         className="h-full w-full object-cover"
         onError={() => {

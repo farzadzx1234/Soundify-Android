@@ -695,13 +695,22 @@ public final class AutoMixPcmAnalyzer {
     }
 
     private static double[] findFrequencyMatchPair(SegmentStats segA, SegmentStats segB) {
-        double minOutA = Math.max(segA.segmentStartSec, segA.effectiveEndSec - 22.0);
-        double maxOutA = Math.max(minOutA, segA.effectiveEndSec - 4.5);
+        double minOutA = Math.max(segA.segmentStartSec, segA.effectiveEndSec - 7.0);
+        double maxOutA = Math.max(minOutA, segA.effectiveEndSec - 2.6);
         double minInB = Math.max(0.0, segB.firstAudibleSec);
-        double maxInB = Math.max(minInB, Math.min(minInB + 5.5, 7.0));
+        double maxInB = Math.max(minInB, Math.min(minInB + 5.5, 6.0));
+
+        List<Double> nonSilentA = new ArrayList<>();
+        for (int i = 0; i < segA.frameRms.length; i++) {
+            if (segA.frameRms[i] >= SILENCE_MINUS_50_DBFS) {
+                nonSilentA.add(segA.frameRms[i]);
+            }
+        }
+        java.util.Collections.sort(nonSilentA);
+        double bodyRmsA = !nonSilentA.isEmpty() ? nonSilentA.get(nonSilentA.size() / 2) : 0.12;
 
         double bestScore = -1e18;
-        double bestOutA = Math.max(minOutA, segA.effectiveEndSec - 6.0);
+        double bestOutA = Math.max(minOutA, segA.effectiveEndSec - 5.2);
         double bestInB = minInB;
 
         for (double tA = minOutA; tA <= maxOutA + 0.01; tA += 0.5) {
@@ -710,6 +719,12 @@ public final class AutoMixPcmAnalyzer {
             if (segA.frameRms[idxA] < SILENCE_MINUS_50_DBFS) continue;
             int vIdxA = Math.max(0, Math.min(segA.vadProb.length - 1, (int) Math.round((tA - segA.segmentStartSec) / VAD_HOP_SEC)));
             double vocA = segA.vadProb.length > 0 ? segA.vadProb[vIdxA] : 0.0;
+
+            int idxAEnd = Math.min(segA.frameRms.length - 1, idxA + 2);
+            double rmsAStart = segA.frameRms[idxA];
+            double rmsAEnd = segA.frameRms[idxAEnd];
+            double declA = rmsAEnd <= rmsAStart * 1.02 ? 1.0 : Math.max(0.0, 1.0 - (rmsAEnd - rmsAStart) / Math.max(0.02, rmsAStart));
+            double dropBonus = Math.max(0.0, Math.min(1.0, (bodyRmsA - rmsAStart) / Math.max(0.02, bodyRmsA)));
 
             for (double tB = minInB; tB <= maxInB + 0.01; tB += 0.5) {
                 int idxB = (int) Math.round(tB / 0.5);
@@ -747,12 +762,18 @@ public final class AutoMixPcmAnalyzer {
 
                 int vIdxB = Math.max(0, Math.min(segB.vadProb.length - 1, (int) Math.round(tB / VAD_HOP_SEC)));
                 double vocB = segB.vadProb.length > 0 ? segB.vadProb[vIdxB] : 0.0;
+                int idxBEnd = Math.min(segB.frameRms.length - 1, idxB + 2);
+                double rmsBStart = segB.frameRms[idxB];
+                double rmsBEnd = segB.frameRms[idxBEnd];
+                double riseB = rmsBEnd >= rmsBStart * 0.90 ? 1.0 : Math.max(0.0, 1.0 - (rmsBStart - rmsBEnd) / Math.max(0.02, rmsBStart));
+                double slopeAlign = (declA + riseB) * 0.5;
+
                 double beatBonus = Math.max(0.0, 1.0 - nearestBeatDist(segA.beatsSec, tA) * 4.0) * 0.5
                     + Math.max(0.0, 1.0 - nearestBeatDist(segB.beatsSec, tB) * 4.0) * 0.5;
-                double clash = (vocA > 0.52 && vocB > 0.52) ? 0.35 : 0.0;
-                double delayPen = ((tB - minInB) / 5.5) * 0.08;
+                double vocalCutPenalty = (vocA > 0.48 ? 0.65 : 0.0) + (vocA > 0.48 && vocB > 0.48 ? 0.35 : 0.0);
+                double delayPen = ((tB - minInB) / 5.5) * 0.06;
 
-                double sc = cosSim * 0.56 + eSim * 0.24 + beatBonus * 0.14 - clash - delayPen;
+                double sc = cosSim * 0.42 + eSim * 0.22 + slopeAlign * 0.10 + dropBonus * 0.14 + beatBonus * 0.12 - vocalCutPenalty - delayPen;
                 if (sc > bestScore) {
                     bestScore = sc;
                     bestOutA = tA;
@@ -760,6 +781,10 @@ public final class AutoMixPcmAnalyzer {
                 }
             }
         }
+        if (segA.tVocalEndSec > minOutA && segA.tVocalEndSec <= segA.effectiveEndSec - 2.6) {
+            bestOutA = Math.max(bestOutA, segA.tVocalEndSec);
+        }
+        bestOutA = Math.max(minOutA, Math.min(maxOutA, bestOutA));
         return new double[]{bestOutA, bestInB};
     }
 
@@ -778,11 +803,13 @@ public final class AutoMixPcmAnalyzer {
         double[] freqPair = findFrequencyMatchPair(segA, segB);
         double freqOutA = freqPair[0];
         double freqInB = freqPair[1];
+        double minCueOutA = Math.max(segA.segmentStartSec, segA.effectiveEndSec - 7.0);
+        double defaultRoom = Math.max(2.8, Math.min(5.2, segA.effectiveEndSec - freqOutA - 0.15));
 
         if (bpmDiff > 0.08 || (bpmDiff > 0.04 && camDist > 2)) {
-            double fadeSec = 3.5;
-            double startA = Math.max(segA.segmentStartSec, Math.min(freqOutA, segA.effectiveEndSec - fadeSec));
-            double startB = Math.max(0.0, Math.max(segB.firstAudibleSec, Math.min(freqInB, segB.firstAudibleSec + 4.0)));
+            double fadeSec = defaultRoom;
+            double startA = Math.max(minCueOutA, Math.min(Math.max(minCueOutA, segA.effectiveEndSec - 2.5), Math.min(freqOutA, segA.effectiveEndSec - fadeSec)));
+            double startB = Math.max(0.0, Math.max(segB.firstAudibleSec, Math.min(freqInB, Math.min(segB.firstAudibleSec + 5.0, 6.0))));
             return new AutoMixPlanNative(
                 "SILENCE_TRIMMED_FADE",
                 trackAId,
@@ -800,13 +827,12 @@ public final class AutoMixPcmAnalyzer {
         }
 
         double barSecA = (60.0 / segA.bpm) * 4.0;
-        double introHeadroomB = Math.max(0.0, segB.tVocalStartSec - segB.firstAudibleSec);
-        int[] tryBars = introHeadroomB >= 8.0 * barSecA * 0.9 ? new int[]{8, 4} : new int[]{4};
+        int[] tryBars = new int[]{3, 2, 1};
 
         List<Double> candsB = new ArrayList<>();
         List<Double> srcB = !segB.phraseBoundariesSec.isEmpty() ? segB.phraseBoundariesSec : segB.downbeatsSec;
         for (double b : srcB) {
-            if (b >= Math.max(0.0, segB.firstAudibleSec - 0.15) && b <= Math.min(segB.firstAudibleSec + 5.5, 7.0)) {
+            if (b >= Math.max(0.0, segB.firstAudibleSec - 0.15) && b <= Math.min(segB.firstAudibleSec + 5.5, 6.0)) {
                 candsB.add(b);
             }
         }
@@ -815,7 +841,7 @@ public final class AutoMixPcmAnalyzer {
 
         for (int bars : tryBars) {
             double mixDurSec = bars * barSecA;
-            if (mixDurSec < 3.2 || mixDurSec > 24.0) continue;
+            if (mixDurSec < 2.6 || mixDurSec > 6.8) continue;
 
             Double cueInB = null;
             for (double b : candsB) {
@@ -828,11 +854,12 @@ public final class AutoMixPcmAnalyzer {
             if (cueInB == null) continue;
 
             double maxCueOutA = segA.effectiveEndSec - mixDurSec - 0.15;
-            if (maxCueOutA < segA.segmentStartSec) continue;
+            if (maxCueOutA < minCueOutA) continue;
 
             Double cueOutA = null;
+            double vocalMinA = Math.max(minCueOutA, segA.tVocalEndSec - 0.12);
             for (double b : srcA) {
-                if (b >= segA.tVocalEndSec - 0.12 && b <= maxCueOutA + 0.12) {
+                if (b >= vocalMinA && b <= maxCueOutA + 0.12) {
                     if (cueOutA == null || Math.abs(b - freqOutA) < Math.abs(cueOutA - freqOutA)) {
                         cueOutA = b;
                     }
@@ -840,14 +867,15 @@ public final class AutoMixPcmAnalyzer {
             }
             if (cueOutA == null) {
                 for (double b : srcA) {
-                    if (b <= maxCueOutA + 0.12) {
+                    if (b >= minCueOutA && b <= maxCueOutA + 0.12) {
                         if (cueOutA == null || Math.abs(b - freqOutA) < Math.abs(cueOutA - freqOutA)) {
                             cueOutA = b;
                         }
                     }
                 }
             }
-            if (cueOutA == null) cueOutA = Math.max(segA.segmentStartSec, Math.min(freqOutA, maxCueOutA));
+            if (cueOutA == null) cueOutA = freqOutA;
+            cueOutA = Math.max(minCueOutA, Math.min(Math.max(minCueOutA, maxCueOutA), cueOutA));
 
             float ratio = bpmDiff <= 0.06 ? (float) Math.max(0.94, Math.min(1.06, segB.bpm / segA.bpm)) : 1.0f;
             return new AutoMixPlanNative(
@@ -866,9 +894,9 @@ public final class AutoMixPcmAnalyzer {
             );
         }
 
-        double fadeSec = 3.5;
-        double startA = Math.max(segA.segmentStartSec, Math.min(freqOutA, segA.effectiveEndSec - fadeSec));
-        double startB = Math.max(0.0, Math.max(segB.firstAudibleSec, Math.min(freqInB, segB.firstAudibleSec + 4.0)));
+        double fadeSec = defaultRoom;
+        double startA = Math.max(minCueOutA, Math.min(Math.max(minCueOutA, segA.effectiveEndSec - 2.5), Math.min(freqOutA, segA.effectiveEndSec - fadeSec)));
+        double startB = Math.max(0.0, Math.max(segB.firstAudibleSec, Math.min(freqInB, Math.min(segB.firstAudibleSec + 5.0, 6.0))));
         return new AutoMixPlanNative(
             "SILENCE_TRIMMED_FADE",
             trackAId,

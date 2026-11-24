@@ -121,7 +121,7 @@ export function analyzePcmAutoMixPoints(
     }
   }
 
-  const maxMixIn = Math.min(14, durationSec * 0.18);
+  const maxMixIn = Math.min(5.5, durationSec * 0.12);
   let mixInSec = 0;
   if (firstBodySec > 1.2) {
     const anchor = firstAudibleSec >= 0 ? Math.max(firstAudibleSec, firstBodySec - 2.0) : Math.max(0, firstBodySec - 0.85);
@@ -137,22 +137,22 @@ export function analyzePcmAutoMixPoints(
   }
   const effectiveEndSec = Math.min(durationSec, Math.max(durationSec * 0.55, (lastAudibleWin + 1) * winSec + 0.15));
 
-  // 3. Sustained outro drop in the last 24s before `effectiveEndSec`
-  const earliestOutSec = Math.max(durationSec * 0.62, effectiveEndSec - 24);
-  const latestOutSec = Math.max(earliestOutSec, effectiveEndSec - 4.2);
+  // 3. Sustained outro drop strictly inside the last <=7.0s before `effectiveEndSec`
+  const earliestOutSec = Math.max(durationSec * 0.72, effectiveEndSec - 7.0);
+  const latestOutSec = Math.max(earliestOutSec, effectiveEndSec - 2.8);
   const outStartWin = Math.max(0, Math.floor(earliestOutSec / winSec));
   const outEndWin = Math.min(winCount - 1, Math.ceil(latestOutSec / winSec));
   const quietOutThresh = bodyRms * 0.36;
   let quietOutStreak = 0;
-  let mixOutSec = Math.max(earliestOutSec, effectiveEndSec - 7.5 - 0.35);
+  let mixOutSec = Math.max(earliestOutSec, effectiveEndSec - 5.5);
 
   for (let w = outStartWin; w <= outEndWin; w++) {
     if (rms[w] <= quietOutThresh) {
       quietOutStreak++;
-      if (quietOutStreak >= 14) {
-        // Sustained 0.7s+ fade-out detected -> mix cleanly at the start of the outro drop
-        const dropSec = Math.max(earliestOutSec, (w - 13) * winSec);
-        mixOutSec = Math.min(latestOutSec, dropSec);
+      if (quietOutStreak >= 10) {
+        // Sustained 0.5s+ fade-out detected -> mix cleanly at the start of the outro drop
+        const dropSec = Math.max(earliestOutSec, (w - 9) * winSec);
+        mixOutSec = Math.max(earliestOutSec, Math.min(latestOutSec, dropSec));
         break;
       }
     } else {
@@ -160,8 +160,9 @@ export function analyzePcmAutoMixPoints(
     }
   }
 
-  const headTailRoom = Math.max(3.8, effectiveEndSec - mixOutSec - 0.3);
-  const crossfadeSec = Math.max(3.8, Math.min(7.5, headTailRoom));
+  mixOutSec = Math.max(earliestOutSec, Math.min(latestOutSec, mixOutSec));
+  const headTailRoom = Math.max(2.8, effectiveEndSec - mixOutSec - 0.2);
+  const crossfadeSec = Math.max(2.8, Math.min(6.8, headTailRoom));
 
   return {
     durationSec: Number(durationSec.toFixed(2)),
@@ -422,21 +423,21 @@ export function computeAutoMixPlan(
   const incomingHeadEnergy =
     inBars.length > 0 ? meanRange(inBars, headStartIdx, headEndIdx, 0.5) : 0.5;
 
-  let crossfadeSec = 7.5;
-  let mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.4);
+  const minOutSec = Math.max(dur * 0.72, dur - 7.0);
+  let crossfadeSec = 5.5;
+  let mixOutSec = Math.max(minOutSec, dur - crossfadeSec - 0.35);
 
   if (!outReliable) {
-    // External tracks use synthetic hash waveforms: always blend for a rich 7.5s outro overlap
-    crossfadeSec = Math.max(5.0, Math.min(7.5, dur * 0.14));
-    mixOutSec = Math.max(dur * 0.65, dur - crossfadeSec - 0.4);
+    // External tracks use synthetic hash waveforms: keep mix strictly inside final <=7.0s
+    crossfadeSec = Math.max(4.0, Math.min(5.8, dur * 0.12));
+    mixOutSec = Math.max(minOutSec, dur - crossfadeSec - 0.35);
   } else {
     const energySimilarity = Math.max(0, 1 - Math.abs(outgoingTailEnergy - incomingHeadEnergy));
-    crossfadeSec = 6.5 + energySimilarity * 1.0; // 6.5s .. 7.5s
+    crossfadeSec = 4.5 + energySimilarity * 1.8; // 4.5s .. 6.3s
 
-    // 3. Find true sustained outgoing outro drop in the last 14s..5.5s window
-    const minOutSec = Math.max(dur * 0.65, dur - 14);
-    const maxOutSec = Math.max(minOutSec, dur - Math.min(crossfadeSec, 5.5));
-    mixOutSec = Math.max(minOutSec, dur - crossfadeSec - 0.4);
+    // 3. Find sustained outgoing outro drop strictly inside final <=7.0s
+    const maxOutSec = Math.max(minOutSec, dur - 3.0);
+    mixOutSec = Math.max(minOutSec, dur - crossfadeSec - 0.35);
 
     if (outBars.length >= 12) {
       const bodyStart = Math.floor(outBars.length * 0.15);
@@ -462,9 +463,10 @@ export function computeAutoMixPlan(
     }
   }
 
-  // Ensure crossfade completes gracefully before Deck A reaches EOF with 0.4s headroom
-  const remainingSec = Math.max(3.5, dur - mixOutSec - 0.4);
-  crossfadeSec = Math.max(3.5, Math.min(7.5, Math.min(crossfadeSec, remainingSec)));
+  // Enforce hard <=7.0s ceiling from track end and graceful completion with 0.25s headroom
+  mixOutSec = Math.max(minOutSec, Math.min(Math.max(minOutSec, dur - 2.6), mixOutSec));
+  const remainingSec = Math.max(2.6, dur - mixOutSec - 0.25);
+  crossfadeSec = Math.max(2.6, Math.min(6.8, Math.min(crossfadeSec, remainingSec)));
 
   return {
     mixOutSec: Number(mixOutSec.toFixed(2)),

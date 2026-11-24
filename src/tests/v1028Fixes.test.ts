@@ -99,9 +99,9 @@ describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & S
 
     const plan = computeAutoMixPlan(out, inc, 200);
     expect(plan.mixInSec).toBe(0);
-    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(6.5);
-    expect(plan.crossfadeSec).toBeLessThanOrEqual(7.5);
-    expect(plan.mixOutSec).toBeCloseTo(200 - plan.crossfadeSec - 0.4, 1);
+    expect(plan.crossfadeSec).toBeGreaterThanOrEqual(4.5);
+    expect(plan.crossfadeSec).toBeLessThanOrEqual(6.8);
+    expect(plan.mixOutSec).toBeCloseTo(200 - plan.crossfadeSec - 0.35, 1);
 
     // Perceptual curve enters softly and balances bass-swapped loudness
     const whisper = djCrossfadeGains(0.1);

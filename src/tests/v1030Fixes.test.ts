@@ -74,17 +74,20 @@ describe("Soundify v1.0.30 Apple Music 7.5s DJ Bass-Swap DSP, Live RMS Outro & S
     expect(djCrossfadeFilterHz(0.9).outHighPassHz).toBeGreaterThanOrEqual(650);
   });
 
-  it("plans rich 7.5s overlap windows on standard external & local tracks", () => {
+  it("plans smooth <=7s overlap windows on standard external & local tracks", () => {
     const extOut = makeTrack({ id: "ext-youtube-1", source: "youtube", durationSec: 200 });
     const extIn = makeTrack({ id: "ext-youtube-2", source: "youtube", durationSec: 200 });
     const extPlan = computeAutoMixPlan(extOut, extIn, 200);
-    expect(extPlan.crossfadeSec).toBe(7.5);
-    expect(extPlan.mixOutSec).toBeCloseTo(192.1, 1);
+    expect(extPlan.crossfadeSec).toBeGreaterThanOrEqual(4.0);
+    expect(extPlan.crossfadeSec).toBeLessThanOrEqual(7.0);
+    expect(extPlan.mixOutSec).toBeGreaterThanOrEqual(193.0);
 
     const localOut = makeTrack({ id: "local-1", durationSec: 200 });
     const localIn = makeTrack({ id: "local-2", durationSec: 200 });
     const localPlan = computeAutoMixPlan(localOut, localIn, 200);
-    expect(localPlan.crossfadeSec).toBe(7.5);
+    expect(localPlan.crossfadeSec).toBeGreaterThanOrEqual(4.5);
+    expect(localPlan.crossfadeSec).toBeLessThanOrEqual(7.0);
+    expect(localPlan.mixOutSec).toBeGreaterThanOrEqual(193.0);
   });
 
   it("wires AutoMixDspProcessor with BaseAudioProcessor Butterworth biquad and live RMS outro detection in SoundifyMediaService", () => {

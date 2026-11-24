@@ -292,6 +292,9 @@ export function PlayerDock() {
                 <OptimizedTrackImage
                   src={currentTrack.coverUrl}
                   trackId={currentTrack.id}
+                  trackTitle={currentTrack.title}
+                  artistName={currentTrack.artistName}
+                  pageUrl={currentTrack.pageUrl}
                   alt={title}
                   className="h-full w-full object-cover shrink-0"
                 />
@@ -382,6 +385,9 @@ export function PlayerDock() {
                   <OptimizedTrackImage
                     src={currentTrack.coverUrl}
                     trackId={currentTrack.id}
+                    trackTitle={currentTrack.title}
+                    artistName={currentTrack.artistName}
+                    pageUrl={currentTrack.pageUrl}
                     alt={title}
                     className="h-full w-full object-cover shrink-0"
                   />

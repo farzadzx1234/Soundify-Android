@@ -144,6 +144,8 @@ export const ExternalTrackCard = memo(function ExternalTrackCard({
           accentColor={brandInfo.accent}
           pageUrl={track.pageUrl}
           trackId={track.id}
+          trackTitle={track.title}
+          artistName={track.artistName}
           className="h-full w-full object-cover transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/art:scale-105"
         />
 

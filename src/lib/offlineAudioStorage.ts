@@ -3,6 +3,7 @@ import { parseLrc } from "./lrc";
 import { isOfflineDecryptionPermitted } from "./mobileSecurityIntegrity";
 import { clearCoverCache, getCoverCacheStats } from "./coverCacheManager";
 import { api, getApiToken } from "./api";
+import { getLocalDeviceLyrics, saveLocalDeviceLyrics } from "./mediaExport";
 
 export interface DownloadedLyrics {
   lines: LyricLine[];
@@ -876,6 +877,152 @@ export async function getDownloadedCoverBlobUrl(trackId: string): Promise<string
       return url;
     } catch {
       return null;
+    }
+  }
+
+  return null;
+}
+
+const PERSISTED_LYRICS_LS_KEY = "soundify_offline_lyrics_v1";
+const MAX_PERSISTED_LYRICS_ENTRIES = 250;
+
+function readPersistedLyricsMap(): Record<string, DownloadedLyrics & { savedAt: number }> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage?.getItem(PERSISTED_LYRICS_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePersistedLyricsMap(map: Record<string, DownloadedLyrics & { savedAt: number }>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entries = Object.entries(map);
+    if (entries.length > MAX_PERSISTED_LYRICS_ENTRIES) {
+      entries.sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0));
+      const trimmed: Record<string, DownloadedLyrics & { savedAt: number }> = {};
+      for (const [k, v] of entries.slice(0, MAX_PERSISTED_LYRICS_ENTRIES)) {
+        trimmed[k] = v;
+      }
+      window.localStorage?.setItem(PERSISTED_LYRICS_LS_KEY, JSON.stringify(trimmed));
+      return;
+    }
+    window.localStorage?.setItem(PERSISTED_LYRICS_LS_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+/**
+ * Permanently updates the cover image blob for an offline track and refreshes active Object URL cache.
+ */
+export async function updateDownloadedCover(
+  trackId: string,
+  coverBlob: Blob,
+): Promise<string | null> {
+  if (!trackId || !(coverBlob instanceof Blob) || coverBlob.size <= 0) return null;
+
+  const memRec = memoryFallbackStore.get(trackId);
+  if (memRec) {
+    memRec.coverBlob = coverBlob;
+  }
+
+  try {
+    const db = await openOfflineDatabase();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const getReq = store.get(trackId);
+      getReq.onsuccess = () => {
+        const record = getReq.result as DownloadedTrackRecord | undefined;
+        if (!record) {
+          resolve();
+          return;
+        }
+        record.coverBlob = coverBlob;
+        const putReq = store.put(record);
+        putReq.onsuccess = () => resolve();
+        putReq.onerror = () => resolve();
+      };
+      getReq.onerror = () => resolve();
+    });
+  } catch {}
+
+  if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+    try {
+      const prev = activeCoverBlobUrls.get(trackId);
+      if (prev && typeof URL.revokeObjectURL === "function") {
+        try { URL.revokeObjectURL(prev); } catch {}
+      }
+      const objUrl = URL.createObjectURL(coverBlob);
+      activeCoverBlobUrls.set(trackId, objUrl);
+      coverUrlAccessOrder = coverUrlAccessOrder.filter((id) => id !== trackId);
+      coverUrlAccessOrder.push(trackId);
+      return objUrl;
+    } catch {}
+  }
+
+  return null;
+}
+
+/**
+ * Persists lyrics across sessions in localStorage (LRU bounded to 250 entries) AND native app-private files.
+ */
+export async function savePersistedOfflineLyrics(
+  keys: { trackId?: string; fingerprint?: string },
+  lyrics: DownloadedLyrics,
+): Promise<void> {
+  if (!lyrics || !Array.isArray(lyrics.lines) || lyrics.lines.length === 0) return;
+  const normalized: DownloadedLyrics & { savedAt: number } = {
+    lines: lyrics.lines,
+    source: lyrics.source || "offline",
+    lyricsOffsetMs: lyrics.lyricsOffsetMs ?? 0,
+    savedAt: Date.now(),
+  };
+
+  const map = readPersistedLyricsMap();
+  if (keys.trackId) map[keys.trackId] = normalized;
+  if (keys.fingerprint) map[`fp:${keys.fingerprint}`] = normalized;
+  writePersistedLyricsMap(map);
+
+  if (keys.trackId) {
+    await saveLocalDeviceLyrics(keys.trackId, normalized).catch(() => false);
+  }
+}
+
+/**
+ * Retrieves persisted offline lyrics by trackId or artist::title fingerprint, checking native app-private files too.
+ */
+export async function getPersistedOfflineLyrics(
+  keys: { trackId?: string; fingerprint?: string },
+): Promise<DownloadedLyrics | null> {
+  const map = readPersistedLyricsMap();
+  const hit =
+    (keys.trackId ? map[keys.trackId] : undefined) ||
+    (keys.fingerprint ? map[`fp:${keys.fingerprint}`] : undefined);
+  if (hit && Array.isArray(hit.lines) && hit.lines.length > 0) {
+    return {
+      lines: hit.lines,
+      source: hit.source || "offline",
+      lyricsOffsetMs: hit.lyricsOffsetMs ?? 0,
+    };
+  }
+
+  if (keys.trackId) {
+    const nativeLyrics = await getLocalDeviceLyrics<DownloadedLyrics>(keys.trackId).catch(() => null);
+    if (nativeLyrics && Array.isArray(nativeLyrics.lines) && nativeLyrics.lines.length > 0) {
+      map[keys.trackId] = { ...nativeLyrics, savedAt: Date.now() };
+      if (keys.fingerprint) {
+        map[`fp:${keys.fingerprint}`] = { ...nativeLyrics, savedAt: Date.now() };
+      }
+      writePersistedLyricsMap(map);
+      return {
+        lines: nativeLyrics.lines,
+        source: nativeLyrics.source || "offline",
+        lyricsOffsetMs: nativeLyrics.lyricsOffsetMs ?? 0,
+      };
     }
   }
 

@@ -2,11 +2,21 @@
 
 import React, { useEffect, useState } from "react";
 import { extractYouTubeIdClient, resolveMediaUrl } from "@/lib/api";
-import { getTrackDownloadSnapshot } from "@/lib/downloadManager";
+import { getCachedCoverUrl } from "@/lib/coverCacheManager";
+import {
+  getTrackDownloadSnapshot,
+  resolveDownloadedTrackId,
+  resolveLocalDeviceAudioUri,
+  useDownloadIndexVersion,
+} from "@/lib/downloadManager";
+import { getCachedLocalDeviceCoverDataUrl, getLocalDeviceCoverDataUrl } from "@/lib/mediaExport";
 import { getCachedCoverBlobUrl, getDownloadedCoverBlobUrl } from "@/lib/offlineAudioStorage";
 import type { Track } from "@/lib/types";
 
-export type PlaylistMosaicTrack = Pick<Track, "id" | "coverUrl" | "pageUrl" | "accentColor">;
+export type PlaylistMosaicTrack = Pick<Track, "id" | "coverUrl" | "pageUrl" | "accentColor"> & {
+  title?: string;
+  artistName?: string;
+};
 
 interface PlaylistMosaicProps {
   coverUrls?: string[];
@@ -22,21 +32,36 @@ function MosaicTile({
   src,
   trackId = "",
   pageUrl = "",
+  title = "",
+  artistName = "",
   loadingAttr,
   className = "h-full w-full object-cover",
 }: {
   src?: string;
   trackId?: string;
   pageUrl?: string;
+  title?: string;
+  artistName?: string;
   loadingAttr?: "lazy";
   className?: string;
 }) {
+  const downloadIndexVersion = useDownloadIndexVersion();
   const isCorruptedDefault = Boolean(trackId && trackId !== "track-01" && src === "/covers/track-01.jpg");
   const cleanRaw =
     src && !src.startsWith("blob:") && !isCorruptedDefault
       ? resolveMediaUrl(src)
       : "";
-  const offlineSync = trackId ? getCachedCoverBlobUrl(trackId) : null;
+  const lookupTrack =
+    trackId || title || artistName
+      ? { id: trackId, title, artistName, pageUrl }
+      : null;
+  const offlineId = lookupTrack
+    ? resolveDownloadedTrackId(lookupTrack) ||
+      (trackId && getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
+    : "";
+  const offlineSync = offlineId
+    ? getCachedCoverBlobUrl(offlineId) || getCachedLocalDeviceCoverDataUrl(offlineId)
+    : null;
   const ytFallbackRaw = (() => {
     const ytId = extractYouTubeIdClient(cleanRaw || pageUrl || trackId);
     return ytId
@@ -46,28 +71,54 @@ function MosaicTile({
       : "";
   })();
 
-  const baseSrc = offlineSync || cleanRaw || ytFallbackRaw || MOSAIC_FALLBACK_SVG;
+  const baseSrc = offlineSync || (offlineId ? "" : cleanRaw || ytFallbackRaw || MOSAIC_FALLBACK_SVG);
   const [override, setOverride] = useState<{ forBase: string; src: string } | null>(null);
   const imgSrc = override && override.forBase === baseSrc ? override.src : baseSrc;
 
   useEffect(() => {
     let active = true;
-    if (
-      trackId &&
-      !offlineSync &&
-      (getTrackDownloadSnapshot(trackId).status === "downloaded" || !cleanRaw)
-    ) {
-      void getDownloadedCoverBlobUrl(trackId).then((blobUrl) => {
-        if (active && blobUrl) {
-          setOverride({ forBase: baseSrc, src: blobUrl });
+    const trackMeta =
+      trackId || title || artistName
+        ? { id: trackId, title, artistName, pageUrl }
+        : null;
+    if (!offlineSync && (offlineId || !cleanRaw)) {
+      void (async () => {
+        if (offlineId) {
+          const blobUrl = await getDownloadedCoverBlobUrl(offlineId).catch(() => null);
+          if (active && blobUrl) {
+            setOverride({ forBase: baseSrc, src: blobUrl });
+            return;
+          }
+          const localAudioUri = trackMeta ? resolveLocalDeviceAudioUri(trackMeta) : null;
+          const dataUrl = await getLocalDeviceCoverDataUrl({
+            trackId: offlineId,
+            audioUri: localAudioUri || undefined,
+          }).catch(() => null);
+          if (active && dataUrl) {
+            setOverride({ forBase: baseSrc, src: dataUrl });
+            return;
+          }
         }
-      });
+        if (cleanRaw) {
+          const cachedUrl = await getCachedCoverUrl(cleanRaw).catch(() => null);
+          if (active && cachedUrl) {
+            setOverride({ forBase: baseSrc, src: cachedUrl });
+            return;
+          }
+        }
+        if (active && offlineId) {
+          setOverride({
+            forBase: baseSrc,
+            src: cleanRaw || ytFallbackRaw || MOSAIC_FALLBACK_SVG,
+          });
+        }
+      })();
     }
 
     return () => {
       active = false;
     };
-  }, [trackId, offlineSync, cleanRaw, baseSrc]);
+  }, [trackId, offlineId, offlineSync, cleanRaw, baseSrc, title, artistName, pageUrl, ytFallbackRaw, downloadIndexVersion]);
 
   const handleError = () => {
     const ytId = extractYouTubeIdClient(imgSrc || pageUrl || trackId);
@@ -91,7 +142,7 @@ function MosaicTile({
 
   return (
     <img
-      src={imgSrc}
+      src={imgSrc || undefined}
       alt=""
       width={160}
       height={160}
@@ -114,7 +165,7 @@ export function PlaylistMosaic({
   lazy = false,
 }: PlaylistMosaicProps) {
   const loadingAttr = lazy ? "lazy" : undefined;
-  const tiles: Array<{ key: string; src?: string; trackId?: string; pageUrl?: string }> = [];
+  const tiles: Array<{ key: string; src?: string; trackId?: string; pageUrl?: string; title?: string; artistName?: string }> = [];
 
   if (tracks && tracks.length > 0) {
     const seenIds = new Set<string>();
@@ -129,6 +180,14 @@ export function PlaylistMosaic({
           : "";
       const hasOfflineCover =
         Boolean(getCachedCoverBlobUrl(tr.id)) ||
+        Boolean(
+          resolveDownloadedTrackId({
+            id: tr.id,
+            title: tr.title || "",
+            artistName: tr.artistName || "",
+            pageUrl: tr.pageUrl,
+          }),
+        ) ||
         getTrackDownloadSnapshot(tr.id).status === "downloaded";
       if (validUrl && seenUrls.has(validUrl) && !hasOfflineCover) {
         continue;
@@ -140,6 +199,8 @@ export function PlaylistMosaic({
         src: validUrl,
         trackId: tr.id,
         pageUrl: tr.pageUrl,
+        title: tr.title,
+        artistName: tr.artistName,
       });
       if (tiles.length >= 4) break;
     }
@@ -180,6 +241,8 @@ export function PlaylistMosaic({
           src={t0.src}
           trackId={t0.trackId}
           pageUrl={t0.pageUrl}
+          title={t0.title}
+          artistName={t0.artistName}
           loadingAttr={loadingAttr}
           className="h-full w-full object-cover"
         />
@@ -196,6 +259,8 @@ export function PlaylistMosaic({
             src={tile.src}
             trackId={tile.trackId}
             pageUrl={tile.pageUrl}
+            title={tile.title}
+            artistName={tile.artistName}
             loadingAttr={loadingAttr}
             className="h-full w-full object-cover"
           />
@@ -212,6 +277,8 @@ export function PlaylistMosaic({
           src={tiles[0].src}
           trackId={tiles[0].trackId}
           pageUrl={tiles[0].pageUrl}
+          title={tiles[0].title}
+          artistName={tiles[0].artistName}
           loadingAttr={loadingAttr}
           className="row-span-2 h-full w-full object-cover"
         />
@@ -220,6 +287,8 @@ export function PlaylistMosaic({
           src={tiles[1].src}
           trackId={tiles[1].trackId}
           pageUrl={tiles[1].pageUrl}
+          title={tiles[1].title}
+          artistName={tiles[1].artistName}
           loadingAttr={loadingAttr}
           className="h-full w-full object-cover"
         />
@@ -228,6 +297,8 @@ export function PlaylistMosaic({
           src={tiles[2].src}
           trackId={tiles[2].trackId}
           pageUrl={tiles[2].pageUrl}
+          title={tiles[2].title}
+          artistName={tiles[2].artistName}
           loadingAttr={loadingAttr}
           className="h-full w-full object-cover"
         />
@@ -243,6 +314,8 @@ export function PlaylistMosaic({
           src={tile.src}
           trackId={tile.trackId}
           pageUrl={tile.pageUrl}
+          title={tile.title}
+          artistName={tile.artistName}
           loadingAttr={loadingAttr}
           className="h-full w-full object-cover"
         />

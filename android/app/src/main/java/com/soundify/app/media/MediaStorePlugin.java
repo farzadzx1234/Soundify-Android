@@ -534,6 +534,92 @@ public class MediaStorePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void saveLocalCover(PluginCall call) {
+        String trackId = call.getString("trackId", "");
+        String coverBase64 = call.getString("coverBase64", "");
+        if (trackId == null || trackId.trim().isEmpty() || coverBase64 == null || coverBase64.trim().isEmpty()) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            call.resolve(ret);
+            return;
+        }
+        try {
+            String cleanB64 = coverBase64.contains(",")
+                ? coverBase64.substring(coverBase64.indexOf(",") + 1)
+                : coverBase64;
+            byte[] coverBytes = Base64.decode(cleanB64, Base64.DEFAULT);
+            if (coverBytes == null || coverBytes.length == 0 || coverBytes.length > 2 * 1024 * 1024) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                call.resolve(ret);
+                return;
+            }
+            File privateDir = getPrivateOfflineDir(getContext());
+            String safeId = sanitizeIdForFile(trackId);
+            File privateCover = new File(privateDir, safeId + ".jpg");
+            try (FileOutputStream cfos = new FileOutputStream(privateCover)) {
+                cfos.write(coverBytes);
+                cfos.flush();
+            }
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("coverUri", Uri.fromFile(privateCover).toString());
+            call.resolve(ret);
+        } catch (Exception ignored) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void saveLocalLyrics(PluginCall call) {
+        String trackId = call.getString("trackId", "");
+        String lyricsJson = call.getString("lyricsJson", "");
+        if (trackId == null || trackId.trim().isEmpty() || lyricsJson == null || lyricsJson.trim().isEmpty()) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            call.resolve(ret);
+            return;
+        }
+        try {
+            File privateDir = getPrivateOfflineDir(getContext());
+            String safeId = sanitizeIdForFile(trackId);
+            File lrcFile = new File(privateDir, safeId + ".lrc.json");
+            try (FileOutputStream fos = new FileOutputStream(lrcFile)) {
+                fos.write(lyricsJson.getBytes(StandardCharsets.UTF_8));
+                fos.flush();
+            }
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            call.resolve(ret);
+        } catch (Exception ignored) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void getLocalLyrics(PluginCall call) {
+        String trackId = call.getString("trackId", "");
+        JSObject ret = new JSObject();
+        try {
+            if (trackId != null && !trackId.trim().isEmpty()) {
+                File lrcFile = new File(getPrivateOfflineDir(getContext()), sanitizeIdForFile(trackId) + ".lrc.json");
+                byte[] bytes = readAllBytesLimited(lrcFile, 512 * 1024);
+                if (bytes != null && bytes.length > 0) {
+                    ret.put("lyricsJson", new String(bytes, StandardCharsets.UTF_8));
+                    call.resolve(ret);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {}
+        ret.put("lyricsJson", JSONObject.NULL);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void deleteOfflineFiles(PluginCall call) {
         String trackId = call.getString("trackId", "");
         Context context = getContext();
@@ -541,7 +627,7 @@ public class MediaStorePlugin extends Plugin {
             if (trackId != null && !trackId.trim().isEmpty()) {
                 File dir = getPrivateOfflineDir(context);
                 String safeId = sanitizeIdForFile(trackId);
-                for (String ext : new String[]{".mp3", ".jpg", ".meta.json"}) {
+                for (String ext : new String[]{".mp3", ".jpg", ".meta.json", ".lrc.json"}) {
                     File f = new File(dir, safeId + ext);
                     if (f.exists()) {
                         //noinspection ResultOfMethodCallIgnored

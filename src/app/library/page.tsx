@@ -1216,7 +1216,10 @@ export default function LibraryPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => mix.tracks.length > 0 && playTrack(mix.tracks[0], mix.tracks)}
+                        onClick={() =>
+                          mix.tracks.length > 0 &&
+                          playTrack(mix.tracks[0], mix.tracks, 0, true, `playlist:${mix.id}`)
+                        }
                         aria-label={`${t("playNow")}: ${lang === "fa" ? mix.titleFa : mix.title}`}
                         className="sf-press h-9 w-9 rounded-full bg-indigo-500 text-white flex items-center justify-center cursor-pointer"
                       >

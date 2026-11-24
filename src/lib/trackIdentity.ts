@@ -190,3 +190,20 @@ export function areTracksSameIdentity(
 
   return false;
 }
+
+/**
+ * Checks whether a specific playlist/mix context is currently the active playback source
+ * so tracks played outside the playlist (Downloads, Search, Home, or other playlists)
+ * never trigger a false "Pause" button inside an inactive playlist.
+ */
+export function isPlaylistContextPlaying(opts: {
+  isPlaying: boolean;
+  currentTrack: TrackIdentityLike | null | undefined;
+  playbackContextId: string | null | undefined;
+  playlistId: string | null | undefined;
+  tracks: TrackIdentityLike[];
+}): boolean {
+  if (!opts.isPlaying || !opts.currentTrack || !opts.playlistId) return false;
+  if (opts.playbackContextId !== `playlist:${opts.playlistId}`) return false;
+  return opts.tracks.some((tr) => areTracksSameIdentity(tr, opts.currentTrack));
+}

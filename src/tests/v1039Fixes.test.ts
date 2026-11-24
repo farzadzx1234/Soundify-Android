@@ -196,7 +196,7 @@ describe("v1.0.39 Fixes: Library Remove Modal, Cross-Source Playlist Identity & 
 
     const plClientSrc = fs.readFileSync(path.resolve(__dirname, "../app/playlist/[id]/PlaylistClient.tsx"), "utf8");
     expect(plClientSrc).toContain("prefetchCoverBatch");
-    expect(plClientSrc).toContain("areTracksSameIdentity");
+    expect(plClientSrc).toMatch(/areTracksSameIdentity|isPlaylistContextPlaying/);
 
     const nowPlayingSrc = fs.readFileSync(path.resolve(__dirname, "../components/NowPlayingOverlay.tsx"), "utf8");
     expect(nowPlayingSrc).toContain("isTrackInCustomPlaylist");

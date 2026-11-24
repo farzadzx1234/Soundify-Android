@@ -29,6 +29,7 @@ import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { useDownloadedTracks } from "@/lib/downloadManager";
 import { buildPersonalizedMixes } from "@/lib/listeningPersonalization";
+import { isPlaylistContextPlaying } from "@/lib/trackIdentity";
 import type { Playlist, Track } from "@/lib/types";
 
 function getDailyPlaysScore(tr: Track): number {
@@ -69,7 +70,7 @@ class HomeSectionErrorBoundary extends React.Component<
 export default function HomePage() {
   const { user } = useAuth();
   const { t, pickText, formatNum, lang } = useI18n();
-  const { currentTrack, isPlaying, playTrack } = usePlayer();
+  const { currentTrack, isPlaying, playbackContextId, playTrack, togglePlay } = usePlayer();
   const { downloadedTracks } = useDownloadedTracks();
 
   // Initialize from cached live server catalog immediately so real tracks & artwork paint instantaneously
@@ -307,8 +308,13 @@ export default function HomePage() {
 
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
               {personalizedMixes.map((mix) => {
-                const isMixPlaying =
-                  isPlaying && currentTrack && mix.tracks.some((tr) => tr.id === currentTrack.id);
+                const isMixPlaying = isPlaylistContextPlaying({
+                  isPlaying,
+                  currentTrack,
+                  playbackContextId,
+                  playlistId: mix.id,
+                  tracks: mix.tracks,
+                });
                 return (
                   <div
                     key={mix.id}
@@ -328,7 +334,11 @@ export default function HomePage() {
                         onClick={() => {
                           if (mix.tracks.length === 0) return;
                           void triggerHapticFeedback("playPause");
-                          playTrack(mix.tracks[0], mix.tracks);
+                          if (isMixPlaying) {
+                            togglePlay();
+                          } else {
+                            playTrack(mix.tracks[0], mix.tracks, 0, true, `playlist:${mix.id}`);
+                          }
                         }}
                         aria-label={`${t("playNow")}: ${lang === "fa" ? mix.titleFa : mix.title}`}
                         className="sf-press absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full text-slate-950 shadow-[0_6px_16px_rgba(0,0,0,0.45)] cursor-pointer"

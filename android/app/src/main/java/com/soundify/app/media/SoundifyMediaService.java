@@ -90,8 +90,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.41";
-    private static final String APP_VERSION_HEADER = "1.0.41";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.42";
+    private static final String APP_VERSION_HEADER = "1.0.42";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;

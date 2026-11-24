@@ -122,8 +122,15 @@ interface PlayerContextValue {
   lyricsSource: string;
   lyricsLoading: boolean;
   analyserNode: AnalyserNode | null;
+  playbackContextId: string | null;
   getCurrentTime: () => number;
-  playTrack: (track: Track, newQueue?: Track[], startTime?: number, autoPlay?: boolean) => void;
+  playTrack: (
+    track: Track,
+    newQueue?: Track[],
+    startTime?: number,
+    autoPlay?: boolean,
+    playbackContextId?: string | null,
+  ) => void;
   togglePlay: () => void;
   next: (fromEnded?: boolean) => void;
   prev: () => void;
@@ -348,6 +355,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [isCrossfading, setIsCrossfading] = useState(false);
   const [crossfadeFromTrack, setCrossfadeFromTrack] = useState<Track | null>(null);
   const [audioDeckVersion, setAudioDeckVersion] = useState(0);
+  const [playbackContextId, setPlaybackContextId] = useState<string | null>(null);
+  const playbackContextIdRef = useRef<string | null>(null);
 
   const autoMixTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoMixRafRef = useRef<number | null>(null);
@@ -460,6 +469,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           muted: mutedRef.current,
           repeat: repeatRef.current,
           shuffle: shuffleRef.current,
+          playbackContextId: playbackContextIdRef.current,
           currentTime: typeof timeOverride === "number" ? timeOverride : currentTimeRef.current,
         }),
       );
@@ -471,7 +481,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (currentTrack) {
       savePlayerState();
     }
-  }, [currentTrack, queue, volume, muted, repeat, shuffle, savePlayerState]);
+  }, [currentTrack, queue, volume, muted, repeat, shuffle, playbackContextId, savePlayerState]);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -2235,12 +2245,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const playTrack = useCallback(
-    async (track: Track, newQueue?: Track[], startTime?: number, autoPlay?: boolean) => {
+    async (
+      track: Track,
+      newQueue?: Track[],
+      startTime?: number,
+      autoPlay?: boolean,
+      nextPlaybackContextId?: string | null,
+    ) => {
       const normalizedTrack = normalizeTrack(track);
       const normalizedQueue = Array.isArray(newQueue) && newQueue.length > 0 ? newQueue.map(normalizeTrack) : undefined;
       const startSec = typeof startTime === "number" && startTime > 0 ? startTime : 0;
       const isUiToggleCall = startTime === undefined && autoPlay === undefined;
       const resolvedAutoPlay = autoPlay ?? true;
+      const targetContextId = nextPlaybackContextId ?? null;
+      const sameContextOrUnspecified =
+        nextPlaybackContextId === undefined || nextPlaybackContextId === playbackContextIdRef.current;
 
       // Fast path: if user taps Pause on the currently playing track card / detail hero button,
       // pause immediately without requiring online checks or re-buffering.
@@ -2249,7 +2268,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (isUiToggleCall && currentTrackRef.current?.id === normalizedTrack.id) {
         const currentAudio = getSingletonAudio();
         const isCurrentlyPlayingAudible = Boolean(
-          isPlayingRef.current &&
+          sameContextOrUnspecified &&
+            isPlayingRef.current &&
             (nativeAudioActiveRef.current
               ? currentTimeRef.current > 0 || !isBufferingRef.current
               : currentAudio && !currentAudio.paused && currentAudio.currentTime > 0),
@@ -2306,6 +2326,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentlyPlayingTrackId(offlineStorageId);
       setOfflineNotice(null);
+      if (playbackContextIdRef.current !== targetContextId) {
+        playbackContextIdRef.current = targetContextId;
+        setPlaybackContextId(targetContextId);
+      }
       if (
         normalizedTrack.coverUrl &&
         !normalizedTrack.coverUrl.startsWith("data:") &&
@@ -2707,17 +2731,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (checkIsOffline()) {
         const nextDownloaded = q.find((t, i) => i > idx && Boolean(resolveDownloadedTrackId(t)));
         if (nextDownloaded) {
-          playTrack(nextDownloaded, undefined, 0, true);
+          playTrack(nextDownloaded, undefined, 0, true, playbackContextIdRef.current);
           return;
         }
         if (activeRepeat === "all" || (!fromEnded && q.some((t) => Boolean(resolveDownloadedTrackId(t))))) {
           const wrapDownloaded = q.find((t) => Boolean(resolveDownloadedTrackId(t)));
           if (wrapDownloaded && wrapDownloaded.id !== curr.id) {
-            playTrack(wrapDownloaded, undefined, 0, true);
+            playTrack(wrapDownloaded, undefined, 0, true, playbackContextIdRef.current);
             return;
           }
           if (wrapDownloaded && wrapDownloaded.id === curr.id && activeRepeat === "all") {
-            playTrack(wrapDownloaded, undefined, 0, true);
+            playTrack(wrapDownloaded, undefined, 0, true, playbackContextIdRef.current);
             return;
           }
         }
@@ -2760,7 +2784,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           broadcastLeaderState();
           return;
         }
-        playTrack(target, undefined, 0, true);
+        playTrack(target, undefined, 0, true, playbackContextIdRef.current);
       }
     },
     [broadcastLeaderState, getTabId, playTrack, sendRemoteCommand, shouldActAsRemoteController],
@@ -2805,12 +2829,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return origIdx < idx && Boolean(resolveDownloadedTrackId(t));
       });
       if (prevDownloaded) {
-        playTrack(prevDownloaded, undefined, 0, true);
+        playTrack(prevDownloaded, undefined, 0, true, playbackContextIdRef.current);
         return;
       }
       const wrapDownloaded = [...q].reverse().find((t) => Boolean(resolveDownloadedTrackId(t)));
       if (wrapDownloaded && wrapDownloaded.id !== curr.id) {
-        playTrack(wrapDownloaded, undefined, 0, true);
+        playTrack(wrapDownloaded, undefined, 0, true, playbackContextIdRef.current);
         return;
       }
       if (audio) {
@@ -2824,7 +2848,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     const prevIdx = idx <= 0 ? q.length - 1 : idx - 1;
     const target = q[prevIdx];
-    if (target) playTrack(target, undefined, 0, true);
+    if (target) playTrack(target, undefined, 0, true, playbackContextIdRef.current);
   }, [broadcastLeaderState, getTabId, playTrack, sendRemoteCommand, shouldActAsRemoteController]);
 
   const togglePlay = useCallback(async () => {
@@ -3435,6 +3459,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           if (typeof parsed.shuffle === "boolean") {
             shuffleRef.current = parsed.shuffle;
             setShuffle(parsed.shuffle);
+          }
+          if (typeof parsed.playbackContextId === "string" && parsed.playbackContextId) {
+            playbackContextIdRef.current = parsed.playbackContextId;
+            setPlaybackContextId(parsed.playbackContextId);
           }
         }
       } catch {}
@@ -5349,6 +5377,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       lyricsSource,
       lyricsLoading,
       analyserNode: analyserState,
+      playbackContextId,
       getCurrentTime,
       playTrack,
       togglePlay,
@@ -5401,6 +5430,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       lyricsLoading,
       lyricsOffsetMs,
       analyserState,
+      playbackContextId,
       getCurrentTime,
       playTrack,
       togglePlay,

@@ -240,8 +240,8 @@ describe("Intelligent Network Resilience Service", () => {
     expect(playerSource).toMatch(/onPlay:\s*\(\)\s*=>\s*\{[\s\S]*!isPlayingRef\.current && !isRetryingPlayRef\.current\)/);
     expect(playerSource).not.toContain("shouldActAsRemoteControllerRef.current() || (!isThisDeviceActiveRef.current && syncStateRef.current)");
 
-    // 4. next() / prev() must pass explicit (target, undefined, 0, true) so single-track queues never hit UI toggle pause
-    expect(playerSource).toContain("if (target) playTrack(target, undefined, 0, true);");
+    // 4. next() / prev() must pass explicit (target, undefined, 0, true, ...) so single-track queues never hit UI toggle pause
+    expect(playerSource).toContain("if (target) playTrack(target, undefined, 0, true");
     // Remote pause fast path in playTrack must dispatch PAUSE to remote controller
     expect(playerSource).toContain('if (shouldActAsRemoteController()) {\n            remotePlayStateLockUntilRef.current = Date.now() + 2500;');
 

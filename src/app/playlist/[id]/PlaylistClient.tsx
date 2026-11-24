@@ -16,7 +16,7 @@ import {
 } from "@phosphor-icons/react";
 import { api, getCachedCatalogTracks, getPlaylistDetailHref, resolveMediaUrl } from "@/lib/api";
 import { prefetchCoverBatch } from "@/lib/coverCacheManager";
-import { areTracksSameIdentity } from "@/lib/trackIdentity";
+import { isPlaylistContextPlaying } from "@/lib/trackIdentity";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -56,7 +56,7 @@ export default function PlaylistClient() {
         : "";
   const { user } = useAuth();
   const { t, pickText, formatNum, lang } = useI18n();
-  const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayer();
+  const { currentTrack, isPlaying, playbackContextId, playTrack, togglePlay } = usePlayer();
   const { downloadedTracks } = useDownloadedTracks();
   const customPlaylists = useCustomPlaylists();
 
@@ -226,7 +226,13 @@ export default function PlaylistClient() {
   const isOwner =
     isCustomPlaylist ||
     Boolean(!isMixPlaylist && user && (user.id === playlist.ownerId || user.role === "admin"));
-  const isPlaylistPlaying = tracks.some((tr) => areTracksSameIdentity(tr, currentTrack)) && isPlaying;
+  const isPlaylistPlaying = isPlaylistContextPlaying({
+    isPlaying,
+    currentTrack,
+    playbackContextId,
+    playlistId: playlist.id,
+    tracks,
+  });
 
   const handlePlayAll = () => {
     if (isPlaylistPlaying) {
@@ -234,14 +240,14 @@ export default function PlaylistClient() {
       return;
     }
     if (tracks.length > 0) {
-      playTrack(tracks[0], tracks);
+      playTrack(tracks[0], tracks, 0, true, `playlist:${playlist.id}`);
     }
   };
 
   const handleShuffle = () => {
     if (tracks.length > 0) {
       const shuffled = [...tracks].sort(() => Math.random() - 0.5);
-      playTrack(shuffled[0], shuffled);
+      playTrack(shuffled[0], shuffled, 0, true, `playlist:${playlist.id}`);
     }
   };
 
@@ -447,7 +453,9 @@ export default function PlaylistClient() {
               currentTrackId={currentTrack?.id}
               isPlaying={isPlaying}
               isOwner={isOwner}
-              onPlayTrack={(tr, allTracks) => playTrack(tr, allTracks)}
+              onPlayTrack={(tr, allTracks) =>
+                playTrack(tr, allTracks, undefined, undefined, `playlist:${playlist.id}`)
+              }
               onRemoveTrack={handleRemove}
             />
           </div>

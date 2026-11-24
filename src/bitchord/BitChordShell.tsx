@@ -39,6 +39,10 @@ import {
 } from "@/lib/networkResilience";
 import { BitChordBackdrop } from "./BitChordBackdrop";
 import { BitChordMiniPlayer } from "./BitChordMiniPlayer";
+import { BitChordArtistSheet } from "./BitChordArtistSheet";
+import { OPEN_ARTIST_PROFILE_EVENT, type OpenArtistDetail } from "./artistNavigation";
+import { notifySleepTimerTrackChanged, registerSleepTimerExpireHandler } from "./sleepTimer";
+import type { Track } from "@/lib/types";
 
 const BitChordNowPlaying = dynamic(
   () => import("./BitChordNowPlaying").then((m) => m.BitChordNowPlaying),
@@ -72,8 +76,9 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, openAuthDialog, logout } = useAuth();
   const { lang, dir, toggleLang, t } = useI18n();
-  const { isOffline } = usePlayer();
+  const { isOffline, isPlaying, currentTrack, volume, togglePlay, setVolume } = usePlayer();
   const [quickQuery, setQuickQuery] = useState("");
+  const [artistView, setArtistView] = useState<{ name: string; seedTrack: Track | null } | null>(null);
   const [backendOnline, setBackendOnline] = useState<boolean>(() =>
     typeof navigator !== "undefined" ? navigator.onLine : true,
   );
@@ -81,6 +86,52 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
     getServerConnectivityStatus(),
   );
   const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Wire global Artist Profile overlay & persistent Sleep Timer manager for New UI
+  useEffect(() => {
+    const onOpenArtist = (e: Event) => {
+      const detail = (e as CustomEvent<OpenArtistDetail>).detail;
+      if (detail?.artistName) {
+        setArtistView({ name: detail.artistName, seedTrack: detail.seedTrack ?? null });
+      }
+    };
+    window.addEventListener(OPEN_ARTIST_PROFILE_EVENT, onOpenArtist);
+    return () => window.removeEventListener(OPEN_ARTIST_PROFILE_EVENT, onOpenArtist);
+  }, []);
+
+  useEffect(() => {
+    notifySleepTimerTrackChanged(currentTrack?.id);
+  }, [currentTrack?.id]);
+
+  useEffect(() => {
+    let fadeTimer: number | null = null;
+    registerSleepTimerExpireHandler((shouldFadeOut) => {
+      if (!isPlaying) return;
+      if (!shouldFadeOut) {
+        togglePlay();
+        return;
+      }
+      const startVol = volume;
+      const steps = 12;
+      let step = 0;
+      if (fadeTimer) window.clearInterval(fadeTimer);
+      fadeTimer = window.setInterval(() => {
+        step += 1;
+        const nextVol = Math.max(0.02, startVol * (1 - step / steps));
+        setVolume(nextVol);
+        if (step >= steps) {
+          if (fadeTimer) window.clearInterval(fadeTimer);
+          fadeTimer = null;
+          togglePlay();
+          window.setTimeout(() => setVolume(startVol), 250);
+        }
+      }, 220);
+    });
+    return () => {
+      if (fadeTimer) window.clearInterval(fadeTimer);
+      registerSleepTimerExpireHandler(null);
+    };
+  }, [isPlaying, setVolume, togglePlay, volume]);
 
   // Keep data-ui-skin="bitchord" locked on <html> even across hydration recovery passes
   useLayoutEffect(() => {
@@ -270,7 +321,7 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
                   {t("brandName")}
                 </span>
                 <span className="block text-[10.5px] text-slate-500 dark:text-zinc-400 font-semibold tracking-wide">
-                  BitChord Edition
+                  {lang === "fa" ? "شیشه مایع" : "Liquid Glass"}
                 </span>
               </div>
             </Link>
@@ -661,6 +712,11 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
 
       <BitChordMiniPlayer />
       <LazyBitChordNowPlaying />
+      <BitChordArtistSheet
+        artistName={artistView?.name ?? null}
+        seedTrack={artistView?.seedTrack ?? null}
+        onClose={() => setArtistView(null)}
+      />
       <LazyAuthDialog />
       <DevicePickerPopover />
       <PlaylistPickerSheet />

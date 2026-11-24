@@ -30,6 +30,7 @@ import {
 import { findActiveLyricIndex } from "@/lib/lrc";
 import { extractCleanTitleAndArtist } from "@/lib/lyricsCleaner";
 import { isMatchingExternalFallback } from "@/lib/externalFallbackMatcher";
+import { areTracksSameIdentity } from "@/lib/trackIdentity";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
@@ -1922,8 +1923,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isBufferingRef.current = true;
 
       const desiredPos =
-        typeof targetStartSec === "number" && targetStartSec > 0
-          ? targetStartSec
+        typeof targetStartSec === "number"
+          ? Math.max(0, targetStartSec)
           : nativeAudioActiveRef.current
             ? currentTimeRef.current
             : audio.currentTime > 0
@@ -2312,6 +2313,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       if (currentTrackRef.current?.id !== normalizedTrack.id) {
         cancelAutoMixRef.current();
+        currentTimeRef.current = startSec;
+        lastAdvancingPlaybackPosRef.current = startSec;
+        setCurrentTime(startSec);
         nativeErrorRetryCountRef.current[normalizedTrack.id] = 0;
         streamFallbackAttemptsRef.current[normalizedTrack.id] = false;
         refreshAttemptsRef.current[normalizedTrack.id] = 0;
@@ -3313,12 +3317,31 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const updateTrackInQueue = useCallback(
     (updated: Track) => {
       setCurrentTrack((prevTrack) => {
-        const next = prevTrack?.id === updated.id ? updated : prevTrack;
+        const matches =
+          prevTrack &&
+          (prevTrack.id === updated.id || areTracksSameIdentity(prevTrack, updated));
+        const next = matches
+          ? {
+              ...prevTrack,
+              ...updated,
+              coverUrl: updated.coverUrl || prevTrack.coverUrl,
+              audioUrl: updated.audioUrl || prevTrack.audioUrl,
+            }
+          : prevTrack;
         currentTrackRef.current = next;
         return next;
       });
       setQueue((prevQueue) => {
-        const nextQ = prevQueue.map((t) => (t.id === updated.id ? updated : t));
+        const nextQ = prevQueue.map((t) =>
+          t.id === updated.id || areTracksSameIdentity(t, updated)
+            ? {
+                ...t,
+                ...updated,
+                coverUrl: updated.coverUrl || t.coverUrl,
+                audioUrl: updated.audioUrl || t.audioUrl,
+              }
+            : t,
+        );
         queueRef.current = nextQ;
         return nextQ;
       });
@@ -3642,9 +3665,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   // Sync state from remote active device into local UI with timestamp-based drift compensation
   useEffect(() => {
-    if (!isSyncEnabled || isThisDeviceActive || !syncState?.track) return;
+    if (
+      !isSyncEnabled ||
+      isThisDeviceActive ||
+      isThisDeviceActiveRef.current ||
+      localSessionStartedRef.current ||
+      !syncState?.track
+    ) {
+      return;
+    }
     const audio = getSingletonAudio();
-    if (audio && !audio.paused) return;
+    if ((audio && !audio.paused) || nativeAudioActiveRef.current) return;
     if (syncState.activeDeviceId && activeDeviceId && syncState.activeDeviceId !== activeDeviceId) {
       return;
     }

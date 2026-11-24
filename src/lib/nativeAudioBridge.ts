@@ -87,6 +87,12 @@ export interface NativeScheduleAutoMixPlanOptions extends Stage5AutoMixPlan {
   duration?: number;
 }
 
+export interface AudioOutputDeviceInfo {
+  kind: "speaker" | "bluetooth" | "wired" | "usb";
+  name: string;
+  permissionNeeded?: boolean;
+}
+
 interface NativeAudioPluginInterface {
   playStream?: (opts: NativePlayStreamOptions) => Promise<void>;
   prepareNextStream?: (opts: NativePrepareNextOptions) => Promise<void>;
@@ -113,10 +119,18 @@ interface NativeAudioPluginInterface {
   setVolume?: (opts: { volume: number }) => Promise<void>;
   setPlaybackRate?: (opts: { rate: number }) => Promise<void>;
   getState?: () => Promise<Record<string, unknown>>;
-  addListener?: (
-    eventName: "nativeAudioState",
-    listener: (event: NativeAudioStateEvent) => void,
-  ) => Promise<{ remove: () => Promise<void> }> | { remove: () => void };
+  getAudioOutputDevice?: () => Promise<AudioOutputDeviceInfo>;
+  requestBluetoothPermission?: () => Promise<AudioOutputDeviceInfo>;
+  addListener?: {
+    (
+      eventName: "nativeAudioState",
+      listener: (event: NativeAudioStateEvent) => void,
+    ): Promise<{ remove: () => Promise<void> }> | { remove: () => void };
+    (
+      eventName: "audioOutputChanged",
+      listener: (event: AudioOutputDeviceInfo) => void,
+    ): Promise<{ remove: () => Promise<void> }> | { remove: () => void };
+  };
 }
 
 function getNativeAudioPlugin(): NativeAudioPluginInterface | null {
@@ -282,6 +296,49 @@ export function subscribeNativeAudioState(
   if (!plugin?.addListener) return () => {};
   try {
     const res = plugin.addListener("nativeAudioState", listener);
+    return () => {
+      try {
+        if (res && "then" in res) {
+          void (res as Promise<{ remove: () => Promise<void> }>).then((h) => h.remove()).catch(() => {});
+        } else if (res && "remove" in res) {
+          (res as { remove: () => void }).remove();
+        }
+      } catch {}
+    };
+  } catch {
+    return () => {};
+  }
+}
+
+export async function getNativeAudioOutputDevice(): Promise<AudioOutputDeviceInfo> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.getAudioOutputDevice) {
+    try {
+      const res = await plugin.getAudioOutputDevice();
+      if (res && res.kind) return res;
+    } catch {}
+  }
+  return { kind: "speaker", name: "" };
+}
+
+export async function requestNativeBluetoothPermission(): Promise<AudioOutputDeviceInfo> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.requestBluetoothPermission) {
+    try {
+      const res = await plugin.requestBluetoothPermission();
+      if (res && res.kind) return res;
+    } catch {}
+  }
+  return getNativeAudioOutputDevice();
+}
+
+export function subscribeNativeAudioOutput(
+  listener: (event: AudioOutputDeviceInfo) => void,
+): () => void {
+  const plugin = getNativeAudioPlugin();
+  if (!plugin?.addListener) return () => {};
+  try {
+    const res = plugin.addListener("audioOutputChanged", listener);
     return () => {
       try {
         if (res && "then" in res) {

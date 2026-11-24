@@ -29,8 +29,17 @@ import { formatDuration } from "@/lib/lrc";
 import { calculateElasticDrag, createSwipeTouchHandlers } from "@/lib/touchGestures";
 
 function MiniPlayerLyricOrArtist({ fallback }: { fallback: string }) {
-  const { lyrics } = usePlayer();
+  const { lyrics, isCrossfading } = usePlayer();
+  const { lang } = useI18n();
   const { activeLyricIndex } = usePlayerProgress();
+  if (isCrossfading) {
+    return (
+      <p className="truncate text-[11.5px] font-bold text-emerald-600 dark:text-emerald-300 leading-tight flex items-center gap-1.5">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+        <span>{lang === "fa" ? "ساندیفای میکس در حال اجرا..." : "Soundify Mix mixing..."}</span>
+      </p>
+    );
+  }
   const activeLine = activeLyricIndex >= 0 ? lyrics[activeLyricIndex]?.text?.trim() : null;
   return (
     <p className="truncate text-[11.5px] font-medium text-slate-600 dark:text-white/65 leading-tight">
@@ -141,10 +150,12 @@ export function BitChordMiniPlayer() {
     useTrackDownload(currentTrack);
 
   const [dockTranslateX, setDockTranslateX] = useState(0);
+  const [dockTranslateY, setDockTranslateY] = useState(0);
   const [isSwipingDock, setIsSwipingDock] = useState(false);
   const [swipingDock, setSwipingDock] = useState(false);
+  const touchStartRef = React.useRef<{ x: number; y: number; time: number; axis: "x" | "y" | null } | null>(null);
 
-  const dockTouchHandlers = useMemo(
+  const horizontalHandlers = useMemo(
     () =>
       createSwipeTouchHandlers({
         dir,
@@ -174,6 +185,68 @@ export function BitChordMiniPlayer() {
         },
       }),
     [dir, next, prev],
+  );
+
+  const dockTouchHandlers = useMemo(
+    () => ({
+      onTouchStart: (e: React.TouchEvent) => {
+        if (e.touches.length !== 1) return;
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('[role="slider"], input, select, textarea, [data-prevent-swipe]')) return;
+        touchStartRef.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+          time: Date.now(),
+          axis: null,
+        };
+        horizontalHandlers.onTouchStart(e);
+      },
+      onTouchMove: (e: React.TouchEvent) => {
+        const start = touchStartRef.current;
+        if (!start || e.touches.length !== 1) return;
+        const dx = e.touches[0].clientX - start.x;
+        const dy = e.touches[0].clientY - start.y;
+        if (!start.axis && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+          start.axis = Math.abs(dy) > Math.abs(dx) * 1.1 && dy < 0 ? "y" : "x";
+        }
+        if (start.axis === "y") {
+          setSwipingDock(true);
+          setIsSwipingDock(true);
+          const upPull = Math.min(0, dy);
+          setDockTranslateY(-calculateElasticDrag(-upPull, 68));
+          setDockTranslateX(0);
+          return;
+        }
+        horizontalHandlers.onTouchMove(e);
+      },
+      onTouchEnd: (e: React.TouchEvent) => {
+        const start = touchStartRef.current;
+        touchStartRef.current = null;
+        if (start?.axis === "y") {
+          const endY = e.changedTouches[0]?.clientY ?? start.y;
+          const dy = endY - start.y;
+          const dt = Math.max(1, Date.now() - start.time);
+          const upVelocity = (-dy) / dt;
+          setIsSwipingDock(false);
+          setDockTranslateY(0);
+          window.setTimeout(() => setSwipingDock(false), 120);
+          if (dy < -24 || (dy < -12 && upVelocity > 0.25)) {
+            void triggerHapticFeedback("selection");
+            setExpanded(true);
+          }
+          return;
+        }
+        horizontalHandlers.onTouchEnd(e);
+      },
+      onTouchCancel: () => {
+        touchStartRef.current = null;
+        setIsSwipingDock(false);
+        setDockTranslateX(0);
+        setDockTranslateY(0);
+        setSwipingDock(false);
+      },
+    }),
+    [horizontalHandlers, setExpanded],
   );
 
   if (!currentTrack) return null;
@@ -215,10 +288,13 @@ export function BitChordMiniPlayer() {
           }
         }}
         style={{
-          transform: dockTranslateX !== 0 ? `translate3d(${dockTranslateX}px, 0, 0)` : undefined,
+          transform:
+            dockTranslateX !== 0 || dockTranslateY !== 0
+              ? `translate3d(${dockTranslateX}px, ${dockTranslateY}px, 0)`
+              : undefined,
           transition: isSwipingDock ? "none" : "transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)",
         }}
-        className="bc-mini-pill relative pointer-events-auto mx-auto max-w-5xl rounded-full px-3.5 py-2 lg:px-5 lg:py-2.5 touch-pan-y select-none overflow-hidden"
+        className="bc-mini-pill relative pointer-events-auto mx-auto max-w-5xl rounded-full px-3.5 py-2 lg:px-5 lg:py-2.5 touch-none lg:touch-pan-y select-none overflow-hidden"
       >
         <MiniPlayerMobileProgress defaultDuration={safeDuration} />
 
@@ -266,8 +342,9 @@ export function BitChordMiniPlayer() {
                     {title}
                   </p>
                   {isCrossfading && (
-                    <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-300 shrink-0">
-                      Mix
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/22 border border-emerald-400/35 px-1.5 py-0.5 text-[9.5px] font-bold text-emerald-600 dark:text-emerald-300 shrink-0 animate-pulse">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      {t("navHomeShort") === "خانه" ? "میکس" : "Mix"}
                     </span>
                   )}
                 </div>

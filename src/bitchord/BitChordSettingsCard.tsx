@@ -65,7 +65,7 @@ export function BitChordSettingsCard() {
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-sm text-[var(--sf-text)]">
-                  {lang === "fa" ? "طراحی جدید (BitChord)" : "New Design (BitChord)"}
+                  {lang === "fa" ? "طراحی جدید (شیشه مایع)" : "New Design (Liquid Glass)"}
                 </span>
                 {bootActive && (
                   <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -75,14 +75,14 @@ export function BitChordSettingsCard() {
               </div>
               <p className="text-xs text-[var(--sf-muted)] mt-0.5 leading-relaxed">
                 {lang === "fa"
-                  ? "رابط کاربری مدرن با نوارهای شیشه‌ای شناور، انیمیشن‌های روان و پلیر تمام‌صفحه الهام‌گرفته از BitChord (نیازمند راه‌اندازی مجدد)"
-                  : "Modern frosted-glass capsules, fluid animations & full-bleed player inspired by BitChord (requires app restart)"}
+                  ? "رابط کاربری مدرن با کپسول‌های شیشه مایع، صفحه اختصاصی خواننده، انیمیشن‌های روان و پلیر تمام‌صفحه (نیازمند راه‌اندازی مجدد)"
+                  : "Modern liquid-glass capsules, dedicated artist pages, fluid animations & full-bleed player (requires restart)"}
               </p>
             </div>
           </div>
 
           <Switch
-            aria-label={lang === "fa" ? "طراحی جدید (BitChord)" : "New Design (BitChord)"}
+            aria-label={lang === "fa" ? "طراحی جدید (شیشه مایع)" : "New Design (Liquid Glass)"}
             checked={designEnabled}
             onCheckedChange={handleToggle}
           />
@@ -95,10 +95,10 @@ export function BitChordSettingsCard() {
                 {designEnabled
                   ? lang === "fa"
                     ? "برای فعال‌سازی طراحی جدید، برنامه را مجدداً راه‌اندازی کنید."
-                    : "Restart the app to activate the new BitChord design."
+                    : "Restart the app to activate the new Liquid Glass design."
                   : lang === "fa"
                     ? "برای بازگشت به طراحی اصلی برنامه، مجدداً راه‌اندازی کنید."
-                    : "Restart the app to restore the default Soundify design."}
+                    : "Restart the app to restore the original Soundify design."}
               </p>
             </div>
             <Button
@@ -123,7 +123,7 @@ export function BitChordSettingsCard() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="bitchord-restart-dialog-title"
+            aria-labelledby="new-ui-restart-dialog-title"
             className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/65 backdrop-blur-md"
             onClick={() => setRestartPromptOpen(false)}
           >
@@ -137,7 +137,7 @@ export function BitChordSettingsCard() {
                   <ArrowClockwiseIcon size={24} weight="bold" aria-hidden="true" />
                 </div>
                 <h3
-                  id="bitchord-restart-dialog-title"
+                  id="new-ui-restart-dialog-title"
                   className="text-base font-extrabold text-[var(--sf-text)]"
                 >
                   {designEnabled
@@ -151,8 +151,8 @@ export function BitChordSettingsCard() {
                 <p className="text-xs text-[var(--sf-muted)] leading-relaxed px-2">
                   {designEnabled
                     ? lang === "fa"
-                      ? "ظاهر جدید BitChord به‌صورت مستقل بارگذاری می‌شود و هیچ تغییری در منطق یا طراحی اصلی ایجاد نمی‌کند. الان برنامه راه‌اندازی مجدد شود؟"
-                      : "The BitChord-inspired UI boots independently without altering app logic or the default design. Restart now?"
+                      ? "ظاهر جدید شیشه مایع به‌صورت مستقل بارگذاری می‌شود و هیچ تغییری در منطق یا طراحی اصلی ایجاد نمی‌کند. الان برنامه راه‌اندازی مجدد شود؟"
+                      : "The new Liquid Glass UI boots independently without altering app logic or the default design. Restart now?"
                     : lang === "fa"
                       ? "با راه‌اندازی مجدد، ظاهر برنامه به حالت استاندارد اولیه برمی‌گردد."
                       : "Restarting will switch the interface back to Soundify's original default layout."}

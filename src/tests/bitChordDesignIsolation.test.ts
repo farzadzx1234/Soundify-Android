@@ -110,7 +110,7 @@ describe("BitChord Design Mode Isolation & Settings Toggle", () => {
     }
   });
 
-  it("enforces hydration-safe boot lock, dark-mode filled button contrast, and mobile lyrics source parity", () => {
+  it("enforces hydration-safe boot lock, zero external app branding, Bluetooth output, swipe gestures, and full feature parity", () => {
     const css = fs.readFileSync(path.resolve(__dirname, "../bitchord/bitchord.css"), "utf8");
     expect(css).toContain('button.sf-btn[style*="var(--sf-accent)"]');
     expect(css).toContain(':root[data-ui-skin="bitchord"][data-resolved-theme="light"]');
@@ -120,6 +120,8 @@ describe("BitChord Design Mode Isolation & Settings Toggle", () => {
       "utf8",
     );
     expect(settingsCardSrc).toContain("useSyncExternalStore");
+    expect(settingsCardSrc).not.toMatch(/New Design \(BitChord\)|طراحی جدید \(BitChord\)|BitChord Edition|inspired by BitChord|الهام‌گرفته از BitChord|ظاهر جدید BitChord/i);
+    expect(settingsCardSrc).toContain("شیشه مایع");
 
     const shellSrc = fs.readFileSync(
       path.resolve(__dirname, "../bitchord/BitChordShell.tsx"),
@@ -127,6 +129,8 @@ describe("BitChord Design Mode Isolation & Settings Toggle", () => {
     );
     expect(shellSrc).toContain('setAttribute("data-ui-skin", "bitchord")');
     expect(shellSrc).toContain('pathname.startsWith("/settings")');
+    expect(shellSrc).toContain("<BitChordArtistSheet");
+    expect(shellSrc).not.toContain("BitChord Edition");
 
     const nowPlayingSrc = fs.readFileSync(
       path.resolve(__dirname, "../bitchord/BitChordNowPlaying.tsx"),
@@ -134,5 +138,27 @@ describe("BitChord Design Mode Isolation & Settings Toggle", () => {
     );
     expect(nowPlayingSrc).toContain("setLyricsSourcesOpen(true)");
     expect(nowPlayingSrc).toContain("sf-automix-dissolve-out");
+    expect(nowPlayingSrc).toContain("data-sheet-drag-handle");
+    expect(nowPlayingSrc).toContain("useAudioOutputDevice");
+    expect(nowPlayingSrc).toContain("openNewUiArtistProfile");
+    expect(nowPlayingSrc).toContain("Song Info");
+    expect(nowPlayingSrc).toContain("Sleep timer");
+    expect(nowPlayingSrc).toContain("lyricsOffsetSheetOpen");
+    expect(nowPlayingSrc).toContain("GENERIC_PROVIDER_ALBUMS");
+    expect(nowPlayingSrc).toContain("likeBusyRef");
+
+    const miniSrc = fs.readFileSync(
+      path.resolve(__dirname, "../bitchord/BitChordMiniPlayer.tsx"),
+      "utf8",
+    );
+    expect(miniSrc).toContain("dockTranslateY");
+    expect(miniSrc).toContain("Soundify Mix mixing...");
+
+    const playerCtxSrc = fs.readFileSync(
+      path.resolve(__dirname, "../context/PlayerContext.tsx"),
+      "utf8",
+    );
+    expect(playerCtxSrc).toContain("localSessionStartedRef.current");
+    expect(playerCtxSrc).toContain("Math.max(0, targetStartSec)");
   });
 });

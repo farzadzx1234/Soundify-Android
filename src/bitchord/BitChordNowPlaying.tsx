@@ -5,8 +5,10 @@ import Link from "next/link";
 import {
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
+  BluetoothConnectedIcon,
   BroadcastIcon,
   CaretDownIcon,
+  CaretLeftIcon,
   CaretRightIcon,
   ChatCircleTextIcon,
   CheckIcon,
@@ -19,12 +21,16 @@ import {
   HeadphonesIcon,
   HeartIcon,
   InfinityIcon,
+  InfoIcon,
   ListDashesIcon,
   ListPlusIcon,
   MagnifyingGlassIcon,
+  MinusIcon,
+  MoonStarsIcon,
   MusicNoteSimpleIcon,
   PauseIcon,
   PlayIcon,
+  PlusIcon,
   QueueIcon,
   QuotesIcon,
   RepeatIcon,
@@ -35,6 +41,7 @@ import {
   SpeakerHighIcon,
   SpeakerLowIcon,
   SpeakerSlashIcon,
+  UserIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { GlassSegmented } from "@/components/GlassControls";
@@ -45,11 +52,13 @@ import { useAuth } from "@/context/AuthContext";
 import { useDeviceSync } from "@/context/DeviceSyncContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer, usePlayerProgress } from "@/context/PlayerContext";
-import { api, getTrackDetailHref, getTrackShareUrl } from "@/lib/api";
+import { api, getTrackDetailHref, getTrackShareUrl, isExternalTrack } from "@/lib/api";
 import { buildPaletteFromHex, extractCoverPalette, type CoverPalette } from "@/lib/coverPalette";
+import { getCustomPlaylists } from "@/lib/customPlaylists";
 import { startTrackDownload, useTrackDownload } from "@/lib/downloadManager";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import { formatDuration } from "@/lib/lrc";
+import { isTrackDownloaded } from "@/lib/offlineAudioStorage";
 import { setAutoMixEnabled, useAutoMixEnabled } from "@/lib/smartAutoMix";
 import {
   calculateDampedDrag,
@@ -58,9 +67,44 @@ import {
   createSwipeTouchHandlers,
 } from "@/lib/touchGestures";
 import type { Track } from "@/lib/types";
+import { openNewUiArtistProfile } from "./artistNavigation";
+import { useAudioOutputDevice } from "./audioOutputHook";
+import {
+  cancelSleepTimer,
+  setSleepTimerFadeOut,
+  startSleepTimerAfterCurrentSong,
+  startSleepTimerMinutes,
+  useSleepTimer,
+} from "./sleepTimer";
 
 const DESKTOP_MEDIA_QUERY = "(min-width: 900px)";
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
+
+const GENERIC_PROVIDER_ALBUMS = new Set([
+  "soundcloud",
+  "youtube",
+  "youtube audio",
+  "youtube music",
+  "spotify",
+  "soundify",
+  "soundify offline",
+  "offline",
+  "single",
+  "singles",
+  "آفلاین ساندیفای",
+]);
+
+function isGenuineAlbumLabel(albumText: string | undefined | null): boolean {
+  const clean = (albumText || "").trim().toLowerCase();
+  if (!clean) return false;
+  return !GENERIC_PROVIDER_ALBUMS.has(clean);
+}
+
+function formatRemainingTimer(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 function subscribeDesktopViewport(onStoreChange: () => void) {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -361,6 +405,7 @@ export function BitChordNowPlaying() {
     lyrics,
     lyricsSource,
     lyricsOffsetMs,
+    playbackContextId,
     expanded,
     queueOpen,
     setExpanded,
@@ -374,6 +419,8 @@ export function BitChordNowPlaying() {
     toggleShuffle,
     cycleRepeat,
     setPlaybackRate,
+    adjustLyricsOffset,
+    saveLyricsOffset,
     updateTrackInQueue,
   } = usePlayer();
   const {
@@ -385,6 +432,8 @@ export function BitChordNowPlaying() {
   } = useDeviceSync();
   const autoMixEnabled = useAutoMixEnabled();
   const { status: downloadStatus, progress: downloadProgress } = useTrackDownload(currentTrack);
+  const { outputDevice, requestBluetoothNamesIfNeeded } = useAudioOutputDevice();
+  const sleepTimer = useSleepTimer();
 
   const [prevExpandedState, setPrevExpandedState] = useState(expanded);
   const [prevQueueOpen, setPrevQueueOpen] = useState(queueOpen);
@@ -396,6 +445,15 @@ export function BitChordNowPlaying() {
   const [lyricsToolsOpen, setLyricsToolsOpen] = useState(false);
   const [lyricsSourcesOpen, setLyricsSourcesOpen] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextMenuPage, setContextMenuPage] = useState<"main" | "sleep">("main");
+  const [customSleepMinutes, setCustomSleepMinutes] = useState("20");
+  const [songInfoOpen, setSongInfoOpen] = useState(false);
+  const [lyricsOffsetSheetOpen, setLyricsOffsetSheetOpen] = useState(false);
+  const [optimisticLike, setOptimisticLike] = useState<{
+    trackId: string;
+    liked: boolean;
+    likesCount: number;
+  } | null>(null);
   const [copiedShare, setCopiedShare] = useState(false);
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -412,6 +470,8 @@ export function BitChordNowPlaying() {
   const touchStartY = useRef(0);
   const touchStartX = useRef(0);
   const touchStartTimeRef = useRef(0);
+  const handleDraggedRef = useRef(false);
+  const likeBusyRef = useRef(false);
 
   useEffect(() => {
     const coverUrl = currentTrack?.coverUrl;
@@ -434,6 +494,9 @@ export function BitChordNowPlaying() {
       setHasEntered(false);
       setDragY(0);
       setContextMenuOpen(false);
+      setContextMenuPage("main");
+      setSongInfoOpen(false);
+      setLyricsOffsetSheetOpen(false);
     }
   }
 
@@ -443,6 +506,9 @@ export function BitChordNowPlaying() {
     setLyricsToolsOpen(false);
     setLyricsSourcesOpen(false);
     setContextMenuOpen(false);
+    setContextMenuPage("main");
+    setSongInfoOpen(false);
+    setOptimisticLike(null);
   }
 
   if (queueOpen !== prevQueueOpen) {
@@ -520,14 +586,21 @@ export function BitChordNowPlaying() {
   }, [expanded, contextMenuOpen, dismissWithPhysics]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (isDesktop || contextMenuOpen || e.touches.length !== 1) return;
+    if (isDesktop || contextMenuOpen || songInfoOpen || lyricsOffsetSheetOpen || e.touches.length !== 1) return;
     const targetEl = e.target as HTMLElement | null;
-    if (targetEl?.closest('[role="slider"], input, select, textarea, button, a, [data-prevent-sheet-drag]')) return;
+    const isTopHandle = Boolean(targetEl?.closest('[data-sheet-drag-handle="true"]'));
+    if (
+      !isTopHandle &&
+      targetEl?.closest('[role="slider"], input, select, textarea, button, a, [data-prevent-sheet-drag]')
+    ) {
+      return;
+    }
     const scrollableAncestor = targetEl?.closest(".overflow-y-auto");
-    if (scrollableAncestor && scrollableAncestor.scrollTop > 2) return;
+    if (!isTopHandle && scrollableAncestor && scrollableAncestor.scrollTop > 2) return;
     touchStartY.current = e.touches[0].clientY;
     touchStartX.current = e.touches[0].clientX;
     touchStartTimeRef.current = Date.now();
+    handleDraggedRef.current = false;
     setIsDragging(true);
   };
 
@@ -545,9 +618,10 @@ export function BitChordNowPlaying() {
       setDragY(0);
       return;
     }
-    if (deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.05) {
+    if (deltaY > 4 && Math.abs(deltaY) > Math.abs(deltaX) * 1.05) {
+      handleDraggedRef.current = true;
       setDragY(calculateDampedDrag(deltaY));
-    } else {
+    } else if (deltaY <= 0) {
       setDragY(0);
     }
   };
@@ -557,7 +631,7 @@ export function BitChordNowPlaying() {
     setIsDragging(false);
     const dt = Math.max(1, Date.now() - touchStartTimeRef.current);
     const vY = calculateVelocity(dragY, dt);
-    if (dragY > 80 || (dragY > 35 && vY > 0.32)) {
+    if (dragY > 68 || (dragY > 28 && vY > 0.28)) {
       dismissWithPhysics();
     } else {
       setDragY(0);
@@ -598,18 +672,51 @@ export function BitChordNowPlaying() {
       ? sampledPalette.palette
       : buildPaletteFromHex(currentTrack.accentColor);
 
+  const effectiveLiked =
+    optimisticLike && optimisticLike.trackId === currentTrack.id
+      ? optimisticLike.liked
+      : Boolean(currentTrack.likedByMe);
+  const effectiveLikesCount =
+    optimisticLike && optimisticLike.trackId === currentTrack.id
+      ? optimisticLike.likesCount
+      : currentTrack.likesCount ?? 0;
+
   const handleLike = async () => {
     if (!user) {
       openAuthDialog();
       return;
     }
+    if (likeBusyRef.current) return;
+    likeBusyRef.current = true;
+    const targetTrack = currentTrack;
+    const prevLiked = effectiveLiked;
+    const prevCount = effectiveLikesCount;
+    const willLike = !prevLiked;
+    const nextOptimisticCount = willLike ? prevCount + 1 : Math.max(0, prevCount - 1);
+
+    setOptimisticLike({
+      trackId: targetTrack.id,
+      liked: willLike,
+      likesCount: nextOptimisticCount,
+    });
+    void triggerHapticFeedback("likeToggle", { liked: willLike });
+
     try {
-      const willLike = !currentTrack.likedByMe;
-      void triggerHapticFeedback("likeToggle", { liked: willLike });
-      const res = await api.toggleLike(currentTrack.id, currentTrack);
-      updateTrackInQueue({ ...currentTrack, likedByMe: res.liked, likesCount: res.likesCount });
+      const res = await api.toggleLike(targetTrack.id, targetTrack);
+      setOptimisticLike({
+        trackId: targetTrack.id,
+        liked: res.liked,
+        likesCount: res.likesCount,
+      });
+      updateTrackInQueue({ ...targetTrack, likedByMe: res.liked, likesCount: res.likesCount });
     } catch {
-      // ignore
+      setOptimisticLike({
+        trackId: targetTrack.id,
+        liked: prevLiked,
+        likesCount: prevCount,
+      });
+    } finally {
+      likeBusyRef.current = false;
     }
   };
 
@@ -633,20 +740,58 @@ export function BitChordNowPlaying() {
   };
 
   const statusBadge = isCrossfading
-    ? pickText("AutoMix Active", "میکس روان فعال")
+    ? pickText("Soundify Mix Active...", "در حال میکس روان...")
     : isBuffering
       ? pickText("Loading stream...", "در حال بارگذاری...")
       : playbackRate !== 1
         ? `${playbackRate}x`
-        : currentTrack.genre || null;
+        : currentTrack.genre && !GENERIC_PROVIDER_ALBUMS.has(currentTrack.genre.trim().toLowerCase())
+          ? currentTrack.genre
+          : null;
 
-  const playingFromLabel = album
-    ? lang === "fa"
-      ? `در حال پخش از ${album}`
-      : `Playing from ${album}`
-    : lang === "fa"
-      ? "در حال پخش"
-      : "Now Playing";
+  const isLocalOrDownloaded =
+    downloadStatus === "downloaded" ||
+    isTrackDownloaded(currentTrack.id) ||
+    currentTrack.audioUrl?.startsWith("content://") ||
+    currentTrack.audioUrl?.startsWith("file://") ||
+    currentTrack.id.startsWith("device-");
+
+  const hasGenuineAlbum = isGenuineAlbumLabel(album);
+
+  const playingFromLabel = (() => {
+    if (playbackContextId === "downloads") {
+      return lang === "fa" ? "در حال پخش از دانلودها" : "Playing from Downloads";
+    }
+    if (playbackContextId?.startsWith("playlist:")) {
+      const pid = playbackContextId.slice("playlist:".length);
+      const customMatch = pid.startsWith("cpl-") ? getCustomPlaylists().find((p) => p.id === pid) : null;
+      if (customMatch?.title) {
+        return lang === "fa" ? `در حال پخش از ${customMatch.title}` : `Playing from ${customMatch.title}`;
+      }
+      return lang === "fa" ? "در حال پخش از پلی‌لیست" : "Playing from Playlist";
+    }
+    if (playbackContextId?.startsWith("artist:")) {
+      const aName = playbackContextId.slice("artist:".length);
+      return lang === "fa" ? `در حال پخش از ${aName}` : `Playing from ${aName}`;
+    }
+    if (isLocalOrDownloaded && !hasGenuineAlbum) {
+      return lang === "fa" ? "در حال پخش از دانلودها" : "Playing from Downloads";
+    }
+    if (hasGenuineAlbum) {
+      return lang === "fa" ? `در حال پخش از ${album}` : `Playing from ${album}`;
+    }
+    return lang === "fa" ? "در حال پخش" : "Now Playing";
+  })();
+
+  const outputDeviceLabel = isRemotePlaybackActive
+    ? localizedActiveDeviceName
+    : outputDevice.kind === "bluetooth"
+      ? outputDevice.name || (lang === "fa" ? "بلوتوث" : "Bluetooth")
+      : outputDevice.kind === "usb" || outputDevice.kind === "wired"
+        ? outputDevice.name || (lang === "fa" ? "هدفون سیمی" : "Headphones")
+        : lang === "fa"
+          ? "این دستگاه"
+          : "This Device";
 
   return (
     <dialog
@@ -887,25 +1032,35 @@ export function BitChordNowPlaying() {
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <h2 className="truncate text-2xl font-black tracking-tight text-white">{title}</h2>
-                        <p className="truncate text-sm font-medium text-white/70 mt-0.5">{artist}</p>
+                        <button
+                          type="button"
+                          onClick={() => openNewUiArtistProfile(artist, currentTrack)}
+                          className="truncate max-w-full text-start text-sm font-medium text-white/75 hover:text-white underline-offset-4 hover:underline mt-0.5 cursor-pointer block"
+                        >
+                          {artist}
+                        </button>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
                           onClick={handleLike}
                           aria-label={t("like")}
+                          aria-pressed={effectiveLiked}
                           className="bc-control-btn h-10 w-10 rounded-full bg-white/12 hover:bg-white/20 flex items-center justify-center cursor-pointer"
                         >
                           <HeartIcon
                             size={19}
-                            weight={currentTrack.likedByMe ? "fill" : "regular"}
-                            className={currentTrack.likedByMe ? "text-rose-400" : "text-white"}
+                            weight={effectiveLiked ? "fill" : "regular"}
+                            className={`transition-transform duration-150 ${effectiveLiked ? "text-rose-400 scale-110" : "text-white"}`}
                             aria-hidden="true"
                           />
                         </button>
                         <button
                           type="button"
-                          onClick={() => setContextMenuOpen((p) => !p)}
+                          onClick={() => {
+                            setContextMenuPage("main");
+                            setContextMenuOpen((p) => !p);
+                          }}
                           aria-label="More actions"
                           className="bc-control-btn h-10 w-10 rounded-full bg-white/12 hover:bg-white/20 flex items-center justify-center cursor-pointer"
                         >
@@ -913,6 +1068,36 @@ export function BitChordNowPlaying() {
                         </button>
                       </div>
                     </div>
+
+                    {(isCrossfading || sleepTimer.mode !== "off") && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isCrossfading && (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/22 border border-emerald-400/35 px-3 py-1 text-[11px] font-bold text-emerald-200 animate-pulse">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            <span>{lang === "fa" ? "ساندیفای میکس در حال اجرا..." : "Soundify Mix mixing..."}</span>
+                          </span>
+                        )}
+                        {sleepTimer.mode !== "off" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContextMenuPage("sleep");
+                              setContextMenuOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-full bg-white/14 border border-white/15 px-3 py-1 text-[11px] font-semibold text-white/90 cursor-pointer"
+                          >
+                            <MoonStarsIcon size={13} weight="fill" aria-hidden="true" />
+                            <span>
+                              {sleepTimer.mode === "after_song"
+                                ? lang === "fa"
+                                  ? "توقف بعد از این آهنگ"
+                                  : "After this song"
+                                : formatRemainingTimer(sleepTimer.remainingSec)}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     <BitChordPillScrubber defaultDuration={safeDuration} statusLabel={statusBadge} />
 
@@ -1058,19 +1243,35 @@ export function BitChordNowPlaying() {
             {mobileTab === "hero" ? (
               /* ---- PLAYER HERO VIEW (photo_1 & photo_5) ---- */
               <div className="bc-view-switch relative flex flex-col h-full w-full min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {/* Top Drag Handle + "Playing from ..." overlaid gently over top of artwork */}
-                <div className="bc-player-top-scrim absolute top-0 inset-x-0 z-20 flex flex-col items-center pt-[max(0.75rem,var(--sat,env(safe-area-inset-top,0px)))] pb-4 px-5 pointer-events-none">
+                {/* Top Drag Handle + "Playing from ..." cleanly cleared below notch/status bar */}
+                <div
+                  data-sheet-drag-handle="true"
+                  className="bc-player-top-scrim absolute top-0 inset-x-0 z-20 flex flex-col items-center pt-[max(1.1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.7rem))] pb-5 px-5"
+                >
                   <button
                     type="button"
-                    onClick={dismissWithPhysics}
+                    data-sheet-drag-handle="true"
+                    onClick={() => {
+                      if (handleDraggedRef.current) {
+                        handleDraggedRef.current = false;
+                        return;
+                      }
+                      dismissWithPhysics();
+                    }}
                     aria-label={t("collapse")}
-                    className="pointer-events-auto flex flex-col items-center gap-1.5 py-1.5 px-6 cursor-pointer"
+                    className="pointer-events-auto flex flex-col items-center gap-2 py-2 px-8 cursor-pointer touch-none"
                   >
-                    <span className="h-1 w-9 rounded-full bg-white/65 shadow-sm" />
-                    <span className="text-[11px] font-semibold text-white/95 drop-shadow-[0_1px_6px_rgba(0,0,0,0.8)] truncate max-w-[78vw]">
+                    <span className="h-1.5 w-11 rounded-full bg-white/75 shadow-sm" />
+                    <span className="text-[11px] font-semibold text-white/95 drop-shadow-[0_1px_8px_rgba(0,0,0,0.85)] truncate max-w-[78vw]">
                       {playingFromLabel}
                     </span>
                   </button>
+                  {isCrossfading && (
+                    <div className="pointer-events-none mt-1 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/28 backdrop-blur-xl border border-emerald-400/45 px-3.5 py-1 text-[11px] font-bold text-emerald-100 shadow-lg animate-pulse">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                      <span>{lang === "fa" ? "ساندیفای میکس در حال اجرا..." : "Soundify Mix Active..."}</span>
+                    </div>
+                  )}
                   {isRemotePlaybackActive && (
                     <div className="pointer-events-auto mt-1 inline-flex items-center gap-2 rounded-full bg-black/55 backdrop-blur-xl border border-white/15 px-3 py-1 text-[11px]">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" aria-hidden="true" />
@@ -1145,7 +1346,16 @@ export function BitChordNowPlaying() {
                           {title}
                         </h2>
                       </div>
-                      <p className="truncate text-[14px] font-medium text-white/70 mt-0.5">{artist}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void triggerHapticFeedback("selection");
+                          openNewUiArtistProfile(artist, currentTrack);
+                        }}
+                        className="truncate max-w-full text-start text-[14px] font-medium text-white/75 hover:text-white mt-0.5 cursor-pointer block"
+                      >
+                        {artist}
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
@@ -1153,12 +1363,13 @@ export function BitChordNowPlaying() {
                         type="button"
                         onClick={handleLike}
                         aria-label={t("like")}
-                        className="bc-control-btn h-10 w-10 min-h-[40px] min-w-[40px] rounded-full bg-white/14 hover:bg-white/22 flex items-center justify-center cursor-pointer"
+                        aria-pressed={effectiveLiked}
+                        className="bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-full bg-white/14 hover:bg-white/22 flex items-center justify-center cursor-pointer"
                       >
                         <HeartIcon
-                          size={18}
-                          weight={currentTrack.likedByMe ? "fill" : "regular"}
-                          className={currentTrack.likedByMe ? "text-rose-400" : "text-white"}
+                          size={19}
+                          weight={effectiveLiked ? "fill" : "regular"}
+                          className={`transition-transform duration-150 ${effectiveLiked ? "text-rose-400 scale-110" : "text-white"}`}
                           aria-hidden="true"
                         />
                       </button>
@@ -1167,10 +1378,11 @@ export function BitChordNowPlaying() {
                         type="button"
                         onClick={() => {
                           void triggerHapticFeedback("selection");
+                          setContextMenuPage("main");
                           setContextMenuOpen(true);
                         }}
                         aria-label="Track options"
-                        className="bc-control-btn h-10 w-10 min-h-[40px] min-w-[40px] rounded-full bg-white/16 hover:bg-white/24 flex items-center justify-center text-white cursor-pointer"
+                        className="bc-control-btn h-11 w-11 min-h-[44px] min-w-[44px] rounded-full bg-white/16 hover:bg-white/24 flex items-center justify-center text-white cursor-pointer"
                       >
                         <DotsThreeIcon size={20} weight="bold" aria-hidden="true" />
                       </button>
@@ -1263,23 +1475,37 @@ export function BitChordNowPlaying() {
                       type="button"
                       onClick={() => {
                         void triggerHapticFeedback("selection");
+                        if (outputDevice.permissionNeeded) {
+                          void requestBluetoothNamesIfNeeded();
+                        }
                         toggleDevicePicker();
                       }}
                       aria-label={t("devicesTitle")}
-                      className="bc-control-btn flex flex-col items-center justify-center gap-0.5 min-h-[44px] px-3 rounded-2xl text-white/80 hover:text-white hover:bg-white/10 cursor-pointer"
+                      className="bc-control-btn flex flex-col items-center justify-center gap-0.5 min-h-[44px] px-3 rounded-2xl text-white/85 hover:text-white hover:bg-white/10 cursor-pointer"
                     >
-                      <HeadphonesIcon
-                        size={21}
-                        weight={isRemotePlaybackActive ? "fill" : "regular"}
-                        className={isRemotePlaybackActive ? "text-emerald-300" : "text-white/85"}
-                        aria-hidden="true"
-                      />
-                      <span className="text-[10.5px] font-medium text-white/65 truncate max-w-[140px]">
-                        {isRemotePlaybackActive
-                          ? localizedActiveDeviceName
-                          : lang === "fa"
-                            ? "این دستگاه"
-                            : "This Device"}
+                      {outputDevice.kind === "bluetooth" && !isRemotePlaybackActive ? (
+                        <BluetoothConnectedIcon
+                          size={21}
+                          weight="fill"
+                          className="text-sky-300"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <HeadphonesIcon
+                          size={21}
+                          weight={isRemotePlaybackActive || outputDevice.kind !== "speaker" ? "fill" : "regular"}
+                          className={
+                            isRemotePlaybackActive
+                              ? "text-emerald-300"
+                              : outputDevice.kind !== "speaker"
+                                ? "text-white"
+                                : "text-white/85"
+                          }
+                          aria-hidden="true"
+                        />
+                      )}
+                      <span className="text-[11px] font-semibold text-white/80 truncate max-w-[160px]">
+                        {outputDeviceLabel}
                       </span>
                     </button>
 
@@ -1299,16 +1525,23 @@ export function BitChordNowPlaying() {
                 </div>
               </div>
             ) : mobileTab === "lyrics" ? (
-              /* ---- IMMERSIVE LYRICS VIEW (photo_3) ---- */
-              <div className="bc-view-switch flex flex-col h-full w-full px-5 pt-[max(0.75rem,var(--sat,env(safe-area-inset-top,0px)))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
-                <div className="flex justify-center pb-2">
+              /* ---- IMMERSIVE LYRICS VIEW ---- */
+              <div className="bc-view-switch flex flex-col h-full w-full px-5 pt-[max(1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.55rem))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
+                <div data-sheet-drag-handle="true" className="flex justify-center pb-2">
                   <button
                     type="button"
-                    onClick={dismissWithPhysics}
+                    data-sheet-drag-handle="true"
+                    onClick={() => {
+                      if (handleDraggedRef.current) {
+                        handleDraggedRef.current = false;
+                        return;
+                      }
+                      dismissWithPhysics();
+                    }}
                     aria-label={t("collapse")}
-                    className="py-1.5 px-6 cursor-pointer"
+                    className="py-2 px-8 cursor-pointer touch-none"
                   >
-                    <span className="block h-1 w-9 rounded-full bg-white/45" />
+                    <span className="block h-1.5 w-11 rounded-full bg-white/55" />
                   </button>
                 </div>
 
@@ -1367,10 +1600,10 @@ export function BitChordNowPlaying() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setLyricsToolsOpen((p) => !p)}
+                      onClick={() => setLyricsOffsetSheetOpen(true)}
                       aria-label={t("lyricsSyncOffset")}
                       className={`bc-control-btn relative h-9 w-9 rounded-full flex items-center justify-center cursor-pointer ${
-                        lyricsToolsOpen ? "bg-white text-slate-950" : "bg-white/14 text-white"
+                        lyricsOffsetSheetOpen ? "bg-white text-slate-950" : "bg-white/14 text-white"
                       }`}
                     >
                       <FadersIcon size={16} aria-hidden="true" />
@@ -1410,7 +1643,7 @@ export function BitChordNowPlaying() {
 
                 {/* Compact Bottom Transport + Tab Switcher */}
                 <div className="shrink-0 pt-2 space-y-2.5">
-                  <BitChordPillScrubber defaultDuration={safeDuration} />
+                  <BitChordPillScrubber defaultDuration={safeDuration} statusLabel={isCrossfading ? statusBadge : null} />
                   <div className="flex items-center justify-between px-4">
                     <button
                       type="button"
@@ -1492,16 +1725,23 @@ export function BitChordNowPlaying() {
                 </div>
               </div>
             ) : (
-              /* ---- QUEUE VIEW (photo_6 & photo_9) ---- */
-              <div className="bc-view-switch flex flex-col h-full w-full px-5 pt-[max(0.75rem,var(--sat,env(safe-area-inset-top,0px)))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
-                <div className="flex justify-center pb-2">
+              /* ---- QUEUE VIEW ---- */
+              <div className="bc-view-switch flex flex-col h-full w-full px-5 pt-[max(1rem,calc(var(--sat,env(safe-area-inset-top,0px))+0.55rem))] pb-[max(1rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+0.65rem))]">
+                <div data-sheet-drag-handle="true" className="flex justify-center pb-2">
                   <button
                     type="button"
-                    onClick={dismissWithPhysics}
+                    data-sheet-drag-handle="true"
+                    onClick={() => {
+                      if (handleDraggedRef.current) {
+                        handleDraggedRef.current = false;
+                        return;
+                      }
+                      dismissWithPhysics();
+                    }}
                     aria-label={t("collapse")}
-                    className="py-1.5 px-6 cursor-pointer"
+                    className="py-2 px-8 cursor-pointer touch-none"
                   >
-                    <span className="block h-1 w-9 rounded-full bg-white/45" />
+                    <span className="block h-1.5 w-11 rounded-full bg-white/55" />
                   </button>
                 </div>
 
@@ -1547,18 +1787,30 @@ export function BitChordNowPlaying() {
                   <h3 className="text-lg font-extrabold text-white">
                     {lang === "fa" ? "صف پخش" : "Queue"}
                   </h3>
-                  <span className="text-xs font-medium text-white/60 tabular-nums">
-                    {queue.length} {t("tracksCount")}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {isCrossfading && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/25 border border-emerald-400/40 px-2.5 py-0.5 text-[10.5px] font-bold text-emerald-200 animate-pulse">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        {lang === "fa" ? "در حال میکس" : "Mixing"}
+                      </span>
+                    )}
+                    <span className="text-xs font-medium text-white/60 tabular-nums">
+                      {queue.length} {t("tracksCount")}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-xs font-medium text-white/60 pb-2 truncate shrink-0">
-                  {album
+                  {hasGenuineAlbum
                     ? lang === "fa"
                       ? `ادامه از: ${album}`
                       : `Next from: ${album}`
-                    : lang === "fa"
-                      ? "قطعات بعدی صف"
-                      : "Up Next"}
+                    : isLocalOrDownloaded
+                      ? lang === "fa"
+                        ? "ادامه از: دانلودها"
+                        : "Next from: Downloads"
+                      : lang === "fa"
+                        ? "قطعات بعدی صف"
+                        : "Up Next"}
                 </p>
 
                 <BitChordQueueList
@@ -1710,7 +1962,7 @@ export function BitChordNowPlaying() {
       </div>
 
       {/* =================================================================
-          BITCHORD FLOATING GLASS CONTEXT MENU (photo_7 style)
+          FLOATING LIQUID GLASS CONTEXT MENU + SLEEP TIMER SUBMENU
          ================================================================= */}
       {contextMenuOpen && (
         <div
@@ -1718,183 +1970,560 @@ export function BitChordNowPlaying() {
           aria-modal="true"
           aria-label="Track Options"
           className="fixed inset-0 z-[70] flex items-center justify-end lg:justify-start p-5 lg:ps-16 bg-black/45 backdrop-blur-sm"
-          onClick={() => setContextMenuOpen(false)}
+          onClick={() => {
+            setContextMenuOpen(false);
+            setContextMenuPage("main");
+          }}
         >
           <div
-            className="bc-glass-menu bc-menu-pop w-full max-w-[270px] max-h-[85dvh] overflow-y-auto rounded-[28px] text-white divide-y divide-white/[0.08]"
+            className="bc-glass-menu bc-menu-pop w-full max-w-[280px] max-h-[85dvh] overflow-y-auto rounded-[28px] text-white divide-y divide-white/[0.08]"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Top Share Row */}
-            <div className="flex items-center justify-between px-4 py-3">
-              <button
-                type="button"
-                onClick={() => {
-                  void handleShare();
-                }}
-                className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 rounded-2xl hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                {copiedShare ? (
-                  <CheckIcon size={20} weight="bold" className="text-emerald-400" aria-hidden="true" />
-                ) : (
-                  <ShareNetworkIcon size={20} aria-hidden="true" />
-                )}
-                <span className="text-xs font-semibold">
-                  {copiedShare ? t("copiedLink") : t("share")}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setContextMenuOpen(false)}
-                aria-label={t("close")}
-                className="h-8 w-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 cursor-pointer"
-              >
-                <XIcon size={16} weight="bold" aria-hidden="true" />
-              </button>
-            </div>
+            {contextMenuPage === "sleep" ? (
+              <>
+                <div className="flex items-center gap-2.5 px-4 py-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setContextMenuPage("main")}
+                    aria-label={lang === "fa" ? "بازگشت" : "Back"}
+                    className="h-8 w-8 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 cursor-pointer shrink-0"
+                  >
+                    {lang === "fa" ? (
+                      <CaretRightIcon size={17} weight="bold" aria-hidden="true" />
+                    ) : (
+                      <CaretLeftIcon size={17} weight="bold" aria-hidden="true" />
+                    )}
+                  </button>
+                  <div className="min-w-0">
+                    <p className="text-sm font-extrabold leading-tight">
+                      {lang === "fa" ? "تایمر خواب" : "Sleep timer"}
+                    </p>
+                    <p className="text-[11px] text-white/60 leading-tight mt-0.5">
+                      {lang === "fa" ? "توقف پخش پس از زمان مشخص" : "Pause playback after a while"}
+                    </p>
+                  </div>
+                </div>
 
-            <div className="py-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenuOpen(false);
-                  void triggerHapticFeedback("selection");
-                  openPlaylistPicker(currentTrack);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <ListPlusIcon size={19} aria-hidden="true" />
-                <span>{t("addToPlaylist")}</span>
-              </button>
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void triggerHapticFeedback("selection");
+                      startSleepTimerAfterCurrentSong(currentTrack.id);
+                      setContextMenuOpen(false);
+                      setContextMenuPage("main");
+                    }}
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span>{lang === "fa" ? "بعد از همین آهنگ" : "After this song"}</span>
+                    {sleepTimer.mode === "after_song" && (
+                      <CheckIcon size={16} weight="bold" className="text-emerald-400" aria-hidden="true" />
+                    )}
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenuOpen(false);
-                  void triggerHapticFeedback("selection");
-                  if (downloadStatus !== "downloaded") {
-                    void startTrackDownload(currentTrack);
-                  }
-                }}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <span className="flex items-center gap-3">
-                  <DownloadSimpleIcon size={19} aria-hidden="true" />
-                  <span>
-                    {downloadStatus === "downloaded"
-                      ? t("downloaded")
-                      : downloadStatus === "downloading"
-                        ? `${t("downloading")} ${downloadProgress}%`
-                        : t("downloadTrack")}
-                  </span>
-                </span>
-                {downloadStatus === "downloaded" && (
-                  <CheckIcon size={16} weight="bold" className="text-emerald-400" aria-hidden="true" />
-                )}
-              </button>
+                  {[15, 30, 45, 60].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => {
+                        void triggerHapticFeedback("selection");
+                        startSleepTimerMinutes(mins);
+                        setContextMenuOpen(false);
+                        setContextMenuPage("main");
+                      }}
+                      className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                    >
+                      <span>
+                        {mins === 60
+                          ? lang === "fa"
+                            ? "۱ ساعت"
+                            : "1 hour"
+                          : lang === "fa"
+                            ? `${mins} دقیقه`
+                            : `${mins} minutes`}
+                      </span>
+                    </button>
+                  ))}
 
-              <button
-                type="button"
-                onClick={() => {
-                  void triggerHapticFeedback("modeToggle");
-                  toggleShuffle();
-                }}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <span className="flex items-center gap-3">
-                  <ShuffleIcon size={19} aria-hidden="true" />
-                  <span>{t("shuffle")}</span>
-                </span>
-                <span className="text-xs font-bold text-white/60">
-                  {shuffle ? (lang === "fa" ? "روشن" : "On") : lang === "fa" ? "خاموش" : "Off"}
-                </span>
-              </button>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const val = parseInt(customSleepMinutes, 10);
+                      if (Number.isFinite(val) && val > 0) {
+                        void triggerHapticFeedback("selection");
+                        startSleepTimerMinutes(val);
+                        setContextMenuOpen(false);
+                        setContextMenuPage("main");
+                      }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2.5"
+                  >
+                    <input
+                      type="number"
+                      min={1}
+                      max={480}
+                      value={customSleepMinutes}
+                      onChange={(e) => setCustomSleepMinutes(e.target.value)}
+                      aria-label={lang === "fa" ? "مدت دلخواه (دقیقه)" : "Custom minutes"}
+                      className="w-16 rounded-xl bg-white/10 border border-white/15 px-2.5 py-1 text-xs font-mono text-white text-center focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      className="flex-1 rounded-xl bg-white/16 hover:bg-white/24 px-3 py-1.5 text-xs font-bold text-white cursor-pointer"
+                    >
+                      {lang === "fa" ? "شروع دلخواه (دقیقه)" : "Set Custom"}
+                    </button>
+                  </form>
+                </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  void triggerHapticFeedback("modeToggle");
-                  cycleRepeat();
-                }}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <span className="flex items-center gap-3">
-                  {repeat === "one" ? (
-                    <RepeatOnceIcon size={19} aria-hidden="true" />
-                  ) : (
-                    <RepeatIcon size={19} aria-hidden="true" />
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void triggerHapticFeedback("selection");
+                      setSleepTimerFadeOut(!sleepTimer.fadeOut);
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <CheckIcon
+                        size={16}
+                        weight="bold"
+                        className={sleepTimer.fadeOut ? "text-emerald-400 opacity-100" : "opacity-25"}
+                        aria-hidden="true"
+                      />
+                      <span>{lang === "fa" ? "کم شدن نرم صدا هنگام توقف" : "Fade out before pausing"}</span>
+                    </span>
+                  </button>
+                  {sleepTimer.mode !== "off" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cancelSleepTimer();
+                        setContextMenuOpen(false);
+                        setContextMenuPage("main");
+                      }}
+                      className="w-full px-4 py-3 text-sm font-bold text-rose-300 hover:bg-white/10 transition-colors cursor-pointer text-start"
+                    >
+                      {lang === "fa" ? "لغو تایمر خواب" : "Cancel sleep timer"}
+                    </button>
                   )}
-                  <span>{t("repeat")}</span>
-                </span>
-                <span className="text-xs font-bold text-white/60 capitalize">{repeat}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Top Share Row */}
+                <div className="flex items-center justify-between px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleShare();
+                    }}
+                    className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 rounded-2xl hover:bg-white/10 transition-colors cursor-pointer"
+                  >
+                    {copiedShare ? (
+                      <CheckIcon size={20} weight="bold" className="text-emerald-400" aria-hidden="true" />
+                    ) : (
+                      <ShareNetworkIcon size={20} aria-hidden="true" />
+                    )}
+                    <span className="text-xs font-semibold">
+                      {copiedShare ? t("copiedLink") : t("share")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setContextMenuOpen(false)}
+                    aria-label={t("close")}
+                    className="h-8 w-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 cursor-pointer"
+                  >
+                    <XIcon size={16} weight="bold" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      void triggerHapticFeedback("selection");
+                      openPlaylistPicker(currentTrack);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <ListPlusIcon size={19} aria-hidden="true" />
+                    <span>{t("addToPlaylist")}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      void triggerHapticFeedback("selection");
+                      if (downloadStatus !== "downloaded") {
+                        void startTrackDownload(currentTrack);
+                      }
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3">
+                      <DownloadSimpleIcon size={19} aria-hidden="true" />
+                      <span>
+                        {downloadStatus === "downloaded"
+                          ? t("downloaded")
+                          : downloadStatus === "downloading"
+                            ? `${t("downloading")} ${downloadProgress}%`
+                            : t("downloadTrack")}
+                      </span>
+                    </span>
+                    {downloadStatus === "downloaded" && (
+                      <CheckIcon size={16} weight="bold" className="text-emerald-400" aria-hidden="true" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      void triggerHapticFeedback("selection");
+                      openNewUiArtistProfile(artist, currentTrack);
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3 min-w-0">
+                      <UserIcon size={19} className="shrink-0" aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block">{lang === "fa" ? "صفحه خواننده" : "Open Artist"}</span>
+                        <span className="block truncate text-[11px] text-white/55">{artist}</span>
+                      </span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setSongInfoOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <InfoIcon size={19} aria-hidden="true" />
+                    <span>{lang === "fa" ? "اطلاعات آهنگ" : "Song Info"}</span>
+                  </button>
+                </div>
+
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void triggerHapticFeedback("modeToggle");
+                      toggleShuffle();
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3">
+                      <ShuffleIcon size={19} aria-hidden="true" />
+                      <span>{t("shuffle")}</span>
+                    </span>
+                    <span className="text-xs font-bold text-white/60">
+                      {shuffle ? (lang === "fa" ? "روشن" : "On") : lang === "fa" ? "خاموش" : "Off"}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void triggerHapticFeedback("modeToggle");
+                      cycleRepeat();
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3">
+                      {repeat === "one" ? (
+                        <RepeatOnceIcon size={19} aria-hidden="true" />
+                      ) : (
+                        <RepeatIcon size={19} aria-hidden="true" />
+                      )}
+                      <span>{t("repeat")}</span>
+                    </span>
+                    <span className="text-xs font-bold text-white/60 capitalize">{repeat}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={cyclePlaybackSpeed}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3">
+                      <GaugeIcon size={19} aria-hidden="true" />
+                      <span>{t("speed")}</span>
+                    </span>
+                    <span className="text-xs font-mono font-bold text-white/75">{playbackRate}x</span>
+                  </button>
+                </div>
+
+                <div className="py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void triggerHapticFeedback("selection");
+                      setContextMenuPage("sleep");
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3">
+                      <MoonStarsIcon size={19} aria-hidden="true" />
+                      <span>{lang === "fa" ? "تایمر خواب" : "Sleep timer"}</span>
+                    </span>
+                    {sleepTimer.mode !== "off" && (
+                      <span className="text-xs font-mono font-bold text-emerald-300">
+                        {sleepTimer.mode === "after_song"
+                          ? "1 song"
+                          : formatRemainingTimer(sleepTimer.remainingSec)}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setLyricsOffsetSheetOpen(true);
+                    }}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <span className="flex items-center gap-3">
+                      <FadersIcon size={19} aria-hidden="true" />
+                      <span>{t("lyricsSyncOffset")}</span>
+                    </span>
+                    {lyricsOffsetMs !== 0 && (
+                      <span className="text-xs font-mono font-bold text-amber-300">
+                        {(lyricsOffsetMs / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setQueueOpen(false);
+                      setMobileTab("lyrics");
+                      setDesktopTab("lyrics");
+                      setLyricsSourcesOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <ListDashesIcon size={19} aria-hidden="true" />
+                    <span>{t("lyricsSources")}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setDevicePickerOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <BroadcastIcon size={19} aria-hidden="true" />
+                    <span>{t("devicesTitle")}</span>
+                  </button>
+
+                  <Link
+                    href={getTrackDetailHref(currentTrack.id)}
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setExpanded(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                  >
+                    <ChatCircleTextIcon size={19} aria-hidden="true" />
+                    <span>{t("openTrackPage")}</span>
+                  </Link>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================
+          SONG INFO MODAL DIALOG
+         ================================================================= */}
+      {songInfoOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={lang === "fa" ? "اطلاعات آهنگ" : "Song Info"}
+          className="fixed inset-0 z-[75] flex items-center justify-center p-6 bg-black/55 backdrop-blur-sm"
+          onClick={() => setSongInfoOpen(false)}
+        >
+          <div
+            className="bc-menu-pop w-full max-w-[320px] rounded-[24px] bg-[#141418]/95 border border-white/14 shadow-2xl text-white divide-y divide-white/[0.08] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 text-center space-y-1">
+              <p className="text-base font-extrabold">{lang === "fa" ? "اطلاعات آهنگ" : "Song Info"}</p>
+              <p className="text-xs font-semibold text-white truncate">{title}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSongInfoOpen(false);
+                  openNewUiArtistProfile(artist, currentTrack);
+                }}
+                className="text-xs text-white/60 hover:text-white underline-offset-4 hover:underline cursor-pointer truncate max-w-full"
+              >
+                {artist}
               </button>
             </div>
 
-            <div className="py-1">
-              <button
-                type="button"
-                onClick={cyclePlaybackSpeed}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <span className="flex items-center gap-3">
-                  <GaugeIcon size={19} aria-hidden="true" />
-                  <span>{t("speed")}</span>
+            <div className="divide-y divide-white/[0.07] text-xs">
+              <div className="flex items-center justify-between gap-4 px-5 py-3">
+                <span className="text-white/55">{lang === "fa" ? "آلبوم" : "Album"}</span>
+                <span className="font-semibold text-end truncate max-w-[180px]">
+                  {hasGenuineAlbum
+                    ? album
+                    : isLocalOrDownloaded
+                      ? lang === "fa"
+                        ? "دانلودها"
+                        : "Downloads"
+                      : lang === "fa"
+                        ? "تک‌آهنگ"
+                        : "Single"}
                 </span>
-                <span className="text-xs font-mono font-bold text-white/75">{playbackRate}x</span>
-              </button>
+              </div>
+              <div className="flex items-center justify-between gap-4 px-5 py-3">
+                <span className="text-white/55">{lang === "fa" ? "مدت زمان" : "Duration"}</span>
+                <span className="font-mono font-semibold">{formatDuration(safeDuration)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 px-5 py-3">
+                <span className="text-white/55">{lang === "fa" ? "تعداد پخش" : "Plays"}</span>
+                <span className="font-semibold tabular-nums">
+                  {currentTrack.playsCount > 0 ? currentTrack.playsCount : isExternalTrack(currentTrack) ? "—" : "0"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4 px-5 py-3">
+                <span className="text-white/55">{lang === "fa" ? "لایک‌ها" : "Likes"}</span>
+                <span className="font-semibold tabular-nums">{effectiveLikesCount}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 px-5 py-3">
+                <span className="text-white/55">{lang === "fa" ? "وضعیت فایل" : "Storage"}</span>
+                <span className="font-semibold">
+                  {isLocalOrDownloaded
+                    ? lang === "fa"
+                      ? "ذخیره آفلاین"
+                      : "Downloaded"
+                    : lang === "fa"
+                      ? "پخش آنلاین"
+                      : "Online Stream"}
+                </span>
+              </div>
+            </div>
 
+            <button
+              type="button"
+              onClick={() => setSongInfoOpen(false)}
+              className="w-full py-3.5 text-sm font-bold text-white hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              {lang === "fa" ? "بستن" : "Done"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================
+          LYRICS OFFSET BOTTOM SHEET
+         ================================================================= */}
+      {lyricsOffsetSheetOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("lyricsSyncOffset")}
+          className="fixed inset-0 z-[75] flex items-end justify-center bg-black/45 backdrop-blur-xs"
+          onClick={() => setLyricsOffsetSheetOpen(false)}
+        >
+          <div
+            className="bc-sheet-in bc-glass-menu w-full max-w-lg rounded-t-[28px] px-6 pt-3 pb-[max(1.5rem,calc(var(--sab,env(safe-area-inset-bottom,0px))+1.25rem))] text-white space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-center">
+              <span className="h-1 w-10 rounded-full bg-white/35" />
+            </div>
+
+            <div>
+              <h3 className="text-base font-extrabold">{t("lyricsSyncOffset")}</h3>
+              <p className="text-xs text-white/60 mt-0.5">
+                {lang === "fa"
+                  ? "مقادیر مثبت متن آهنگ را دیرتر نمایش می‌دهند"
+                  : "Positive values show lyrics later"}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-white/[0.08] border border-white/10 px-4 py-4 space-y-3" dir="ltr">
+              <p className="text-center text-base font-bold font-mono tabular-nums">
+                {lyricsOffsetMs >= 0 ? "+" : ""}
+                {(lyricsOffsetMs / 1000).toFixed(1)} s
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => adjustLyricsOffset(-500)}
+                  aria-label="Decrease offset"
+                  className="h-9 w-9 rounded-full flex items-center justify-center text-white/85 hover:bg-white/12 cursor-pointer shrink-0"
+                >
+                  <MinusIcon size={17} weight="bold" aria-hidden="true" />
+                </button>
+                <div className="relative flex-1 flex items-center h-6">
+                  <div className="relative w-full h-1.5 rounded-full bg-white/20 overflow-hidden">
+                    <div
+                      className="h-full bg-white rounded-full"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, ((lyricsOffsetMs + 5000) / 10000) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min={-5000}
+                    max={5000}
+                    step={100}
+                    value={Math.max(-5000, Math.min(5000, lyricsOffsetMs))}
+                    onChange={(e) => {
+                      const nextMs = parseInt(e.target.value, 10);
+                      adjustLyricsOffset(nextMs - lyricsOffsetMs);
+                    }}
+                    className="bc-scrubber-range absolute inset-0 w-full h-full cursor-pointer"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => adjustLyricsOffset(500)}
+                  aria-label="Increase offset"
+                  className="h-9 w-9 rounded-full flex items-center justify-center text-white/85 hover:bg-white/12 cursor-pointer shrink-0"
+                >
+                  <PlusIcon size={17} weight="bold" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => adjustLyricsOffset(-lyricsOffsetMs)}
+                className="flex-1 py-2.5 rounded-2xl bg-white/10 hover:bg-white/16 text-xs font-bold text-white/85 cursor-pointer"
+              >
+                {lang === "fa" ? "بازنشانی" : "Reset"}
+              </button>
               <button
                 type="button"
                 onClick={() => {
-                  setContextMenuOpen(false);
-                  setQueueOpen(false);
-                  setMobileTab("lyrics");
-                  setDesktopTab("lyrics");
-                  setLyricsToolsOpen(true);
+                  void saveLyricsOffset(lyricsOffsetMs);
+                  setLyricsOffsetSheetOpen(false);
                 }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
+                className="flex-1 py-2.5 rounded-2xl bg-white text-slate-950 text-xs font-extrabold cursor-pointer"
               >
-                <FadersIcon size={19} aria-hidden="true" />
-                <span>{t("lyricsSyncOffset")}</span>
+                {lang === "fa" ? "ذخیره و بستن" : "Save"}
               </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenuOpen(false);
-                  setQueueOpen(false);
-                  setMobileTab("lyrics");
-                  setDesktopTab("lyrics");
-                  setLyricsSourcesOpen(true);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <ListDashesIcon size={19} aria-hidden="true" />
-                <span>{t("lyricsSources")}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenuOpen(false);
-                  setDevicePickerOpen(true);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <BroadcastIcon size={19} aria-hidden="true" />
-                <span>{t("devicesTitle")}</span>
-              </button>
-
-              <Link
-                href={getTrackDetailHref(currentTrack.id)}
-                onClick={() => {
-                  setContextMenuOpen(false);
-                  setExpanded(false);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium hover:bg-white/10 transition-colors cursor-pointer text-start"
-              >
-                <ChatCircleTextIcon size={19} aria-hidden="true" />
-                <span>{t("openTrackPage")}</span>
-              </Link>
             </div>
           </div>
         </div>

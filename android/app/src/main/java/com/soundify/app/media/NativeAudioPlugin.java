@@ -1,28 +1,250 @@
 package com.soundify.app.media;
 
+import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothProfile;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 /**
  * Capacitor Plugin exposing Native Android Media3 ExoPlayer streaming
  * to the Soundify frontend for ultra-fast external audio startup,
- * resilient HTTP buffering, HLS/AAC/Opus/MP3 decoding, and background continuity.
+ * resilient HTTP buffering, HLS/AAC/Opus/MP3 decoding, background continuity,
+ * and live audio output device detection (Bluetooth AirPods / Wired / USB).
  */
-@CapacitorPlugin(name = "NativeAudioPlugin")
+@CapacitorPlugin(
+    name = "NativeAudioPlugin",
+    permissions = {
+        @Permission(
+            alias = "bluetooth",
+            strings = { Manifest.permission.BLUETOOTH_CONNECT }
+        )
+    }
+)
 public class NativeAudioPlugin extends Plugin {
 
     private static NativeAudioPlugin instance;
+    private AudioManager audioManager;
+    private AudioDeviceCallback audioDeviceCallback;
+    private BroadcastReceiver outputReceiver;
+    private final Handler outputHandler = new Handler(Looper.getMainLooper());
+    private final Runnable emitOutputRunnable = this::emitCurrentAudioOutput;
 
     @Override
     public void load() {
         super.load();
         instance = this;
+        registerAudioOutputMonitors();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        unregisterAudioOutputMonitors();
+        super.handleOnDestroy();
+    }
+
+    private void registerAudioOutputMonitors() {
+        try {
+            Context ctx = getContext();
+            if (ctx == null) return;
+            audioManager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (audioManager != null) {
+                audioDeviceCallback = new AudioDeviceCallback() {
+                    @Override
+                    public void onAudioDevicesAdded(AudioDeviceInfo[] addedDevices) {
+                        scheduleAudioOutputEmit();
+                    }
+
+                    @Override
+                    public void onAudioDevicesRemoved(AudioDeviceInfo[] removedDevices) {
+                        scheduleAudioOutputEmit();
+                    }
+                };
+                audioManager.registerAudioDeviceCallback(audioDeviceCallback, outputHandler);
+            }
+            outputReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    scheduleAudioOutputEmit();
+                }
+            };
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+            filter.addAction(AudioManager.ACTION_HEADSET_PLUG);
+            filter.addAction(AudioManager.ACTION_HDMI_AUDIO_PLUG);
+            filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
+            filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+            filter.addAction(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED);
+            if (Build.VERSION.SDK_INT >= 33) {
+                ctx.registerReceiver(outputReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                ctx.registerReceiver(outputReceiver, filter);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void unregisterAudioOutputMonitors() {
+        try {
+            outputHandler.removeCallbacksAndMessages(null);
+            if (audioManager != null && audioDeviceCallback != null) {
+                audioManager.unregisterAudioDeviceCallback(audioDeviceCallback);
+            }
+            Context ctx = getContext();
+            if (ctx != null && outputReceiver != null) {
+                ctx.unregisterReceiver(outputReceiver);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void scheduleAudioOutputEmit() {
+        outputHandler.removeCallbacks(emitOutputRunnable);
+        emitCurrentAudioOutput();
+        outputHandler.postDelayed(emitOutputRunnable, 450L);
+        outputHandler.postDelayed(emitOutputRunnable, 1400L);
+    }
+
+    private void emitCurrentAudioOutput() {
+        try {
+            notifyListeners("audioOutputChanged", resolveAudioOutputPayload());
+        } catch (Throwable ignored) {}
+    }
+
+    private boolean isBluetoothConnectAllowed(Context ctx) {
+        if (Build.VERSION.SDK_INT < 31) return true;
+        return ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private String cleanDeviceProductName(CharSequence rawName) {
+        if (rawName == null) return "";
+        String trimmed = rawName.toString().trim();
+        if (trimmed.isEmpty()) return "";
+        String model = Build.MODEL != null ? Build.MODEL.trim() : "";
+        if (!model.isEmpty() && trimmed.equalsIgnoreCase(model)) return "";
+        if (trimmed.equalsIgnoreCase("android") || trimmed.equalsIgnoreCase("phone")) return "";
+        return trimmed;
+    }
+
+    private JSObject resolveAudioOutputPayload() {
+        JSObject ret = new JSObject();
+        ret.put("kind", "speaker");
+        ret.put("name", "");
+        ret.put("permissionNeeded", false);
+        try {
+            Context ctx = getContext();
+            if (ctx == null) return ret;
+            AudioManager am = audioManager != null
+                ? audioManager
+                : (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (am == null) return ret;
+
+            AudioDeviceInfo[] outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+            AudioDeviceInfo btDevice = null;
+            AudioDeviceInfo usbDevice = null;
+            AudioDeviceInfo wiredDevice = null;
+
+            for (AudioDeviceInfo dev : outputs) {
+                int type = dev.getType();
+                if (
+                    type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    (Build.VERSION.SDK_INT >= 31 && (
+                        type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                        type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                        type == AudioDeviceInfo.TYPE_BLE_BROADCAST
+                    )) ||
+                    type == AudioDeviceInfo.TYPE_HEARING_AID
+                ) {
+                    if (btDevice == null) btDevice = dev;
+                } else if (
+                    type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_USB_DEVICE
+                ) {
+                    if (usbDevice == null) usbDevice = dev;
+                } else if (
+                    type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+                ) {
+                    if (wiredDevice == null) wiredDevice = dev;
+                }
+            }
+
+            if (btDevice != null) {
+                ret.put("kind", "bluetooth");
+                String name = cleanDeviceProductName(btDevice.getProductName());
+                if (name.isEmpty() && isBluetoothConnectAllowed(ctx)) {
+                    try {
+                        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                        if (adapter != null) {
+                            for (BluetoothDevice bonded : adapter.getBondedDevices()) {
+                                if (bonded != null && bonded.getName() != null && !bonded.getName().trim().isEmpty()) {
+                                    int a2dpState = adapter.getProfileConnectionState(BluetoothProfile.A2DP);
+                                    if (a2dpState == BluetoothProfile.STATE_CONNECTED) {
+                                        name = bonded.getName().trim();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                }
+                if (name.isEmpty() && !isBluetoothConnectAllowed(ctx)) {
+                    ret.put("permissionNeeded", true);
+                }
+                ret.put("name", name);
+                return ret;
+            }
+            if (usbDevice != null) {
+                ret.put("kind", "usb");
+                ret.put("name", cleanDeviceProductName(usbDevice.getProductName()));
+                return ret;
+            }
+            if (wiredDevice != null) {
+                ret.put("kind", "wired");
+                ret.put("name", cleanDeviceProductName(wiredDevice.getProductName()));
+                return ret;
+            }
+        } catch (Throwable ignored) {}
+        return ret;
+    }
+
+    @PluginMethod
+    public void getAudioOutputDevice(PluginCall call) {
+        call.resolve(resolveAudioOutputPayload());
+    }
+
+    @PluginMethod
+    public void requestBluetoothPermission(PluginCall call) {
+        if (Build.VERSION.SDK_INT < 31 || getPermissionState("bluetooth") == PermissionState.GRANTED) {
+            call.resolve(resolveAudioOutputPayload());
+            return;
+        }
+        requestPermissionForAlias("bluetooth", call, "bluetoothPermissionCallback");
+    }
+
+    @PermissionCallback
+    private void bluetoothPermissionCallback(PluginCall call) {
+        emitCurrentAudioOutput();
+        call.resolve(resolveAudioOutputPayload());
     }
 
     public static void emitState(JSObject payload) {

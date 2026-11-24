@@ -90,8 +90,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.43";
-    private static final String APP_VERSION_HEADER = "1.0.43";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.44";
+    private static final String APP_VERSION_HEADER = "1.0.44";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -396,6 +396,10 @@ public class SoundifyMediaService extends Service {
 
         private void runNativeProgressTickInternal() {
             if (nativeAudioActive && nativePlayer != null && nativePlayer.isPlaying()) {
+                if (isSwitchingNativeTrack) {
+                    mainHandler.postDelayed(this, 250L);
+                    return;
+                }
                 long posMs = Math.max(0L, nativePlayer.getCurrentPosition());
                 long nowMs = SystemClock.elapsedRealtime();
                 if (nowMs < crossfadePositionGuardUntilMs && Math.abs(posMs - crossfadePositionFloorMs) > 2500L) {
@@ -2255,6 +2259,7 @@ public class SoundifyMediaService extends Service {
             if (url == null || url.trim().isEmpty()) {
                 return;
             }
+            mainHandler.removeCallbacks(nativeProgressTicker);
             ensureNativePlayerOnMainThread(authToken);
             currentNativeVolume = Math.max(0.0f, Math.min(1.0f, volume));
             cancelCrossfadeOnMainThread();
@@ -2289,9 +2294,7 @@ public class SoundifyMediaService extends Service {
                     nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
                     nativePlayer.setPlaybackParameters(new PlaybackParameters(playbackRate > 0 ? playbackRate : 1.0f));
                     nativePlayer.setMediaItem(MediaItem.fromUri(url.trim()));
-                    if (startSec > 0) {
-                        nativePlayer.seekTo((long) (startSec * 1000.0));
-                    }
+                    nativePlayer.seekTo(startSec > 0 ? (long) (startSec * 1000.0) : 0L);
                     nativePlayer.setPlayWhenReady(true);
                     nativePlayer.prepare();
                     nativePlayer.play();

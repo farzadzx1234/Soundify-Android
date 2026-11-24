@@ -126,7 +126,7 @@ describe("Soundify v1.0.28 Recycled Deck Fix, Perceptual Apple Music AutoMix & S
       "utf8",
     );
     expect(overlay).toContain("{isCrossfading ? (");
-    expect(overlay).toContain('<span>{pickText("AutoMix", "میکس روان")}</span>');
+    expect(overlay).toContain('<span>{pickText("Soundify Mix", "ساندیفای میکس")}</span>');
     expect(overlay).toContain("shrink-0 whitespace-nowrap");
   });
 });

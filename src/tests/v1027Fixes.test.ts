@@ -125,7 +125,7 @@ describe("Soundify v1.0.27 Apple Music AutoMix Smoothness & Badge Cleanup", () =
       path.resolve(__dirname, "../components/NowPlayingOverlay.tsx"),
       "utf8",
     );
-    expect(overlay).toContain('pickText("AutoMix", "میکس روان")');
+    expect(overlay).toContain('pickText("Soundify Mix", "ساندیفای میکس")');
     expect(overlay).not.toContain("pickText(crossfadeFromTrack.title, crossfadeFromTrack.titleFa)");
     expect(overlay).toContain("min-w-0 flex-1 overflow-hidden text-start");
   });

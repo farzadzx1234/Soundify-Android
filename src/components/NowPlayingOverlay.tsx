@@ -1647,7 +1647,7 @@ export function NowPlayingOverlay() {
                         <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-300 rounded-full" style={{ animationDelay: "0.18s" }} />
                         <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
                       </span>
-                      <span>{pickText("AutoMix", "میکس روان")}</span>
+                      <span>{pickText("Soundify Mix", "ساندیفای میکس")}</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center px-3 py-0.5 rounded-full text-[11px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15">
@@ -1816,7 +1816,7 @@ export function NowPlayingOverlay() {
                             <span className="sf-eq-bar w-0.5 h-2.5 bg-emerald-300 rounded-full" style={{ animationDelay: "0.18s" }} />
                             <span className="sf-eq-bar w-0.5 h-1.5 bg-emerald-400 rounded-full" style={{ animationDelay: "0.34s" }} />
                           </span>
-                          <span>{pickText("AutoMix", "میکس روان")}</span>
+                          <span>{pickText("Soundify Mix", "ساندیفای میکس")}</span>
                         </span>
                       ) : (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider text-amber-100/90 bg-white/[0.08] border border-white/15 max-w-full truncate">

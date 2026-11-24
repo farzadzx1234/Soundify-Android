@@ -40,6 +40,16 @@ export interface SegmentAnalysis {
   effectiveEndSec: number;
   key: CamelotKey;
   lufs: number;
+  spectralFrames: Float32Array[];
+  frameRms: Float32Array;
+  spectralHopSec: number;
+}
+
+export interface FrequencyMatchResult {
+  cueOutASec: number;
+  cueInBSec: number;
+  frequencySimilarity: number;
+  mixDurationSec: number;
 }
 
 const SILENCE_MINUS_50_DBFS_RMS = 0.00316227766; // 10^(-50/20)
@@ -728,6 +738,57 @@ export function analyzeTrackSegment(
   const key = estimateHarmonicKey(slice, safeRate);
   const lufs = estimateIntegratedLufs(slice, safeRate);
 
+  // Compute 6-band log-frequency spectral fingerprint every 0.5s for cross-track frequency matching
+  const spectralHopSec = 0.5;
+  const specHopSamples = Math.max(256, Math.round(safeRate * spectralHopSec));
+  const specCount = Math.max(1, Math.floor(slice.length / specHopSamples));
+  const spectralFrames: Float32Array[] = new Array(specCount);
+  const frameRms = new Float32Array(specCount);
+  const a90 = 1 - Math.exp((-2 * Math.PI * 90) / safeRate);
+  const a220 = 1 - Math.exp((-2 * Math.PI * 220) / safeRate);
+  const a600s = 1 - Math.exp((-2 * Math.PI * 600) / safeRate);
+  const a1600 = 1 - Math.exp((-2 * Math.PI * 1600) / safeRate);
+  const a4000 = 1 - Math.exp((-2 * Math.PI * 4000) / safeRate);
+  let s90 = 0, s220 = 0, s600 = 0, s1600 = 0, s4000 = 0;
+
+  for (let w = 0; w < specCount; w++) {
+    const start = w * specHopSamples;
+    const end = Math.min(slice.length, start + specHopSamples);
+    let e0 = 0, e1 = 0, e2 = 0, e3 = 0, e4 = 0, e5 = 0, sq = 0;
+    for (let i = start; i < end; i++) {
+      const x = slice[i];
+      s90 += a90 * (x - s90);
+      s220 += a220 * (x - s220);
+      s600 += a600s * (x - s600);
+      s1600 += a1600 * (x - s1600);
+      s4000 += a4000 * (x - s4000);
+      const b0 = s90;
+      const b1 = s220 - s90;
+      const b2 = s600 - s220;
+      const b3 = s1600 - s600;
+      const b4 = s4000 - s1600;
+      const b5 = x - s4000;
+      e0 += b0 * b0;
+      e1 += b1 * b1;
+      e2 += b2 * b2;
+      e3 += b3 * b3;
+      e4 += b4 * b4;
+      e5 += b5 * b5;
+      sq += x * x;
+    }
+    const len = Math.max(1, end - start);
+    const vec = new Float32Array([
+      Math.sqrt(e0 / len),
+      Math.sqrt(e1 / len),
+      Math.sqrt(e2 / len),
+      Math.sqrt(e3 / len),
+      Math.sqrt(e4 / len),
+      Math.sqrt(e5 / len),
+    ]);
+    spectralFrames[w] = vec;
+    frameRms[w] = Math.sqrt(sq / len);
+  }
+
   return {
     role,
     sampleRate: safeRate,
@@ -746,11 +807,149 @@ export function analyzeTrackSegment(
     effectiveEndSec: vad.effectiveEndSec,
     key,
     lufs,
+    spectralFrames,
+    frameRms,
+    spectralHopSec,
+  };
+}
+
+function windowSpectrumCosineSimilarity(
+  segA: SegmentAnalysis,
+  startIdxA: number,
+  segB: SegmentAnalysis,
+  startIdxB: number,
+  spanFrames = 3,
+): { cosineSim: number; energySim: number } {
+  const vecA = new Float32Array(6);
+  const vecB = new Float32Array(6);
+  let rmsA = 0;
+  let rmsB = 0;
+  let cntA = 0;
+  let cntB = 0;
+
+  for (let k = 0; k < spanFrames; k++) {
+    const idxA = clamp(startIdxA + k, 0, segA.spectralFrames.length - 1);
+    const idxB = clamp(startIdxB + k, 0, segB.spectralFrames.length - 1);
+    const fA = segA.spectralFrames[idxA];
+    const fB = segB.spectralFrames[idxB];
+    if (fA) {
+      for (let b = 0; b < 6; b++) vecA[b] += fA[b];
+      rmsA += segA.frameRms[idxA] || 0;
+      cntA++;
+    }
+    if (fB) {
+      for (let b = 0; b < 6; b++) vecB[b] += fB[b];
+      rmsB += segB.frameRms[idxB] || 0;
+      cntB++;
+    }
+  }
+  if (cntA === 0 || cntB === 0) return { cosineSim: 0.5, energySim: 0.5 };
+
+  let dot = 0, normA = 0, normB = 0;
+  for (let b = 0; b < 6; b++) {
+    const va = vecA[b] / cntA;
+    const vb = vecB[b] / cntB;
+    dot += va * vb;
+    normA += va * va;
+    normB += vb * vb;
+  }
+  const denom = Math.sqrt(normA * normB);
+  const cosineSim = denom > 1e-8 ? clamp(dot / denom, 0, 1) : 0;
+  const avgA = rmsA / cntA;
+  const avgB = rmsB / cntB;
+  const maxR = Math.max(avgA, avgB, 1e-5);
+  const energySim = clamp(1 - Math.abs(avgA - avgB) / maxR, 0, 1);
+  return { cosineSim, energySim };
+}
+
+/**
+ * Soundify Mix Core Matcher:
+ * Scans Track A's ending (last 22s, leaving >=4.5s headroom) against Track B's true opening
+ * (first 5.5s after audible start, capped at 7.0s — NEVER jumping mid-song) to find the exact second
+ * where both tracks share maximum 6-band spectral similarity and smooth loudness continuity.
+ */
+export function findBestFrequencyMatchPair(
+  segA: SegmentAnalysis,
+  segB: SegmentAnalysis,
+): FrequencyMatchResult {
+  const segStartSecA = segA.segmentStartSample / Math.max(8000, segA.sampleRate);
+  const minOutA = Math.max(segStartSecA, segA.effectiveEndSec - 22);
+  const maxOutA = Math.max(minOutA, segA.effectiveEndSec - 4.5);
+
+  const minInB = Math.max(0, segB.firstAudibleSec);
+  const maxInB = Math.max(minInB, Math.min(minInB + 5.5, 7.0));
+
+  const hopA = segA.spectralHopSec || 0.5;
+  const hopB = segB.spectralHopSec || 0.5;
+
+  let bestScore = -Infinity;
+  let bestOutA = Math.max(minOutA, segA.effectiveEndSec - 6.0);
+  let bestInB = minInB;
+  let bestFreqSim = 0.7;
+
+  const beatsA = segA.beatsSec || [];
+  const beatsB = segB.beatsSec || [];
+  const nearestBeatDist = (beats: number[], t: number) => {
+    let minD = 1.0;
+    for (let i = 0; i < beats.length; i++) {
+      const d = Math.abs(beats[i] - t);
+      if (d < minD) minD = d;
+    }
+    return minD;
+  };
+
+  for (let tA = minOutA; tA <= maxOutA + 0.01; tA += 0.5) {
+    const idxA = Math.round((tA - segStartSecA) / hopA);
+    if (idxA < 0 || idxA >= segA.spectralFrames.length) continue;
+    if ((segA.frameRms[idxA] || 0) < SILENCE_MINUS_50_DBFS_RMS) continue;
+
+    const vadIdxA = clamp(Math.round((tA - segStartSecA) / (segA.vocalHopSec || 0.05)), 0, Math.max(0, segA.vocalPresence.length - 1));
+    const vocalA = segA.vocalPresence[vadIdxA] || 0;
+
+    for (let tB = minInB; tB <= maxInB + 0.01; tB += 0.5) {
+      const idxB = Math.round(tB / hopB);
+      if (idxB < 0 || idxB >= segB.spectralFrames.length) continue;
+      if ((segB.frameRms[idxB] || 0) < SILENCE_MINUS_50_DBFS_RMS) continue;
+
+      const { cosineSim, energySim } = windowSpectrumCosineSimilarity(segA, idxA, segB, idxB, 3);
+      const vadIdxB = clamp(Math.round(tB / (segB.vocalHopSec || 0.05)), 0, Math.max(0, segB.vocalPresence.length - 1));
+      const vocalB = segB.vocalPresence[vadIdxB] || 0;
+
+      const beatAlignBonus =
+        Math.max(0, 1 - nearestBeatDist(beatsA, tA) * 4) * 0.5 +
+        Math.max(0, 1 - nearestBeatDist(beatsB, tB) * 4) * 0.5;
+      const dualVocalPenalty = vocalA > 0.52 && vocalB > 0.52 ? 0.35 : 0;
+      const introDelayPenalty = ((tB - minInB) / 5.5) * 0.08;
+
+      const totalScore =
+        cosineSim * 0.56 +
+        energySim * 0.24 +
+        beatAlignBonus * 0.14 -
+        dualVocalPenalty -
+        introDelayPenalty;
+
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
+        bestOutA = tA;
+        bestInB = tB;
+        bestFreqSim = cosineSim;
+      }
+    }
+  }
+
+  const availRoomA = Math.max(3.5, segA.effectiveEndSec - bestOutA - 0.25);
+  const mixDurationSec = Number(clamp(availRoomA, 3.8, 7.5).toFixed(2));
+  return {
+    cueOutASec: Number(bestOutA.toFixed(2)),
+    cueInBSec: Number(bestInB.toFixed(2)),
+    frequencySimilarity: Number(bestFreqSim.toFixed(3)),
+    mixDurationSec,
   };
 }
 
 /**
- * Stage 2: Apple Music-Style Cue & Transition Solver producing exact Stage 5 `AutoMixPlan`.
+ * Stage 2: Soundify Mix Cue & Transition Solver combining frequency-matched cosine similarity
+ * with Beat/Downbeat snapping and Vocal-Safe alignment into Stage 5 `AutoMixPlan`.
  */
 export function solveAutoMixPlan(
   trackAId: string,
@@ -768,14 +967,17 @@ export function solveAutoMixPlan(
   // Integrated LUFS compensation clamped to safe musical [-6dB, +6dB] range
   const gainCompensationDbB = Number(clamp((segA.lufs ?? -14) - (segB.lufs ?? -14), -6, 6).toFixed(2));
 
-  // Fallback helper: clean 3.5-second silence-trimmed equal-power fade at Track A's tail
+  // Primary frequency-matched Soundify Mix cue pair (never jumps randomly past Track B opening)
+  const freqMatch = findBestFrequencyMatchPair(segA, segB);
+
+  // Fallback helper: clean 3.5-second equal-power fade aligned to Track A's tail & Track B's audible start
   const buildFallbackPlan = (): AutoMixPlan => {
     const fadeSec = 3.5;
     const rawStartSecA = Math.max(
       segA.segmentStartSample / safeRate,
-      segA.effectiveEndSec - fadeSec,
+      Math.min(freqMatch.cueOutASec, segA.effectiveEndSec - fadeSec),
     );
-    const startOffsetSecB = Math.max(0, segB.firstAudibleSec);
+    const startOffsetSecB = Math.max(0, segB.firstAudibleSec, Math.min(freqMatch.cueInBSec, segB.firstAudibleSec + 4.0));
     return {
       mode: "SILENCE_TRIMMED_FADE",
       trackAId,
@@ -796,15 +998,15 @@ export function solveAutoMixPlan(
     return buildFallbackPlan();
   }
 
-  // Try 8-bar transition first; step down to 4 bars if Track B's vocal-free intro is shorter
+  // Beat-synced 4/8-bar transition anchored around the frequency-matched cue pair & vocal-safe opening
   const barSecA = (60 / bpmA) * 4;
   const introHeadroomSecB = Math.max(0, segB.tVocalStartSec - segB.firstAudibleSec);
   const tryBars = introHeadroomSecB >= 8 * barSecA * 0.9 ? [8, 4] : [4];
 
   const candidateBoundariesB = (segB.phraseBoundariesSec.length > 0 ? segB.phraseBoundariesSec : segB.downbeatsSec)
-    .filter((b) => b >= Math.max(0, segB.firstAudibleSec - 0.15));
+    .filter((b) => b >= Math.max(0, segB.firstAudibleSec - 0.15) && b <= Math.min(segB.firstAudibleSec + 5.5, 7.0));
   if (candidateBoundariesB.length === 0) {
-    candidateBoundariesB.push(Math.max(0, segB.firstAudibleSec));
+    candidateBoundariesB.push(freqMatch.cueInBSec);
   }
 
   const candidateBoundariesA = segA.phraseBoundariesSec.length > 0 ? segA.phraseBoundariesSec : segA.downbeatsSec;
@@ -813,14 +1015,16 @@ export function solveAutoMixPlan(
     const mixDurationSec = mixBars * barSecA;
     if (mixDurationSec < 3.2 || mixDurationSec > 24.0) continue;
 
-    // Earliest boundary on Track B satisfying cueInB + mixDuration <= tVocalStartB
-    const cueInB = candidateBoundariesB.find((b) => b + mixDurationSec <= segB.tVocalStartSec + 0.08);
-    if (cueInB === undefined) {
+    // Pick opening boundary on Track B closest to freqMatch.cueInBSec while ensuring cueInB + mixDur <= tVocalStartB
+    const vocalSafeB = candidateBoundariesB.filter((b) => b + mixDurationSec <= segB.tVocalStartSec + 0.08);
+    if (vocalSafeB.length === 0) {
       continue;
     }
+    const cueInB = vocalSafeB.reduce((best, b) =>
+      Math.abs(b - freqMatch.cueInBSec) < Math.abs(best - freqMatch.cueInBSec) ? b : best,
+    );
 
-    // Latest phrase/downbeat boundary in Track A >= tVocalEndA that still fits before effectiveEndSec
-    const maxCueOutA = segA.effectiveEndSec - mixDurationSec;
+    const maxCueOutA = segA.effectiveEndSec - mixDurationSec - 0.15;
     if (maxCueOutA < segA.segmentStartSample / safeRate) {
       continue;
     }
@@ -828,23 +1032,16 @@ export function solveAutoMixPlan(
     const vocalSafeBoundariesA = candidateBoundariesA.filter(
       (b) => b >= segA.tVocalEndSec - 0.12 && b <= maxCueOutA + 0.12,
     );
-    let cueOutA: number | undefined =
-      vocalSafeBoundariesA.length > 0
-        ? vocalSafeBoundariesA[vocalSafeBoundariesA.length - 1]
-        : undefined;
+    const poolA = vocalSafeBoundariesA.length > 0
+      ? vocalSafeBoundariesA
+      : candidateBoundariesA.filter((b) => b <= maxCueOutA + 0.12);
 
-    if (cueOutA === undefined) {
-      const anyFitA = candidateBoundariesA.filter((b) => b <= maxCueOutA + 0.12);
-      if (anyFitA.length > 0) {
-        cueOutA = anyFitA[anyFitA.length - 1];
-      }
-    }
+    const cueOutA =
+      poolA.length > 0
+        ? poolA.reduce((best, b) => (Math.abs(b - freqMatch.cueOutASec) < Math.abs(best - freqMatch.cueOutASec) ? b : best))
+        : Math.max(segA.segmentStartSample / safeRate, Math.min(freqMatch.cueOutASec, maxCueOutA));
 
-    if (cueOutA === undefined) {
-      cueOutA = Math.max(segA.segmentStartSample / safeRate, maxCueOutA);
-    }
-
-    const tempoRatio = clamp(bpmB / bpmA, 0.9, 1.12);
+    const tempoRatio = bpmDiff <= 0.06 ? clamp(bpmB / bpmA, 0.94, 1.06) : 1.0;
     return {
       mode: "BEAT_SYNC_PHRASE",
       trackAId,

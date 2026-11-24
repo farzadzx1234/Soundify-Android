@@ -242,7 +242,7 @@ describe("Soundify v1.0.22 Upgrades & Regression Suite", () => {
         path.resolve(__dirname, "../app/settings/page.tsx"),
         "utf8",
       );
-      expect(settings).toContain("میکس خودکار پلی‌لیست");
+      expect(settings).toContain("ساندیفای میکس");
       expect(settings).toContain("useAutoMixEnabled");
 
       const service = fs.readFileSync(

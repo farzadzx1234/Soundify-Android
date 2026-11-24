@@ -639,17 +639,17 @@ export default function SettingsPage() {
               </span>
               <div className="min-w-0">
                 <span className="block font-semibold text-sm text-[var(--sf-text)]">
-                  {lang === "fa" ? "میکس خودکار پلی‌لیست" : "Playlist AutoMix"}
+                  {lang === "fa" ? "ساندیفای میکس" : "Soundify Mix"}
                 </span>
                 <span className="block text-xs text-[var(--sf-muted)]">
                   {lang === "fa"
-                    ? "پیدا کردن نقطه طلایی پایان و شروع آهنگ‌ها برای میکس روان و پیوسته مثل اپل موزیک"
-                    : "Finds natural outro & intro cue points for seamless DJ-style transitions"}
+                    ? "تطبیق هوشمند فرکانس و ریتم ثانیه‌های پایانی آهنگ با شروع آهنگ بعدی برای انتقال نامحسوس و یکپارچه"
+                    : "Matches ending and opening frequency profiles and rhythm for a seamless, imperceptible transition"}
                 </span>
               </div>
             </div>
             <Switch
-              aria-label={lang === "fa" ? "میکس خودکار پلی‌لیست" : "Playlist AutoMix"}
+              aria-label={lang === "fa" ? "ساندیفای میکس" : "Soundify Mix"}
               checked={autoMixEnabled}
               onCheckedChange={(checked) => {
                 void triggerHapticFeedback("selection");

@@ -107,6 +107,7 @@ const pendingDeferreds = new Map<string, DeferredDownload>();
 const listeners = new Set<() => void>();
 const storeChangeListeners = new Set<() => void>();
 const snapshotCache = new Map<string, TrackDownloadState>();
+const canonicalSnapshotCache = new Map<string, TrackDownloadState>();
 const EMPTY_SNAPSHOT: TrackDownloadState = Object.freeze({ trackId: "", status: "idle", progress: 0 });
 let initialized = false;
 let initPromise: Promise<void> | null = null;
@@ -451,6 +452,7 @@ export function resetDownloadManagerState(): void {
   } catch {}
   errorStates.clear();
   snapshotCache.clear();
+  canonicalSnapshotCache.clear();
   initialized = false;
   initPromise = null;
   notifyStoreChangeListeners();
@@ -616,7 +618,7 @@ export function getTrackDownloadSnapshotForTrack(
   }
   const canonicalId = resolveDownloadedTrackId(track);
   if (canonicalId && canonicalId !== track.id) {
-    const cached = snapshotCache.get(track.id);
+    const cached = canonicalSnapshotCache.get(track.id);
     if (cached && cached.status === "downloaded" && cached.progress === 100) {
       return cached;
     }
@@ -625,7 +627,7 @@ export function getTrackDownloadSnapshotForTrack(
       status: "downloaded",
       progress: 100,
     };
-    snapshotCache.set(track.id, nextSnapshot);
+    canonicalSnapshotCache.set(track.id, nextSnapshot);
     return nextSnapshot;
   }
   return direct;

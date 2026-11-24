@@ -84,13 +84,13 @@ export default function HomePage() {
   }, [user?.id]);
 
   const genres = useMemo(
-    () => ["all", ...Array.from(new Set(tracks.map((tr) => tr.genre)))],
+    () => ["all", ...Array.from(new Set(tracks.map((tr) => tr?.genre).filter((g): g is string => Boolean(g))))],
     [tracks],
   );
 
   const filteredTracks = useMemo(() => {
     if (genre === "all") return tracks;
-    return tracks.filter((tr) => tr.genre.toLowerCase() === genre.toLowerCase());
+    return tracks.filter((tr) => (tr?.genre || "").toLowerCase() === genre.toLowerCase());
   }, [genre, tracks]);
 
   const featured = useMemo(() => {
@@ -107,9 +107,15 @@ export default function HomePage() {
   const featuredDailyPlays = featured ? getExplicitDailyPlays(featured) : null;
 
   const personalizedMixes = useMemo(() => {
-    const dlTrackObjects = downloadedTracks.map((d) => d.track);
-    const likedOnly = tracks.filter((tr) => Boolean(tr.likedByMe));
-    return buildPersonalizedMixes(tracks, dlTrackObjects, likedOnly, lang);
+    try {
+      const dlTrackObjects = downloadedTracks
+        .map((d) => d?.track)
+        .filter((tr): tr is Track => Boolean(tr && tr.id));
+      const likedOnly = tracks.filter((tr) => Boolean(tr?.likedByMe));
+      return buildPersonalizedMixes(tracks, dlTrackObjects, likedOnly, lang);
+    } catch {
+      return [];
+    }
   }, [downloadedTracks, lang, tracks]);
 
   const handleRefresh = async () => {

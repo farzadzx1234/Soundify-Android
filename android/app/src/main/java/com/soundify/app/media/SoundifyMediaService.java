@@ -82,8 +82,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.34";
-    private static final String APP_VERSION_HEADER = "1.0.34";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.35";
+    private static final String APP_VERSION_HEADER = "1.0.35";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -164,6 +164,7 @@ public class SoundifyMediaService extends Service {
     private float crossfadeInitialTempoRatioB = 1.0f;
     private float crossfadeTargetTempoRatioA = 1.0f;
     private double crossfadeTempoLockCompleteProgress = 0.75;
+    private float crossfadeGainCompLinear = 1.0f;
     private volatile boolean pendingCrossfade = false;
     private long pendingCrossfadeMs = 7500L;
     private float pendingCrossfadeTargetVolume = 1.0f;
@@ -193,20 +194,16 @@ public class SoundifyMediaService extends Service {
     }
 
     private long computeSmartScannedCueMs() {
+        // Soundify Mix: only trim leading dead silence (<= 3.5s max) so Track B NEVER jumps randomly mid-song
         long cueMs = nextDeckStartMs;
-        if (nextDeckFirstMusicBodyMs > 1200L) {
-            long leadAnchor = nextDeckFirstAudibleMs >= 0L
-                ? Math.max(nextDeckFirstAudibleMs, nextDeckFirstMusicBodyMs - 2200L)
-                : Math.max(0L, nextDeckFirstMusicBodyMs - 900L);
-            cueMs = Math.max(0L, Math.min(nextDeckFirstMusicBodyMs - 550L, leadAnchor));
-        } else if (nextDeckFirstAudibleMs > 450L) {
-            cueMs = Math.max(0L, nextDeckFirstAudibleMs - 250L);
+        if (nextDeckFirstAudibleMs > 450L) {
+            cueMs = Math.max(0L, nextDeckFirstAudibleMs - 200L);
         }
         if (nextDeckDurationSec > 0.0) {
-            long maxSafeCueMs = Math.max(0L, (long) (nextDeckDurationSec * 400.0));
+            long maxSafeCueMs = Math.max(0L, (long) (nextDeckDurationSec * 250.0));
             cueMs = Math.min(cueMs, maxSafeCueMs);
         }
-        return Math.max(0L, Math.min(14000L, cueMs));
+        return Math.max(0L, Math.min(3500L, cueMs));
     }
 
     private void finishNextDeckIntroScanOnMainThread(long cueMs) {
@@ -697,19 +694,32 @@ public class SoundifyMediaService extends Service {
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(500L, crossfadeDurationMs)));
 
             if (sampleAccurateDspCrossfade && !crossfadeFadeInOnly) {
+                // Smooth hardware-synced equal-power S-curve right on ExoPlayer AudioTrack (0ms lag, zero abrupt cutoff)
+                double smoothP = p * p * (3.0 - 2.0 * p);
+                float outGain = outgoingEnded ? 0.0f : (float) (Math.cos(smoothP * Math.PI * 0.5) * crossfadeTargetVolume);
+                float inGain = (float) Math.min(1.0, Math.sin(smoothP * Math.PI * 0.5) * crossfadeTargetVolume * crossfadeGainCompLinear);
                 try {
                     if (nextDeckPlayer != null) {
-                        nextDeckPlayer.setVolume(outgoingEnded ? 0.0f : crossfadeTargetVolume);
+                        nextDeckPlayer.setVolume(Math.max(0.0f, outGain));
                     }
-                    nativePlayer.setVolume(crossfadeTargetVolume);
+                    nativePlayer.setVolume(Math.max(0.0f, inGain));
                 } catch (Exception ignored) {}
+
+                // Gentle, continuous sub-bass handoff without harsh 120ms bass chops
+                double outT = Math.max(0.0, Math.min(1.0, (p - 0.25) / 0.63));
+                double outSmooth = outT * outT * (3.0 - 2.0 * outT);
+                if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(outT <= 0.0 ? 0.0f : (float) (25.0 + outSmooth * 240.0));
+
+                double inT = Math.max(0.0, Math.min(1.0, (p - 0.10) / 0.45));
+                double inSmooth = inT * inT * (3.0 - 2.0 * inT);
+                if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(inT >= 1.0 ? 0.0f : (float) (220.0 * (1.0 - inSmooth)));
 
                 if (crossfadeTempoSync) {
                     double lockEnd = Math.max(0.25, Math.min(0.95, crossfadeTempoLockCompleteProgress));
                     double x = Math.max(0.0, Math.min(1.0, p / lockEnd));
-                    double s = x * x * (3.0 - 2.0 * x); // Cubic S-Curve: 3x^2 - 2x^3
-                    float speedA = (float) Math.max(0.85, Math.min(1.18, 1.0 + (crossfadeTargetTempoRatioA - 1.0) * s));
-                    float speedB = (float) Math.max(0.85, Math.min(1.18, crossfadeInitialTempoRatioB + (1.0 - crossfadeInitialTempoRatioB) * s));
+                    double s = x * x * (3.0 - 2.0 * x);
+                    float speedA = (float) Math.max(0.92, Math.min(1.08, 1.0 + (crossfadeTargetTempoRatioA - 1.0) * s));
+                    float speedB = (float) Math.max(0.92, Math.min(1.08, crossfadeInitialTempoRatioB + (1.0 - crossfadeInitialTempoRatioB) * s));
                     try {
                         nativePlayer.setPlaybackParameters(new PlaybackParameters(speedB, 1.0f));
                         if (!outgoingEnded && nextDeckPlayer != null) {
@@ -2168,22 +2178,23 @@ public class SoundifyMediaService extends Service {
         sampleAccurateDspCrossfade = matchedPlan != null && !fadeInOnly;
         crossfadeTempoSync = matchedPlan != null && "BEAT_SYNC_PHRASE".equals(matchedPlan.mode) && !fadeInOnly;
         if (matchedPlan != null && !fadeInOnly) {
-            int planSr = Math.max(8000, matchedPlan.sampleRate);
-            long durSamples = Math.max(4096L, Math.round((clampedFadeMs / 1000.0) * planSr));
             crossfadeInitialTempoRatioB = matchedPlan.initialTempoRatioB;
             crossfadeTargetTempoRatioA = matchedPlan.targetTempoRatioA;
             crossfadeTempoLockCompleteProgress = matchedPlan.tempoLockCompleteProgress;
+            crossfadeGainCompLinear = (float) Math.pow(10.0, Math.max(-4.0, Math.min(4.0, matchedPlan.gainCompensationDbB)) / 20.0);
             if (nativeDeckDsp != null) {
                 nativeDeckDsp.resetTrackStats();
-                nativeDeckDsp.startSampleAccurateAutoMix(false, durSamples, matchedPlan.bassSwapProgress, matchedPlan.gainCompensationDbB, crossfadeTempoSync);
+                nativeDeckDsp.setHighPassHz(220.0f);
             }
             if (nextDeckDsp != null) {
-                nextDeckDsp.startSampleAccurateAutoMix(true, durSamples, matchedPlan.bassSwapProgress, 0.0, crossfadeTempoSync);
+                nextDeckDsp.stopSampleAccurateAutoMix();
+                nextDeckDsp.setHighPassHz(0.0f);
             }
         } else {
+            crossfadeGainCompLinear = 1.0f;
             if (nativeDeckDsp != null) {
                 nativeDeckDsp.resetTrackStats();
-                nativeDeckDsp.setHighPassHz(fadeInOnly ? 0.0f : 360.0f);
+                nativeDeckDsp.setHighPassHz(fadeInOnly ? 0.0f : 260.0f);
             }
             if (nextDeckDsp != null) {
                 nextDeckDsp.stopSampleAccurateAutoMix();
@@ -2194,7 +2205,7 @@ public class SoundifyMediaService extends Service {
         crossfadeIncomingReady = (nativePlayer.getPlaybackState() == Player.STATE_READY);
 
         try {
-            nativePlayer.setVolume(sampleAccurateDspCrossfade ? crossfadeTargetVolume : 0.0f);
+            nativePlayer.setVolume(0.0f);
             if (crossfadeTempoSync) {
                 nativePlayer.setPlaybackParameters(new PlaybackParameters(crossfadeInitialTempoRatioB, 1.0f));
                 if (nextDeckPlayer != null) {

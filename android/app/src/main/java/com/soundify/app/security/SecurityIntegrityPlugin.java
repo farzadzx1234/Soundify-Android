@@ -46,8 +46,6 @@ public class SecurityIntegrityPlugin extends Plugin {
         "/data/adb/magisk",
         "/data/adb/ksu",
         "/data/adb/ap",
-        "/system/xbin/busybox",
-        "/system/bin/busybox",
         "/system/app/Superuser.apk"
     };
 

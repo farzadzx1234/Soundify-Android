@@ -8,6 +8,7 @@
  */
 
 import { isAndroidNative } from "./androidBridge";
+import type { AutoMixPlan as Stage5AutoMixPlan } from "./autoMixEngine";
 
 export interface NativePlayStreamOptions {
   url: string;
@@ -60,10 +61,21 @@ export interface NativeStartCrossfadeOptions {
   trackId?: string;
 }
 
+export interface NativeScheduleAutoMixPlanOptions extends Stage5AutoMixPlan {
+  sampleRate?: number;
+  volume?: number;
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverUrl?: string;
+  duration?: number;
+}
+
 interface NativeAudioPluginInterface {
   playStream?: (opts: NativePlayStreamOptions) => Promise<void>;
   prepareNextStream?: (opts: NativePrepareNextOptions) => Promise<void>;
   startCrossfade?: (opts: NativeStartCrossfadeOptions) => Promise<void>;
+  scheduleAutoMixPlan?: (opts: NativeScheduleAutoMixPlanOptions) => Promise<void>;
   cancelCrossfade?: () => Promise<void>;
   fadeOutAndStop?: (opts: { fadeMs: number }) => Promise<void>;
   play?: () => Promise<void>;
@@ -112,6 +124,13 @@ export async function nativeAudioStartCrossfade(opts: NativeStartCrossfadeOption
   const plugin = getNativeAudioPlugin();
   if (plugin?.startCrossfade) {
     await plugin.startCrossfade(opts).catch(() => {});
+  }
+}
+
+export async function nativeAudioScheduleAutoMixPlan(opts: NativeScheduleAutoMixPlanOptions): Promise<void> {
+  const plugin = getNativeAudioPlugin();
+  if (plugin?.scheduleAutoMixPlan) {
+    await plugin.scheduleAutoMixPlan(opts).catch(() => {});
   }
 }
 

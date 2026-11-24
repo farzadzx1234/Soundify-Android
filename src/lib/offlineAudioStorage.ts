@@ -392,7 +392,7 @@ export async function saveDownloadedTrack(
   }
   let cleanCoverUrl = track.coverUrl || "";
   if (cleanCoverUrl.startsWith("blob:")) {
-    cleanCoverUrl = `/api/tracks/${track.id}/cover`;
+    cleanCoverUrl = track.id.startsWith("ext-") ? "" : `/api/tracks/${track.id}/cover`;
   }
 
   let formattedLyrics: DownloadedLyrics | undefined;
@@ -659,7 +659,10 @@ export async function getAllDownloadedTrackMeta(): Promise<DownloadedTrackMeta[]
       };
       req.onerror = () => reject(req.error || new Error("Error scanning downloaded metadata"));
     });
-  } catch {
+  } catch (err) {
+    if (memoryFallbackStore.size === 0 && typeof window !== "undefined" && Boolean(getIndexedDB())) {
+      throw err instanceof Error ? err : new Error("Error reading downloaded metadata from IndexedDB");
+    }
     return Array.from(memoryFallbackStore.values()).map((rec) => ({
       trackId: rec.trackId,
       title: rec.track?.title || "",
@@ -837,8 +840,20 @@ export async function getDownloadedCoverBlobUrl(trackId: string): Promise<string
     return activeCoverBlobUrls.get(trackId)!;
   }
 
-  const record = await getDownloadedTrack(trackId);
-  if (!record || !record.coverBlob) return null;
+  let record: DownloadedTrackRecord | null = null;
+  try {
+    const db = await openOfflineDatabase();
+    record = await new Promise<DownloadedTrackRecord | null>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(trackId);
+      req.onsuccess = () => resolve((req.result as DownloadedTrackRecord | undefined) || null);
+      req.onerror = () => reject(req.error || new Error("Error reading cover from IndexedDB"));
+    });
+  } catch {
+    record = memoryFallbackStore.get(trackId) || null;
+  }
+  if (!record || !(record.coverBlob instanceof Blob) || record.coverBlob.size <= 0) return null;
 
   if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
     try {

@@ -46,6 +46,7 @@ import { formatDuration } from "@/lib/lrc";
 import { Button, Glass, Input } from "@/components/GlassControls";
 import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
+import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
 import type { Playlist, Track } from "@/lib/types";
 
@@ -791,17 +792,14 @@ export default function LibraryPage() {
                         </button>
 
                         <div className="h-11 w-11 rounded-xl overflow-hidden bg-slate-800 shrink-0 shadow-sm">
-                          {record.track.coverUrl ? (
-                            <img
-                              src={record.track.coverUrl}
-                              alt={trackTitle}
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="h-full w-full flex items-center justify-center bg-indigo-500 text-white font-bold text-xs">
-                              {trackTitle.slice(0, 1)}
-                            </div>
-                          )}
+                          <OptimizedTrackImage
+                            src={record.track.coverUrl}
+                            trackId={record.trackId}
+                            pageUrl={record.track.pageUrl}
+                            accentColor={record.track.accentColor}
+                            alt={trackTitle}
+                            className="h-full w-full object-cover"
+                          />
                         </div>
 
                         <div className="min-w-0 flex-1">
@@ -859,17 +857,14 @@ export default function LibraryPage() {
                     >
                       {/* Leading: Apple Music 44x44 Album Art with Playing Indicator */}
                       <div className="relative h-11 w-11 sm:h-12 sm:w-12 rounded-[10px] overflow-hidden bg-slate-800 shrink-0 shadow-sm ring-1 ring-black/5 dark:ring-white/10 pointer-events-none">
-                        {record.track.coverUrl ? (
-                          <img
-                            src={record.track.coverUrl}
-                            alt={trackTitle}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-pink-500 text-white font-black text-xs">
-                            {trackTitle.slice(0, 1)}
-                          </div>
-                        )}
+                        <OptimizedTrackImage
+                          src={record.track.coverUrl}
+                          trackId={record.trackId}
+                          pageUrl={record.track.pageUrl}
+                          accentColor={record.track.accentColor}
+                          alt={trackTitle}
+                          className="h-full w-full object-cover"
+                        />
                         {isCurrent && (
                           <div className="absolute inset-0 bg-black/45 flex items-center justify-center">
                             {isBuffering ? (

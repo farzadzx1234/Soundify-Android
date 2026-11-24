@@ -357,6 +357,15 @@ export async function initializeDownloadManager(force = false): Promise<void> {
   initPromise = (async () => {
     try {
       const metas = await getAllDownloadedTrackMeta();
+      if (metas.length === 0 && downloadedTrackIds.size > 0) {
+        const sampleId = downloadedTrackIds.values().next().value;
+        const confirmedPresent = sampleId ? await isTrackDownloaded(sampleId).catch(() => true) : false;
+        if (confirmedPresent) {
+          initialized = true;
+          notifyListeners();
+          return;
+        }
+      }
       downloadedTrackIds.clear();
       downloadedByPageUrl.clear();
       downloadedByFingerprint.clear();
@@ -743,26 +752,59 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
     let license: OfflineLicense | undefined;
 
     const auxController = new AbortController();
-    const auxTimer = setTimeout(() => auxController.abort(), 3500);
+    const auxTimer = setTimeout(() => auxController.abort(), 5500);
 
     const coverFetchPromise = (async () => {
-      if (!track.coverUrl) return;
+      if (!track.coverUrl || track.coverUrl.startsWith("blob:")) return;
       try {
-        let coverUrlToFetch = resolveMediaUrl(track.coverUrl);
+        const auxHeaders: Record<string, string> = {
+          Accept: "image/*, */*",
+          "X-App-Version": APP_VERSION,
+        };
+        if (token) {
+          auxHeaders["Authorization"] = `Bearer ${token}`;
+        }
+
+        const candidateUrls: string[] = [];
         if (track.coverUrl.startsWith("http://") || track.coverUrl.startsWith("https://")) {
           const ytId =
             extractYouTubeIdClient(track.coverUrl) ||
             extractYouTubeIdClient(track.pageUrl || "") ||
             extractYouTubeIdClient(track.id);
-          if (ytId) {
-            coverUrlToFetch = resolveMediaUrl(
-              `/api/stream/external-cover?url=${encodeURIComponent(`https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`)}&id=${encodeURIComponent(track.id)}`,
-            );
+          const externalSourceUrl = ytId
+            ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
+            : track.coverUrl;
+          candidateUrls.push(
+            resolveMediaUrl(
+              `/api/stream/external-cover?url=${encodeURIComponent(externalSourceUrl)}&id=${encodeURIComponent(track.id)}`,
+            ),
+          );
+          if (track.coverUrl !== candidateUrls[0]) {
+            candidateUrls.push(resolveMediaUrl(track.coverUrl));
           }
+        } else {
+          candidateUrls.push(resolveMediaUrl(track.coverUrl));
         }
-        const coverRes = await fetch(coverUrlToFetch, { signal: auxController.signal });
-        if (coverRes.ok) {
-          coverBlob = await coverRes.blob();
+
+        for (const candidateUrl of candidateUrls) {
+          try {
+            const isSameApi = !candidateUrl.startsWith("http") || candidateUrl.includes("/api/");
+            const coverRes = await fetch(candidateUrl, {
+              signal: auxController.signal,
+              ...(isSameApi ? { headers: auxHeaders, credentials: "same-origin" as RequestCredentials } : {}),
+            });
+            if (coverRes.ok) {
+              const candidateBlob = await coverRes.blob();
+              if (
+                candidateBlob instanceof Blob &&
+                candidateBlob.size > 0 &&
+                (!candidateBlob.type || candidateBlob.type.startsWith("image/") || candidateBlob.type === "application/octet-stream")
+              ) {
+                coverBlob = candidateBlob;
+                return;
+              }
+            }
+          } catch {}
         }
       } catch {}
     })();
@@ -829,7 +871,7 @@ async function runDownloadPipeline(track: Track, abortController: AbortControlle
       } catch {}
     })();
 
-    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2500));
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 5000));
     await Promise.race([
       Promise.allSettled([coverFetchPromise, lyricsFetchPromise, licenseFetchPromise]),
       timeoutPromise,
@@ -1229,16 +1271,31 @@ export function useDownloadedTracks() {
               };
             }
           }
+          if (rec.track.coverUrl && !rec.track.coverUrl.startsWith("blob:")) {
+            return {
+              ...rec,
+              track: {
+                ...rec.track,
+                coverUrl: resolveMediaUrl(rec.track.coverUrl),
+              },
+            };
+          }
           return rec;
         }),
       );
       setTracks(enriched);
 
-      // Keep cache in sync
+      // Keep canonical download index in sync (ID, pageUrl, and artist+title fingerprints)
       downloadedTrackIds.clear();
+      downloadedByPageUrl.clear();
+      downloadedByFingerprint.clear();
+      downloadedMetaById.clear();
       for (const rec of all) {
-        if (rec.trackId) downloadedTrackIds.add(rec.trackId);
+        if (rec.trackId) {
+          registerDownloadedTrackIndex(rec.track);
+        }
       }
+      persistDownloadedIndexToLocalStorage();
 
       const [estimate, budget] = await Promise.all([
         estimateStorageUsage(),

@@ -1,24 +1,52 @@
 package com.soundify.app.media;
 
 import androidx.media3.common.C;
-import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.common.audio.BaseAudioProcessor;
 
 import java.nio.ByteBuffer;
 
 /**
- * Zero-allocation real-time Media3 PCM AudioProcessor providing:
- * 1) 2-pole Butterworth High-Pass Biquad DSP for Apple Music / Club-DJ Bass-Swap crossfades.
- * 2) Lightweight sampled RMS loudness tracking (liveRms / bodyRms) for acoustic outro detection.
- * 3) Bit-exact audiophile pass-through when bypassed (targetHighPassHz <= 25 Hz and hpWet ~ 0).
+ * Sample-accurate real-time Media3 PCM AudioProcessor providing:
+ * 1) 4th-order Linkwitz-Riley (LR4) 3-Band Crossover (Low < 140 Hz, Mid 140 Hz - 2.8 kHz, High > 2.8 kHz).
+ * 2) Sample-counter-driven Equal-Power gain automation, Downbeat Sub-Bass Swap (-24 dB <-> 0 dB in 120 ms),
+ *    Outgoing Mid-Range Vocal Dip (-3 dB over 0.50 -> 1.0), and Master Soft Limiter (-0.5 dBFS ceiling).
+ * 3) Legacy 2-pole Butterworth High-Pass Biquad fallback for ad-hoc transitions.
+ * 4) Lightweight sampled multi-band RMS telemetry + bit-exact pass-through when bypassed.
  */
 public final class AutoMixDspProcessor extends BaseAudioProcessor {
 
     private static final int MAX_CHANNELS = 8;
     private static final float BUTTERWORTH_Q = 0.70710678f;
+    private static final double LOW_CROSSOVER_HZ = 140.0;
+    private static final double HIGH_CROSSOVER_HZ = 2800.0;
+    private static final double MINUS_24_DB_GAIN = 0.06309573445; // 10^(-24/20)
+    private static final double MINUS_3_DB_GAIN = 0.70794578438;  // 10^(-3/20)
+    private static final double LIMITER_CEILING = 0.94406087629;  // -0.5 dBFS
+    private static final double LIMITER_KNEE_START = 0.86;
 
+    // Legacy HPF biquad state
     private final double[] z1 = new double[MAX_CHANNELS];
     private final double[] z2 = new double[MAX_CHANNELS];
+
+    // LR4 3-band crossover biquad states per channel (cascaded 2-pole Butterworth LP/HP stages)
+    private final double[] lp140A_z1 = new double[MAX_CHANNELS];
+    private final double[] lp140A_z2 = new double[MAX_CHANNELS];
+    private final double[] lp140B_z1 = new double[MAX_CHANNELS];
+    private final double[] lp140B_z2 = new double[MAX_CHANNELS];
+    private final double[] hp140A_z1 = new double[MAX_CHANNELS];
+    private final double[] hp140A_z2 = new double[MAX_CHANNELS];
+    private final double[] hp140B_z1 = new double[MAX_CHANNELS];
+    private final double[] hp140B_z2 = new double[MAX_CHANNELS];
+
+    private final double[] lp2800A_z1 = new double[MAX_CHANNELS];
+    private final double[] lp2800A_z2 = new double[MAX_CHANNELS];
+    private final double[] lp2800B_z1 = new double[MAX_CHANNELS];
+    private final double[] lp2800B_z2 = new double[MAX_CHANNELS];
+    private final double[] hp2800A_z1 = new double[MAX_CHANNELS];
+    private final double[] hp2800A_z2 = new double[MAX_CHANNELS];
+    private final double[] hp2800B_z1 = new double[MAX_CHANNELS];
+    private final double[] hp2800B_z2 = new double[MAX_CHANNELS];
+
     private double bassLp = 0.0;
     private double midLowLp = 0.0;
     private double midHighLp = 0.0;
@@ -32,10 +60,26 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
     private volatile float bodyVocalRms = 0.0f;
     private volatile int processedBlocks = 0;
 
+    // Sample-accurate AutoMix automation parameters
+    private volatile boolean autoMixActive = false;
+    private volatile boolean autoMixOutgoing = false;
+    private volatile boolean autoMix3BandEq = true;
+    private volatile long autoMixDurationSamples = 0L;
+    private volatile long autoMixFrameIndex = 0L;
+    private volatile double autoMixBassSwapProgress = 0.50;
+    private volatile double autoMixGainCompLinear = 1.0;
+
     private float smoothedHighPassHz = 0.0f;
     private float hpWet = 0.0f;
     private double lastCoeffHz = -1.0;
     private double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+
+    // Cached LR4 biquad coefficients for current sampleRate
+    private double lrSampleRate = -1.0;
+    private double lp140_b0, lp140_b1, lp140_b2, lp140_a1, lp140_a2;
+    private double hp140_b0, hp140_b1, hp140_b2, hp140_a1, hp140_a2;
+    private double lp2800_b0, lp2800_b1, lp2800_b2, lp2800_a1, lp2800_a2;
+    private double hp2800_b0, hp2800_b1, hp2800_b2, hp2800_a1, hp2800_a2;
 
     public void setHighPassHz(float hz) {
         if (!Float.isFinite(hz) || hz <= 25.0f) {
@@ -45,10 +89,42 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         }
     }
 
+    public void startSampleAccurateAutoMix(
+        boolean isOutgoing,
+        long durationSamples,
+        double bassSwapProgress,
+        double gainCompensationDb,
+        boolean enable3BandEq
+    ) {
+        clearLr4State();
+        this.autoMixOutgoing = isOutgoing;
+        this.autoMixDurationSamples = Math.max(4096L, durationSamples);
+        this.autoMixBassSwapProgress = Math.max(0.25, Math.min(0.75, bassSwapProgress));
+        double clampedDb = Math.max(-6.0, Math.min(6.0, gainCompensationDb));
+        this.autoMixGainCompLinear = isOutgoing ? 1.0 : Math.pow(10.0, clampedDb / 20.0);
+        this.autoMix3BandEq = enable3BandEq;
+        this.autoMixFrameIndex = 0L;
+        this.targetHighPassHz = 0.0f;
+        this.hpWet = 0.0f;
+        this.autoMixActive = true;
+    }
+
+    public void stopSampleAccurateAutoMix() {
+        this.autoMixActive = false;
+        this.autoMixFrameIndex = 0L;
+        clearLr4State();
+    }
+
+    public boolean isSampleAccurateAutoMixActive() {
+        return autoMixActive;
+    }
+
     public void resetTrackStats() {
         this.targetHighPassHz = 0.0f;
         this.smoothedHighPassHz = 0.0f;
         this.hpWet = 0.0f;
+        this.autoMixActive = false;
+        this.autoMixFrameIndex = 0L;
         this.liveRms = 0.0f;
         this.bodyRms = 0.0f;
         this.bassRms = 0.0f;
@@ -58,6 +134,7 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         this.processedBlocks = 0;
         this.lastCoeffHz = -1.0;
         clearBiquadState();
+        clearLr4State();
     }
 
     public int getProcessedBlocks() {
@@ -98,6 +175,71 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         midHighLp = 0.0;
     }
 
+    private void clearLr4State() {
+        for (int i = 0; i < MAX_CHANNELS; i++) {
+            lp140A_z1[i] = 0.0;
+            lp140A_z2[i] = 0.0;
+            lp140B_z1[i] = 0.0;
+            lp140B_z2[i] = 0.0;
+            hp140A_z1[i] = 0.0;
+            hp140A_z2[i] = 0.0;
+            hp140B_z1[i] = 0.0;
+            hp140B_z2[i] = 0.0;
+            lp2800A_z1[i] = 0.0;
+            lp2800A_z2[i] = 0.0;
+            lp2800B_z1[i] = 0.0;
+            lp2800B_z2[i] = 0.0;
+            hp2800A_z1[i] = 0.0;
+            hp2800A_z2[i] = 0.0;
+            hp2800B_z1[i] = 0.0;
+            hp2800B_z2[i] = 0.0;
+        }
+    }
+
+    private void updateLr4Coefficients(double sampleRate) {
+        double safeRate = Math.max(8000.0, sampleRate);
+        if (Math.abs(safeRate - lrSampleRate) < 1.0) {
+            return;
+        }
+        lrSampleRate = safeRate;
+
+        // 140 Hz Butterworth Low-Pass & High-Pass
+        double wLow = 2.0 * Math.PI * Math.min(safeRate * 0.42, LOW_CROSSOVER_HZ) / safeRate;
+        double cosLow = Math.cos(wLow);
+        double sinLow = Math.sin(wLow);
+        double alphaLow = sinLow / (2.0 * BUTTERWORTH_Q);
+        double a0Low = 1.0 + alphaLow;
+        lp140_b0 = ((1.0 - cosLow) * 0.5) / a0Low;
+        lp140_b1 = (1.0 - cosLow) / a0Low;
+        lp140_b2 = lp140_b0;
+        lp140_a1 = (-2.0 * cosLow) / a0Low;
+        lp140_a2 = (1.0 - alphaLow) / a0Low;
+
+        hp140_b0 = ((1.0 + cosLow) * 0.5) / a0Low;
+        hp140_b1 = -(1.0 + cosLow) / a0Low;
+        hp140_b2 = hp140_b0;
+        hp140_a1 = lp140_a1;
+        hp140_a2 = lp140_a2;
+
+        // 2800 Hz Butterworth Low-Pass & High-Pass
+        double wHigh = 2.0 * Math.PI * Math.min(safeRate * 0.42, HIGH_CROSSOVER_HZ) / safeRate;
+        double cosHigh = Math.cos(wHigh);
+        double sinHigh = Math.sin(wHigh);
+        double alphaHigh = sinHigh / (2.0 * BUTTERWORTH_Q);
+        double a0High = 1.0 + alphaHigh;
+        lp2800_b0 = ((1.0 - cosHigh) * 0.5) / a0High;
+        lp2800_b1 = (1.0 - cosHigh) / a0High;
+        lp2800_b2 = lp2800_b0;
+        lp2800_a1 = (-2.0 * cosHigh) / a0High;
+        lp2800_a2 = (1.0 - alphaHigh) / a0High;
+
+        hp2800_b0 = ((1.0 + cosHigh) * 0.5) / a0High;
+        hp2800_b1 = -(1.0 + cosHigh) / a0High;
+        hp2800_b2 = hp2800_b0;
+        hp2800_a1 = lp2800_a1;
+        hp2800_a2 = lp2800_a2;
+    }
+
     private void updateCoefficients(double cutoffHz, double sampleRate) {
         double safeRate = Math.max(8000.0, sampleRate);
         double clampedHz = Math.max(20.0, Math.min(safeRate * 0.42, cutoffHz));
@@ -116,6 +258,22 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         a1 = (-2.0 * cosW) / a0;
         a2 = (1.0 - alpha) / a0;
         lastCoeffHz = clampedHz;
+    }
+
+    private static double smoothstep(double x) {
+        double t = Math.max(0.0, Math.min(1.0, x));
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    private static double softLimit(double x) {
+        double absX = Math.abs(x);
+        if (absX <= LIMITER_KNEE_START) {
+            return x;
+        }
+        double excess = absX - LIMITER_KNEE_START;
+        double headroom = LIMITER_CEILING - LIMITER_KNEE_START;
+        double compressed = LIMITER_KNEE_START + headroom * Math.tanh(excess / headroom);
+        return x >= 0.0 ? compressed : -compressed;
     }
 
     @Override
@@ -221,6 +379,107 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
             }
         }
 
+        // Stage 4: Sample-Accurate LR4 3-Band Crossover + Equal-Power + Sub-Bass Swap + Mid Vocal Dip + Limiter
+        if (autoMixActive && autoMixDurationSamples > 0L) {
+            updateLr4Coefficients(sampleRate);
+            ByteBuffer out = replaceOutputBuffer(remaining);
+            int limit = startPos + remaining;
+            long durSamples = autoMixDurationSamples;
+            double swapCenter = autoMixBassSwapProgress;
+            double swapHalfSpan = Math.max(0.006, (0.060 * sampleRate) / durSamples); // 120ms S-curve swap
+            double swapStart = Math.max(0.0, swapCenter - swapHalfSpan);
+            double swapLen = Math.max(1e-5, swapHalfSpan * 2.0);
+            boolean eqEnabled = autoMix3BandEq;
+            boolean outgoing = autoMixOutgoing;
+            double gainComp = autoMixGainCompLinear;
+
+            for (int f = 0; f < frameCount; f++) {
+                double p = Math.max(0.0, Math.min(1.0, (double) autoMixFrameIndex / durSamples));
+                autoMixFrameIndex++;
+
+                double envGain = outgoing
+                    ? Math.cos(Math.PI * 0.5 * p)
+                    : Math.sin(Math.PI * 0.5 * p) * gainComp;
+
+                double gLow = 1.0;
+                double gMid = 1.0;
+                double gHigh = 1.0;
+
+                if (eqEnabled) {
+                    double swapT = smoothstep((p - swapStart) / swapLen);
+                    if (outgoing) {
+                        // Cut Deck A Low from 0 dB to -24 dB cleanly on the midpoint downbeat swap
+                        gLow = 1.0 - (1.0 - MINUS_24_DB_GAIN) * swapT;
+                        // Carve -3 dB mid vocal pocket for emerging Track B across p = 0.50 -> 1.0
+                        double midDipT = Math.max(0.0, Math.min(1.0, (p - 0.50) / 0.50));
+                        gMid = 1.0 - (1.0 - MINUS_3_DB_GAIN) * midDipT;
+                    } else {
+                        // Keep Track B Low attenuated (-24 dB) until swap window, then open smoothly to 0 dB
+                        gLow = MINUS_24_DB_GAIN + (1.0 - MINUS_24_DB_GAIN) * swapT;
+                    }
+                }
+
+                for (int c = 0; c < channels; c++) {
+                    double x = isFloat
+                        ? inputBuffer.getFloat()
+                        : (inputBuffer.getShort() / 32768.0);
+                    if (!Double.isFinite(x)) x = 0.0;
+
+                    // 140 Hz LR4 Low-Pass (Stage A -> Stage B)
+                    double l1 = lp140_b0 * x + lp140A_z1[c];
+                    lp140A_z1[c] = lp140_b1 * x - lp140_a1 * l1 + lp140A_z2[c];
+                    lp140A_z2[c] = lp140_b2 * x - lp140_a2 * l1;
+
+                    double low = lp140_b0 * l1 + lp140B_z1[c];
+                    lp140B_z1[c] = lp140_b1 * l1 - lp140_a1 * low + lp140B_z2[c];
+                    lp140B_z2[c] = lp140_b2 * l1 - lp140_a2 * low;
+
+                    // 140 Hz LR4 High-Pass (Stage A -> Stage B)
+                    double h1 = hp140_b0 * x + hp140A_z1[c];
+                    hp140A_z1[c] = hp140_b1 * x - hp140_a1 * h1 + hp140A_z2[c];
+                    hp140A_z2[c] = hp140_b2 * x - hp140_a2 * h1;
+
+                    double midHigh = hp140_b0 * h1 + hp140B_z1[c];
+                    hp140B_z1[c] = hp140_b1 * h1 - hp140_a1 * midHigh + hp140B_z2[c];
+                    hp140B_z2[c] = hp140_b2 * h1 - hp140_a2 * midHigh;
+
+                    // 2800 Hz LR4 Low-Pass & High-Pass splitting Mid and High
+                    double m1 = lp2800_b0 * midHigh + lp2800A_z1[c];
+                    lp2800A_z1[c] = lp2800_b1 * midHigh - lp2800_a1 * m1 + lp2800A_z2[c];
+                    lp2800A_z2[c] = lp2800_b2 * midHigh - lp2800_a2 * m1;
+
+                    double mid = lp2800_b0 * m1 + lp2800B_z1[c];
+                    lp2800B_z1[c] = lp2800_b1 * m1 - lp2800_a1 * mid + lp2800B_z2[c];
+                    lp2800B_z2[c] = lp2800_b2 * m1 - lp2800_a2 * mid;
+
+                    double hi1 = hp2800_b0 * midHigh + hp2800A_z1[c];
+                    hp2800A_z1[c] = hp2800_b1 * midHigh - hp2800_a1 * hi1 + hp2800A_z2[c];
+                    hp2800A_z2[c] = hp2800_b2 * midHigh - hp2800_a2 * hi1;
+
+                    double high = hp2800_b0 * hi1 + hp2800B_z1[c];
+                    hp2800B_z1[c] = hp2800_b1 * hi1 - hp2800_a1 * high + hp2800B_z2[c];
+                    hp2800B_z2[c] = hp2800_b2 * hi1 - hp2800_a2 * high;
+
+                    double combined = (low * gLow + mid * gMid + high * gHigh) * envGain;
+                    double limited = softLimit(combined);
+
+                    if (isFloat) {
+                        out.putFloat((float) Math.max(-1.0, Math.min(1.0, limited)));
+                    } else {
+                        long sOut = Math.round(limited * 32767.0);
+                        if (sOut > 32767L) sOut = 32767L;
+                        else if (sOut < -32768L) sOut = -32768L;
+                        out.putShort((short) sOut);
+                    }
+                }
+            }
+            while (inputBuffer.position() < limit && out.hasRemaining()) {
+                out.put(inputBuffer.get());
+            }
+            out.flip();
+            return;
+        }
+
         float targetHz = this.targetHighPassHz;
         float wetStep = Math.max(0.05f, Math.min(1.0f, (frameCount / (float) sampleRate) / 0.025f));
         if (targetHz > 25.0f) {
@@ -251,9 +510,8 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
         ByteBuffer out = replaceOutputBuffer(remaining);
         float wet = hpWet;
         int limit = startPos + remaining;
-        int strideFrames = frameCount;
         if (isFloat) {
-            for (int f = 0; f < strideFrames; f++) {
+            for (int f = 0; f < frameCount; f++) {
                 for (int c = 0; c < channels; c++) {
                     double x = inputBuffer.getFloat();
                     if (!Double.isFinite(x)) x = 0.0;
@@ -267,7 +525,7 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
                 }
             }
         } else {
-            for (int f = 0; f < strideFrames; f++) {
+            for (int f = 0; f < frameCount; f++) {
                 for (int c = 0; c < channels; c++) {
                     double x = inputBuffer.getShort();
                     double y = b0 * x + z1[c];
@@ -289,11 +547,15 @@ public final class AutoMixDspProcessor extends BaseAudioProcessor {
     @Override
     protected void onFlush() {
         clearBiquadState();
+        clearLr4State();
     }
 
     @Override
     protected void onReset() {
         clearBiquadState();
+        clearLr4State();
+        autoMixActive = false;
+        autoMixFrameIndex = 0L;
         targetHighPassHz = 0.0f;
         smoothedHighPassHz = 0.0f;
         hpWet = 0.0f;

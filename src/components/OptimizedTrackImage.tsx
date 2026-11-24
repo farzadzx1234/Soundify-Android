@@ -2,7 +2,7 @@
 
 import React, { memo, useEffect, useRef, useState } from "react";
 import { extractYouTubeIdClient, resolveMediaUrl } from "@/lib/api";
-import { getTrackDownloadSnapshot } from "@/lib/downloadManager";
+import { getTrackDownloadSnapshot, resolveDownloadedTrackId } from "@/lib/downloadManager";
 import { getCachedCoverUrl } from "@/lib/coverCacheManager";
 import { getCachedCoverBlobUrl, getDownloadedCoverBlobUrl } from "@/lib/offlineAudioStorage";
 
@@ -45,18 +45,28 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
   trackId = "",
   onError,
 }: OptimizedTrackImageProps) {
+  const resolvedOfflineTrackId = trackId
+    ? resolveDownloadedTrackId({ id: trackId, title: alt, artistName: "", pageUrl }) ||
+      (getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
+    : "";
   const resolvedTarget = resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
-  const cachedOfflineSync = trackId ? getCachedCoverBlobUrl(trackId) : null;
+  const cachedOfflineSync = resolvedOfflineTrackId ? getCachedCoverBlobUrl(resolvedOfflineTrackId) : null;
   const initialSrc = cachedOfflineSync || resolvedTarget;
   const [currentSrc, setCurrentSrc] = useState<string>(initialSrc);
   const [isLoaded, setIsLoaded] = useState<boolean>(() => Boolean(cachedOfflineSync || decodedCoverUrls.has(initialSrc)));
   const [hasError, setHasError] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
+  const coverBlobRecoveryAttemptedRef = useRef<string>("");
 
   // Sync immediate decoded state or downloaded cover without querying IDB/CacheStorage unnecessarily
   useEffect(() => {
     let active = true;
-    const offlineSync = trackId ? getCachedCoverBlobUrl(trackId) : null;
+    coverBlobRecoveryAttemptedRef.current = "";
+    const offlineId = trackId
+      ? resolveDownloadedTrackId({ id: trackId, title: alt, artistName: "", pageUrl }) ||
+        (getTrackDownloadSnapshot(trackId).status === "downloaded" ? trackId : "")
+      : "";
+    const offlineSync = offlineId ? getCachedCoverBlobUrl(offlineId) : null;
     const target = offlineSync || resolveMediaUrl(src) || FALLBACK_PLACEHOLDER;
     setCurrentSrc(target);
     setHasError(false);
@@ -71,8 +81,8 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
     }
 
     // Only open IndexedDB cover store if track is actually marked downloaded locally
-    if (trackId && !offlineSync && getTrackDownloadSnapshot(trackId).status === "downloaded") {
-      void getDownloadedCoverBlobUrl(trackId).then((blobUrl) => {
+    if (offlineId && !offlineSync) {
+      void getDownloadedCoverBlobUrl(offlineId).then((blobUrl) => {
         if (active && blobUrl) {
           setCurrentSrc(blobUrl);
           setIsLoaded(true);
@@ -97,7 +107,7 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
     return () => {
       active = false;
     };
-  }, [src, trackId]);
+  }, [src, trackId, pageUrl, alt]);
 
   const handleLoad = () => {
     rememberDecodedCover(currentSrc);
@@ -106,6 +116,26 @@ export const OptimizedTrackImage = memo(function OptimizedTrackImage({
   };
 
   const handleError = () => {
+    if (currentSrc.startsWith("blob:") && trackId) {
+      const recoveryId = resolveDownloadedTrackId({ id: trackId, title: alt, artistName: "", pageUrl }) || trackId;
+      if (coverBlobRecoveryAttemptedRef.current !== recoveryId) {
+        coverBlobRecoveryAttemptedRef.current = recoveryId;
+        void getDownloadedCoverBlobUrl(recoveryId).then((recoveredUrl) => {
+          if (recoveredUrl && recoveredUrl !== currentSrc) {
+            setCurrentSrc(recoveredUrl);
+          } else {
+            const fallbackHttp = resolveMediaUrl(src);
+            if (fallbackHttp && !fallbackHttp.startsWith("blob:")) {
+              setCurrentSrc(fallbackHttp);
+            } else {
+              setCurrentSrc(FALLBACK_PLACEHOLDER);
+            }
+          }
+        });
+        return;
+      }
+    }
+
     const ytId =
       extractYouTubeIdClient(currentSrc) ||
       extractYouTubeIdClient(pageUrl) ||

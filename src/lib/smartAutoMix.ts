@@ -2,6 +2,17 @@
 
 import { useSyncExternalStore } from "react";
 import type { Track } from "./types";
+export {
+  type AutoMixPlan as StudioAutoMixPlan,
+  type CamelotKey,
+  type SegmentAnalysis,
+  analyzeTrackSegment,
+  solveAutoMixPlan,
+  analyzeDownloadedPairAutoMixPlan,
+  camelotDistance,
+  cubicSCurve,
+  computeTempoLockRatios,
+} from "./autoMixEngine";
 
 export const AUTOMIX_STORAGE_KEY = "soundify_automix_enabled";
 const AUTOMIX_CHANGE_EVENT = "soundify-automix-changed";

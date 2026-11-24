@@ -74,6 +74,8 @@ export function checkPrototypeTampering(): { tampered: boolean; signals: string[
       typeof (window as unknown as { document?: unknown }).document !== "undefined" &&
       typeof (globalThis as unknown as { process?: { versions?: { node?: string } } }).process?.versions?.node === "undefined";
 
+    const isCapacitorRuntime = Boolean(globalScope.Capacitor);
+
     // 1. Check Function.prototype.toString integrity
     try {
       const fnToString = Function.prototype.toString.call(Function.prototype.toString);
@@ -88,7 +90,15 @@ export function checkPrototypeTampering(): { tampered: boolean; signals: string[
     try {
       if (typeof globalScope.fetch === "function") {
         const fetchStr = Function.prototype.toString.call(globalScope.fetch);
-        if (fetchStr.includes("frida") || fetchStr.includes("hook") || (isBrowser && !fetchStr.includes("[native code]"))) {
+        const lowerFetchStr = fetchStr.toLowerCase();
+        if (
+          lowerFetchStr.includes("frida") ||
+          lowerFetchStr.includes("hook") ||
+          lowerFetchStr.includes("xposed") ||
+          lowerFetchStr.includes("substrate") ||
+          lowerFetchStr.includes("cycript") ||
+          (!isCapacitorRuntime && isBrowser && !fetchStr.includes("[native code]"))
+        ) {
           signals.push("FETCH_PROTOTYPE_TAMPERED");
         }
       }
@@ -103,7 +113,15 @@ export function checkPrototypeTampering(): { tampered: boolean; signals: string[
         | undefined;
       if (cryptoObj?.subtle?.encrypt) {
         const encStr = Function.prototype.toString.call(cryptoObj.subtle.encrypt);
-        if (encStr.includes("frida") || encStr.includes("hook") || (isBrowser && !encStr.includes("[native code]"))) {
+        const lowerEncStr = encStr.toLowerCase();
+        if (
+          lowerEncStr.includes("frida") ||
+          lowerEncStr.includes("hook") ||
+          lowerEncStr.includes("xposed") ||
+          lowerEncStr.includes("substrate") ||
+          lowerEncStr.includes("cycript") ||
+          (!isCapacitorRuntime && isBrowser && !encStr.includes("[native code]"))
+        ) {
           signals.push("CRYPTO_SUBTLE_ENCRYPT_HOOKED");
         }
       }

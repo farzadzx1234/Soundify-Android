@@ -81,8 +81,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.32";
-    private static final String APP_VERSION_HEADER = "1.0.32";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.33";
+    private static final String APP_VERSION_HEADER = "1.0.33";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -97,6 +97,7 @@ public class SoundifyMediaService extends Service {
     private PowerManager.WakeLock wakeLock;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
+    private final ExecutorService autoMixAnalyzerExecutor = Executors.newSingleThreadExecutor();
 
     private boolean isPlaying = false;
     private boolean isForeground = false;
@@ -155,6 +156,13 @@ public class SoundifyMediaService extends Service {
     private boolean crossfadeIncomingReady = false;
     private boolean crossfadeFadeInOnly = false;
     private long crossfadeDurationMs = 7500L;
+    private volatile AutoMixPcmAnalyzer.AutoMixPlanNative scheduledAutoMixPlan = null;
+    private final AtomicInteger autoMixPlanSeq = new AtomicInteger(0);
+    private volatile boolean sampleAccurateDspCrossfade = false;
+    private volatile boolean crossfadeTempoSync = false;
+    private float crossfadeInitialTempoRatioB = 1.0f;
+    private float crossfadeTargetTempoRatioA = 1.0f;
+    private double crossfadeTempoLockCompleteProgress = 0.75;
     private volatile boolean pendingCrossfade = false;
     private long pendingCrossfadeMs = 7500L;
     private float pendingCrossfadeTargetVolume = 1.0f;
@@ -344,8 +352,37 @@ public class SoundifyMediaService extends Service {
                 applyPlaybackState();
                 emitNativeState("state", null);
 
-                // Real-time multi-band PCM acoustic outro detector (dead silence, quiet fade, drums+vocal drop, end phrase)
+                // Sample-Accurate Stage 2 Native Plan Trigger (zero JS timer jitter)
+                AutoMixPcmAnalyzer.AutoMixPlanNative activePlan = scheduledAutoMixPlan;
                 if (
+                    !isCrossfading &&
+                    !pendingCrossfade &&
+                    !"one".equals(nativeRepeatMode) &&
+                    activePlan != null &&
+                    currentTrackId.equals(activePlan.trackAId) &&
+                    !nextDeckTrackId.isEmpty() &&
+                    nextDeckTrackId.equals(activePlan.trackBId) &&
+                    nextDeckPlayer != null &&
+                    nextDeckPlayer.getPlaybackState() == Player.STATE_READY
+                ) {
+                    long planStartMsA = (activePlan.startSampleOnTrackA * 1000L) / Math.max(8000, activePlan.sampleRate);
+                    long planDurMs = Math.max(1200L, (activePlan.durationSamples * 1000L) / Math.max(8000, activePlan.sampleRate));
+                    if (posMs >= planStartMsA) {
+                        resetOutroCounters();
+                        executeReadyNativeCrossfade(
+                            planDurMs,
+                            currentNativeVolume,
+                            nextDeckTitle,
+                            nextDeckArtist,
+                            nextDeckAlbum,
+                            nextDeckCoverUrl,
+                            nextDeckDurationSec,
+                            nextDeckTrackId,
+                            false
+                        );
+                        return;
+                    }
+                } else if (
                     !isCrossfading &&
                     !pendingCrossfade &&
                     !"one".equals(nativeRepeatMode) &&
@@ -658,35 +695,58 @@ public class SoundifyMediaService extends Service {
             long elapsedMs = SystemClock.elapsedRealtime() - crossfadeStartMs;
             double p = Math.max(0.0, Math.min(1.0, (double) elapsedMs / Math.max(500L, crossfadeDurationMs)));
 
-            // Apple Music / Club-DJ Bass-Swap loudness + Butterworth HPF sweep matching smartAutoMix.ts
-            double inP = Math.min(1.0, p / 0.82);
-            double easedIn = 0.5 - 0.5 * Math.cos(inP * Math.PI);
-            float inGain = (float) (Math.sin(easedIn * Math.PI * 0.5) * crossfadeTargetVolume);
-            double easedOut = 0.5 - 0.5 * Math.cos(p * Math.PI);
-            float outGain = outgoingEnded
-                ? 0.0f
-                : (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.35) * crossfadeTargetVolume);
+            if (sampleAccurateDspCrossfade && !crossfadeFadeInOnly) {
+                try {
+                    if (nextDeckPlayer != null) {
+                        nextDeckPlayer.setVolume(outgoingEnded ? 0.0f : crossfadeTargetVolume);
+                    }
+                    nativePlayer.setVolume(crossfadeTargetVolume);
+                } catch (Exception ignored) {}
 
-            if (!crossfadeFadeInOnly) {
-                double outT = Math.max(0.0, Math.min(1.0, (p - 0.18) / 0.72));
-                double outSmooth = outT * outT * (3.0 - 2.0 * outT);
-                float outHpHz = outT <= 0.0 ? 0.0f : (float) (30.0 + outSmooth * 650.0);
-                if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(outHpHz);
-
-                double inT = Math.max(0.0, Math.min(1.0, (p - 0.28) / 0.34));
-                double inSmooth = inT * inT * (3.0 - 2.0 * inT);
-                float inHpHz = inT >= 1.0 ? 0.0f : (float) (360.0 * (1.0 - inSmooth));
-                if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(inHpHz);
-            } else if (nativeDeckDsp != null) {
-                nativeDeckDsp.setHighPassHz(0.0f);
-            }
-
-            try {
-                if (!crossfadeFadeInOnly && nextDeckPlayer != null) {
-                    nextDeckPlayer.setVolume(Math.max(0.0f, outGain));
+                if (crossfadeTempoSync) {
+                    double lockEnd = Math.max(0.25, Math.min(0.95, crossfadeTempoLockCompleteProgress));
+                    double x = Math.max(0.0, Math.min(1.0, p / lockEnd));
+                    double s = x * x * (3.0 - 2.0 * x); // Cubic S-Curve: 3x^2 - 2x^3
+                    float speedA = (float) Math.max(0.85, Math.min(1.18, 1.0 + (crossfadeTargetTempoRatioA - 1.0) * s));
+                    float speedB = (float) Math.max(0.85, Math.min(1.18, crossfadeInitialTempoRatioB + (1.0 - crossfadeInitialTempoRatioB) * s));
+                    try {
+                        nativePlayer.setPlaybackParameters(new PlaybackParameters(speedB, 1.0f));
+                        if (!outgoingEnded && nextDeckPlayer != null) {
+                            nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(speedA, 1.0f));
+                        }
+                    } catch (Exception ignored) {}
                 }
-                nativePlayer.setVolume(Math.max(0.0f, inGain));
-            } catch (Exception ignored) {}
+            } else {
+                // Fallback smoothness curve when no Stage 5 sample-accurate DSP plan is active
+                double inP = Math.min(1.0, p / 0.82);
+                double easedIn = 0.5 - 0.5 * Math.cos(inP * Math.PI);
+                float inGain = (float) (Math.sin(easedIn * Math.PI * 0.5) * crossfadeTargetVolume);
+                double easedOut = 0.5 - 0.5 * Math.cos(p * Math.PI);
+                float outGain = outgoingEnded
+                    ? 0.0f
+                    : (float) (Math.pow(Math.max(0.0, Math.cos(easedOut * Math.PI * 0.5)), 1.35) * crossfadeTargetVolume);
+
+                if (!crossfadeFadeInOnly) {
+                    double outT = Math.max(0.0, Math.min(1.0, (p - 0.18) / 0.72));
+                    double outSmooth = outT * outT * (3.0 - 2.0 * outT);
+                    float outHpHz = outT <= 0.0 ? 0.0f : (float) (30.0 + outSmooth * 650.0);
+                    if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(outHpHz);
+
+                    double inT = Math.max(0.0, Math.min(1.0, (p - 0.28) / 0.34));
+                    double inSmooth = inT * inT * (3.0 - 2.0 * inT);
+                    float inHpHz = inT >= 1.0 ? 0.0f : (float) (360.0 * (1.0 - inSmooth));
+                    if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(inHpHz);
+                } else if (nativeDeckDsp != null) {
+                    nativeDeckDsp.setHighPassHz(0.0f);
+                }
+
+                try {
+                    if (!crossfadeFadeInOnly && nextDeckPlayer != null) {
+                        nextDeckPlayer.setVolume(Math.max(0.0f, outGain));
+                    }
+                    nativePlayer.setVolume(Math.max(0.0f, inGain));
+                } catch (Exception ignored) {}
+            }
 
             if (p < 1.0 && (!outgoingEnded || crossfadeFadeInOnly)) {
                 mainHandler.postDelayed(this, 16L);
@@ -696,10 +756,20 @@ public class SoundifyMediaService extends Service {
             isCrossfading = false;
             crossfadeIncomingReady = false;
             crossfadeFadeInOnly = false;
-            if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(0.0f);
-            if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(0.0f);
+            sampleAccurateDspCrossfade = false;
+            crossfadeTempoSync = false;
+            scheduledAutoMixPlan = null;
+            if (nativeDeckDsp != null) {
+                nativeDeckDsp.stopSampleAccurateAutoMix();
+                nativeDeckDsp.setHighPassHz(0.0f);
+            }
+            if (nextDeckDsp != null) {
+                nextDeckDsp.stopSampleAccurateAutoMix();
+                nextDeckDsp.setHighPassHz(0.0f);
+            }
             try {
                 nativePlayer.setVolume(crossfadeTargetVolume);
+                nativePlayer.setPlaybackParameters(new PlaybackParameters((float) (currentPlaybackRate > 0 ? currentPlaybackRate : 1.0), 1.0f));
             } catch (Exception ignored) {}
             if (nextDeckPlayer != null) {
                 try {
@@ -791,6 +861,7 @@ public class SoundifyMediaService extends Service {
             mediaSession = null;
         }
         executorService.shutdownNow();
+        autoMixAnalyzerExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -1594,6 +1665,7 @@ public class SoundifyMediaService extends Service {
     private void stopFadingOutPlayerOnMainThread() {
         mainHandler.removeCallbacks(nativeFadeOutTicker);
         if (fadingOutDsp != null) {
+            fadingOutDsp.stopSampleAccurateAutoMix();
             fadingOutDsp.setHighPassHz(0.0f);
             fadingOutDsp = null;
         }
@@ -1659,14 +1731,24 @@ public class SoundifyMediaService extends Service {
         mainHandler.removeCallbacks(crossfadeTicker);
         mainHandler.removeCallbacks(pendingCrossfadeWaitTicker);
         abortNextDeckIntroScanOnMainThread();
+        autoMixPlanSeq.incrementAndGet();
+        scheduledAutoMixPlan = null;
         pendingCrossfade = false;
         isCrossfading = false;
         crossfadeIncomingReady = false;
         crossfadeFadeInOnly = false;
+        sampleAccurateDspCrossfade = false;
+        crossfadeTempoSync = false;
         resetOutroCounters();
         nextDeckTrackId = "";
-        if (nativeDeckDsp != null) nativeDeckDsp.setHighPassHz(0.0f);
-        if (nextDeckDsp != null) nextDeckDsp.setHighPassHz(0.0f);
+        if (nativeDeckDsp != null) {
+            nativeDeckDsp.stopSampleAccurateAutoMix();
+            nativeDeckDsp.setHighPassHz(0.0f);
+        }
+        if (nextDeckDsp != null) {
+            nextDeckDsp.stopSampleAccurateAutoMix();
+            nextDeckDsp.setHighPassHz(0.0f);
+        }
         stopFadingOutPlayerOnMainThread();
         if (nextDeckPlayer != null) {
             try {
@@ -1916,6 +1998,89 @@ public class SoundifyMediaService extends Service {
                 nextDeckIntroScanPrepWallMs = SystemClock.elapsedRealtime();
                 mainHandler.postDelayed(nextDeckIntroScanTicker, 60L);
             }
+
+            // Asynchronously run Stage 1-2 MediaExtractor+MediaCodec PCM analysis on both decks (~30s ahead)
+            if (scheduledAutoMixPlan == null || !nextDeckTrackId.equals(scheduledAutoMixPlan.trackBId)) {
+                scheduledAutoMixPlan = null;
+                final int planSeq = autoMixPlanSeq.incrementAndGet();
+                final String captureAId = currentTrackId != null ? currentTrackId : "";
+                final String captureAUrl = lastNativeStreamUrl != null ? lastNativeStreamUrl : "";
+                final double captureDurA = currentDurationSec;
+                final String captureBId = nextDeckTrackId;
+                final String captureBUrl = nextDeckStreamUrl;
+                final Map<String, String> analyzerHeaders = new HashMap<>();
+                analyzerHeaders.put("User-Agent", APP_USER_AGENT);
+                analyzerHeaders.put("X-App-Version", APP_VERSION_HEADER);
+                if (authToken != null && !authToken.trim().isEmpty()) {
+                    analyzerHeaders.put("Authorization", "Bearer " + authToken.trim());
+                }
+
+                if (!captureAUrl.isEmpty() && !captureBUrl.isEmpty()) {
+                    autoMixAnalyzerExecutor.execute(() -> {
+                        AutoMixPcmAnalyzer.AutoMixPlanNative analyzedPlan = AutoMixPcmAnalyzer.analyzeStreamPair(
+                            captureAId,
+                            captureAUrl,
+                            captureDurA,
+                            captureBId,
+                            captureBUrl,
+                            analyzerHeaders
+                        );
+                        if (analyzedPlan == null) {
+                            return;
+                        }
+                        mainHandler.post(() -> {
+                            if (planSeq != autoMixPlanSeq.get() || isCrossfading) {
+                                return;
+                            }
+                            if (!captureAId.equals(currentTrackId) || !captureBId.equals(nextDeckTrackId)) {
+                                return;
+                            }
+                            scheduledAutoMixPlan = analyzedPlan;
+                            abortNextDeckIntroScanOnMainThread();
+                            long offsetMsB = Math.max(0L, (analyzedPlan.startOffsetSampleOnTrackB * 1000L) / Math.max(8000, analyzedPlan.sampleRate));
+                            nextDeckStartMs = offsetMsB;
+                            if (nextDeckPlayer != null && nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE && nextDeckPlayer.isCurrentMediaItemSeekable()) {
+                                try {
+                                    nextDeckPlayer.seekTo(offsetMsB);
+                                } catch (Exception ignored) {}
+                            }
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    public void scheduleNativeAutoMixPlan(
+        final AutoMixPcmAnalyzer.AutoMixPlanNative plan,
+        final float volume,
+        final String title,
+        final String artist,
+        final String album,
+        final String coverUrl,
+        final double durationSec
+    ) {
+        if (plan == null) return;
+        mainHandler.post(() -> {
+            autoMixPlanSeq.incrementAndGet();
+            scheduledAutoMixPlan = plan;
+            currentNativeVolume = Math.max(0.0f, Math.min(1.0f, volume));
+            if (title != null && !title.isEmpty()) nextDeckTitle = title;
+            if (artist != null) nextDeckArtist = artist;
+            if (album != null) nextDeckAlbum = album;
+            if (coverUrl != null) nextDeckCoverUrl = coverUrl;
+            if (durationSec > 0) nextDeckDurationSec = durationSec;
+
+            if (!isCrossfading && nextDeckPlayer != null && plan.trackBId.equals(nextDeckTrackId)) {
+                abortNextDeckIntroScanOnMainThread();
+                long offsetMsB = Math.max(0L, (plan.startOffsetSampleOnTrackB * 1000L) / Math.max(8000, plan.sampleRate));
+                nextDeckStartMs = offsetMsB;
+                if (nextDeckPlayer.getPlaybackState() != Player.STATE_IDLE && nextDeckPlayer.isCurrentMediaItemSeekable()) {
+                    try {
+                        nextDeckPlayer.seekTo(offsetMsB);
+                    } catch (Exception ignored) {}
+                }
+            }
         });
     }
 
@@ -1946,7 +2111,17 @@ public class SoundifyMediaService extends Service {
         currentNativeVolume = crossfadeTargetVolume;
         crossfadeFadeInOnly = fadeInOnly;
 
+        AutoMixPcmAnalyzer.AutoMixPlanNative matchedPlan = null;
+        AutoMixPcmAnalyzer.AutoMixPlanNative candidatePlan = scheduledAutoMixPlan;
+        String outgoingId = currentTrackId != null ? currentTrackId : "";
+        if (!fadeInOnly && candidatePlan != null && outgoingId.equals(candidatePlan.trackAId) && safeTrackId.equals(candidatePlan.trackBId)) {
+            matchedPlan = candidatePlan;
+        }
+
         long clampedFadeMs = Math.max(fadeInOnly ? 400L : 1200L, crossfadeMs);
+        if (matchedPlan != null) {
+            clampedFadeMs = Math.max(1200L, (matchedPlan.durationSamples * 1000L) / Math.max(8000, matchedPlan.sampleRate));
+        }
         if (!fadeInOnly && nativePlayer != null) {
             long nativeDurMs = nativePlayer.getDuration();
             long nativePosMs = Math.max(0L, nativePlayer.getCurrentPosition());
@@ -1987,18 +2162,43 @@ public class SoundifyMediaService extends Service {
         nextDeckPlayer = outgoingDeck;
         nativeDeckDsp = incomingDsp;
         nextDeckDsp = outgoingDsp;
-        if (nativeDeckDsp != null) {
-            nativeDeckDsp.resetTrackStats();
-            nativeDeckDsp.setHighPassHz(fadeInOnly ? 0.0f : 360.0f);
-        }
-        if (nextDeckDsp != null) {
-            nextDeckDsp.setHighPassHz(0.0f);
+
+        sampleAccurateDspCrossfade = matchedPlan != null && !fadeInOnly;
+        crossfadeTempoSync = matchedPlan != null && "BEAT_SYNC_PHRASE".equals(matchedPlan.mode) && !fadeInOnly;
+        if (matchedPlan != null && !fadeInOnly) {
+            int planSr = Math.max(8000, matchedPlan.sampleRate);
+            long durSamples = Math.max(4096L, Math.round((clampedFadeMs / 1000.0) * planSr));
+            crossfadeInitialTempoRatioB = matchedPlan.initialTempoRatioB;
+            crossfadeTargetTempoRatioA = matchedPlan.targetTempoRatioA;
+            crossfadeTempoLockCompleteProgress = matchedPlan.tempoLockCompleteProgress;
+            if (nativeDeckDsp != null) {
+                nativeDeckDsp.resetTrackStats();
+                nativeDeckDsp.startSampleAccurateAutoMix(false, durSamples, matchedPlan.bassSwapProgress, matchedPlan.gainCompensationDbB, crossfadeTempoSync);
+            }
+            if (nextDeckDsp != null) {
+                nextDeckDsp.startSampleAccurateAutoMix(true, durSamples, matchedPlan.bassSwapProgress, 0.0, crossfadeTempoSync);
+            }
+        } else {
+            if (nativeDeckDsp != null) {
+                nativeDeckDsp.resetTrackStats();
+                nativeDeckDsp.setHighPassHz(fadeInOnly ? 0.0f : 360.0f);
+            }
+            if (nextDeckDsp != null) {
+                nextDeckDsp.stopSampleAccurateAutoMix();
+                nextDeckDsp.setHighPassHz(0.0f);
+            }
         }
         nativeAudioActive = true;
         crossfadeIncomingReady = (nativePlayer.getPlaybackState() == Player.STATE_READY);
 
         try {
-            nativePlayer.setVolume(0.0f);
+            nativePlayer.setVolume(sampleAccurateDspCrossfade ? crossfadeTargetVolume : 0.0f);
+            if (crossfadeTempoSync) {
+                nativePlayer.setPlaybackParameters(new PlaybackParameters(crossfadeInitialTempoRatioB, 1.0f));
+                if (nextDeckPlayer != null) {
+                    nextDeckPlayer.setPlaybackParameters(new PlaybackParameters(1.0f, 1.0f));
+                }
+            }
             if (Math.abs(nativePlayer.getCurrentPosition() - nextDeckStartMs) > 600L) {
                 nativePlayer.seekTo(nextDeckStartMs);
             }

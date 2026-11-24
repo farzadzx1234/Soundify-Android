@@ -246,6 +246,55 @@ public class NativeAudioPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void scheduleAutoMixPlan(PluginCall call) {
+        String mode = call.getString("mode", "BEAT_SYNC_PHRASE");
+        String trackAId = call.getString("trackAId", "");
+        String trackBId = call.getString("trackBId", "");
+        Long startSampleOnTrackA = call.getLong("startSampleOnTrackA", 0L);
+        Long startOffsetSampleOnTrackB = call.getLong("startOffsetSampleOnTrackB", 0L);
+        Long durationSamples = call.getLong("durationSamples", 0L);
+        Double initialTempoRatioB = call.getDouble("initialTempoRatioB", 1.0);
+        Double targetTempoRatioA = call.getDouble("targetTempoRatioA", 1.0);
+        Double tempoLockCompleteProgress = call.getDouble("tempoLockCompleteProgress", 0.75);
+        Double bassSwapProgress = call.getDouble("bassSwapProgress", 0.50);
+        Double gainCompensationDbB = call.getDouble("gainCompensationDbB", 0.0);
+        Integer sampleRate = call.getInt("sampleRate", 44100);
+        Double vol = call.getDouble("volume", 1.0);
+        String title = call.getString("title", "Soundify");
+        String artist = call.getString("artist", "");
+        String album = call.getString("album", "");
+        String coverUrl = call.getString("coverUrl", "");
+        Double duration = call.getDouble("duration", 0.0);
+
+        SoundifyMediaService service = SoundifyMediaService.getInstance();
+        if (service != null) {
+            service.scheduleNativeAutoMixPlan(
+                new AutoMixPcmAnalyzer.AutoMixPlanNative(
+                    mode != null ? mode : "BEAT_SYNC_PHRASE",
+                    trackAId != null ? trackAId : "",
+                    trackBId != null ? trackBId : "",
+                    sampleRate != null && sampleRate >= 8000 ? sampleRate : 44100,
+                    startSampleOnTrackA != null ? Math.max(0L, startSampleOnTrackA) : 0L,
+                    startOffsetSampleOnTrackB != null ? Math.max(0L, startOffsetSampleOnTrackB) : 0L,
+                    durationSamples != null ? Math.max(4096L, durationSamples) : 154350L,
+                    initialTempoRatioB != null ? initialTempoRatioB.floatValue() : 1.0f,
+                    targetTempoRatioA != null ? targetTempoRatioA.floatValue() : 1.0f,
+                    tempoLockCompleteProgress != null ? tempoLockCompleteProgress : 0.75,
+                    bassSwapProgress != null ? bassSwapProgress : 0.50,
+                    gainCompensationDbB != null ? gainCompensationDbB : 0.0
+                ),
+                vol != null ? Math.max(0.0f, Math.min(1.0f, vol.floatValue())) : 1.0f,
+                title != null ? title : "Soundify",
+                artist != null ? artist : "",
+                album != null ? album : "",
+                coverUrl != null ? coverUrl : "",
+                duration != null && duration > 0 ? duration : 0.0
+            );
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
     public void cancelCrossfade(PluginCall call) {
         SoundifyMediaService service = SoundifyMediaService.getInstance();
         if (service != null) {

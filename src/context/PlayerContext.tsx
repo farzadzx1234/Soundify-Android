@@ -75,10 +75,13 @@ import {
 } from "@/lib/nativeAudioBridge";
 import {
   analyzeDownloadedBlobAutoMix,
+  analyzeDownloadedPairAutoMixPlan,
   computeAutoMixPlan,
+  computeTempoLockRatios,
   djCrossfadeGains,
   getAutoMixEnabled,
   type AutoMixPlan,
+  type StudioAutoMixPlan,
 } from "@/lib/smartAutoMix";
 import { assertNever, isRecord, parseRemoteCommand } from "@/lib/typeGuards";
 import { WarningCircleIcon, XIcon } from "@phosphor-icons/react";
@@ -341,6 +344,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const autoMixPreparingKeyRef = useRef<string | null>(null);
   const autoMixTargetTrackRef = useRef<Track | null>(null);
   const autoMixPlanRef = useRef<AutoMixPlan | null>(null);
+  const studioAutoMixPlanRef = useRef<StudioAutoMixPlan | null>(null);
   const autoMixPlanDurRef = useRef<number>(0);
   const autoMixModeRef = useRef<"native" | "web" | "native-to-web" | "web-to-native" | null>(null);
   const autoMixStartedRef = useRef<boolean>(false);
@@ -348,6 +352,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const crossfadePositionGuardUntilRef = useRef<number>(0);
   const crossfadePositionFloorRef = useRef<number>(0);
   const finalizeWebAutoMixRef = useRef<(() => void) | null>(null);
+  const webAutoMixGraphCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     return subscribeToDownloads(() => {
@@ -622,7 +627,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       };
 
       if (isDownloadedSync) {
-        void getDownloadedTrackBlobUrl(track.id).then(upgradeToOfflineBlob);
+        void getDownloadedTrackBlobUrl(matchedDlId || track.id).then(upgradeToOfflineBlob);
       } else {
         void isTrackDownloaded(track.id).then((stored) => {
           if (currentTrackRef.current?.id !== track.id) return;
@@ -888,10 +893,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       clearInterval(autoMixTimerRef.current);
       autoMixTimerRef.current = null;
     }
+    if (webAutoMixGraphCleanupRef.current) {
+      try {
+        webAutoMixGraphCleanupRef.current();
+      } catch {}
+      webAutoMixGraphCleanupRef.current = null;
+    }
     autoMixPreparedKeyRef.current = null;
     autoMixPreparingKeyRef.current = null;
     autoMixTargetTrackRef.current = null;
     autoMixPlanRef.current = null;
+    studioAutoMixPlanRef.current = null;
     autoMixPlanDurRef.current = 0;
     autoMixModeRef.current = null;
     autoMixStartedRef.current = false;
@@ -906,6 +918,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const deckA = getSingletonAudio();
     if (deckA) {
       deckA.volume = mutedRef.current ? 0 : volumeRef.current;
+      deckA.playbackRate = playbackRateRef.current || 1;
+      try {
+        (deckA as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true;
+      } catch {}
     }
     const deckB =
       typeof document !== "undefined"
@@ -1097,9 +1113,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             let nextSrc = "";
             let resolvedMixInSec = targetPlan.mixInSec;
             if (isNextDownloaded) {
-              const offlineRec = await getDownloadedTrack(offlineNextStorageId).catch(() => null);
-              if (offlineRec?.audioBlob) {
-                const pcmIn = await analyzeDownloadedBlobAutoMix(offlineNextStorageId, offlineRec.audioBlob);
+              const offlineOutId = resolveDownloadedTrackId(curr);
+              const offlineRecIn = await getDownloadedTrack(offlineNextStorageId).catch(() => null);
+              if (offlineOutId && offlineRecIn?.audioBlob) {
+                const offlineRecOut = await getDownloadedTrack(offlineOutId).catch(() => null);
+                if (offlineRecOut?.audioBlob) {
+                  const stage5Plan = await analyzeDownloadedPairAutoMixPlan(
+                    curr.id,
+                    offlineRecOut.audioBlob,
+                    offlineNextStorageId,
+                    offlineRecIn.audioBlob,
+                  ).catch(() => null);
+                  if (stage5Plan && currentTrackRef.current?.id === curr.id && !autoMixStartedRef.current) {
+                    const approxSr = 44100;
+                    studioAutoMixPlanRef.current = { ...stage5Plan, trackBId: resolvedNext.id };
+                    resolvedMixInSec = stage5Plan.startOffsetSampleOnTrackB / approxSr;
+                    if (autoMixPlanRef.current && autoMixTargetTrackRef.current?.id === targetNext.id) {
+                      autoMixPlanRef.current = {
+                        ...autoMixPlanRef.current,
+                        mixInSec: resolvedMixInSec,
+                        mixOutSec: stage5Plan.startSampleOnTrackA / approxSr,
+                        crossfadeSec: stage5Plan.durationSamples / approxSr,
+                      };
+                    }
+                  }
+                }
+              }
+              if (offlineRecIn?.audioBlob && !studioAutoMixPlanRef.current) {
+                const pcmIn = await analyzeDownloadedBlobAutoMix(offlineNextStorageId, offlineRecIn.audioBlob);
                 if (pcmIn && pcmIn.mixInSec >= 0) {
                   resolvedMixInSec = pcmIn.mixInSec;
                   if (autoMixPlanRef.current && autoMixTargetTrackRef.current?.id === targetNext.id) {
@@ -1480,6 +1521,93 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               ? Math.max(1200, (deckA.duration - deckA.currentTime - 0.15) * 1000)
               : plan.crossfadeSec * 1000;
           const fadeMs = Math.max(1200, Math.min(plan.crossfadeSec * 1000, actualRemainingMs));
+          const activeStudioPlan =
+            studioAutoMixPlanRef.current?.trackAId === outgoingTrack?.id &&
+            studioAutoMixPlanRef.current?.trackBId === promoted.id
+              ? studioAutoMixPlanRef.current
+              : null;
+          const userBaseRate = playbackRateRef.current || 1;
+          try {
+            (deckA as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true;
+            (deckB as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true;
+          } catch {}
+          if (activeStudioPlan?.mode === "BEAT_SYNC_PHRASE") {
+            deckB.playbackRate = Math.max(0.85, Math.min(1.18, activeStudioPlan.initialTempoRatioB * userBaseRate));
+          }
+
+          // WebAudio sample-accurate 3-Band EQ + Equal-Power + Sub-Bass Swap + -0.5dBFS Limiter (when WebAudio graph is attached on desktop)
+          let webAudioDspScheduled = false;
+          const webCtx = audioCtxRef.current;
+          if (!isAndroidNative() && webCtx && sourceNodeRef.current) {
+            try {
+              const fadeSec = fadeMs / 1000;
+              const nowT = webCtx.currentTime;
+              const srcA = sourceNodeRef.current;
+              const analyserOut = analyserRef.current;
+
+              // Disconnect direct path briefly while routing through 3-band Stage 4 DSP chain
+              const deckAGain = webCtx.createGain();
+              const deckALow = webCtx.createBiquadFilter();
+              deckALow.type = "lowshelf";
+              deckALow.frequency.setValueAtTime(140, nowT);
+              const deckAMidDip = webCtx.createBiquadFilter();
+              deckAMidDip.type = "peaking";
+              deckAMidDip.frequency.setValueAtTime(1500, nowT);
+              deckAMidDip.Q.setValueAtTime(0.9, nowT);
+
+              const limiter = webCtx.createDynamicsCompressor();
+              limiter.threshold.setValueAtTime(-0.5, nowT);
+              limiter.knee.setValueAtTime(3, nowT);
+              limiter.ratio.setValueAtTime(20, nowT);
+              limiter.attack.setValueAtTime(0.002, nowT);
+              limiter.release.setValueAtTime(0.05, nowT);
+
+              const curveSteps = 64;
+              const curveA = new Float32Array(curveSteps);
+              const lowCurveA = new Float32Array(curveSteps);
+              const midCurveA = new Float32Array(curveSteps);
+              const baseVol = mutedRef.current ? 0 : volumeRef.current;
+              const swapProgress = activeStudioPlan?.bassSwapProgress ?? 0.5;
+              const swapCenterTime = nowT + fadeSec * swapProgress;
+
+              for (let i = 0; i < curveSteps; i++) {
+                const p = i / (curveSteps - 1);
+                curveA[i] = Math.cos(p * Math.PI * 0.5) * baseVol;
+                const midDipT = Math.max(0, Math.min(1, (p - 0.5) / 0.5));
+                midCurveA[i] = -3.0 * midDipT;
+                const s = p <= swapProgress - 0.04 ? 0 : p >= swapProgress + 0.04 ? 1 : ((p - (swapProgress - 0.04)) / 0.08);
+                const smoothS = s * s * (3 - 2 * s);
+                lowCurveA[i] = -24.0 * smoothS;
+              }
+              deckAGain.gain.setValueCurveAtTime(curveA, nowT, fadeSec);
+              deckALow.gain.setValueCurveAtTime(lowCurveA, nowT, fadeSec);
+              deckAMidDip.gain.setValueCurveAtTime(midCurveA, nowT, fadeSec);
+
+              srcA.disconnect();
+              srcA.connect(deckALow);
+              deckALow.connect(deckAMidDip);
+              deckAMidDip.connect(deckAGain);
+              deckAGain.connect(limiter);
+              limiter.connect(webCtx.destination);
+              deckA.volume = 1;
+
+              webAutoMixGraphCleanupRef.current = () => {
+                try {
+                  srcA.disconnect();
+                  deckALow.disconnect();
+                  deckAMidDip.disconnect();
+                  deckAGain.disconnect();
+                  limiter.disconnect();
+                  if (analyserOut) {
+                    srcA.connect(analyserOut);
+                  }
+                } catch {}
+              };
+              webAudioDspScheduled = Boolean(swapCenterTime);
+            } catch {
+              webAudioDspScheduled = false;
+            }
+          }
 
           let finished = false;
           const finishWebCrossfade = () => {
@@ -1494,15 +1622,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               clearInterval(autoMixTimerRef.current);
               autoMixTimerRef.current = null;
             }
+            if (webAutoMixGraphCleanupRef.current) {
+              try {
+                webAutoMixGraphCleanupRef.current();
+              } catch {}
+              webAutoMixGraphCleanupRef.current = null;
+            }
             finalizeWebAutoMixRef.current = null;
 
             const baseVol = mutedRef.current ? 0 : volumeRef.current;
             isSettingSourceRef.current = true;
             try {
               deckB.volume = baseVol;
+              deckB.playbackRate = userBaseRate;
               if (deckB.paused && !userPausedIntentRef.current) {
                 void deckB.play().catch(() => {});
               }
+              deckA.playbackRate = userBaseRate;
               deckA.pause();
               deckA.removeAttribute("src");
               deckA.load();
@@ -1515,6 +1651,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             autoMixPreparingKeyRef.current = null;
             autoMixTargetTrackRef.current = null;
             autoMixPlanRef.current = null;
+            studioAutoMixPlanRef.current = null;
             autoMixPlanDurRef.current = 0;
             autoMixModeRef.current = null;
             setIsCrossfading(false);
@@ -1537,8 +1674,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             const baseVol = mutedRef.current ? 0 : volumeRef.current;
             const { outGain, inGain } = djCrossfadeGains(p);
             try {
-              deckA.volume = Math.max(0, outGain * baseVol);
-              deckB.volume = Math.max(0, inGain * baseVol);
+              if (!webAudioDspScheduled) {
+                deckA.volume = Math.max(0, outGain * baseVol);
+              }
+              const compLinear = activeStudioPlan
+                ? Math.pow(10, Math.max(-6, Math.min(6, activeStudioPlan.gainCompensationDbB)) / 20)
+                : 1;
+              deckB.volume = Math.max(0, Math.min(1, inGain * baseVol * compLinear));
+              if (activeStudioPlan?.mode === "BEAT_SYNC_PHRASE") {
+                const { rateA, rateB } = computeTempoLockRatios(activeStudioPlan, p);
+                deckA.playbackRate = Math.max(0.85, Math.min(1.18, rateA * userBaseRate));
+                deckB.playbackRate = Math.max(0.85, Math.min(1.18, rateB * userBaseRate));
+              }
             } catch {}
 
             if (p >= 1 || deckA.ended || deckA.paused) {
@@ -2165,12 +2312,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       if (isDownloaded) {
         try {
-          const [blobUrl, coverBlobUrl] = await Promise.all([
+          const [blobUrlRaw, coverBlobUrl] = await Promise.all([
             getDownloadedTrackBlobUrl(offlineStorageId),
             getDownloadedCoverBlobUrl(offlineStorageId),
           ]);
-          if (blobUrl) {
-            audioSource = blobUrl;
+          let resolvedBlobUrl = blobUrlRaw;
+          if (!resolvedBlobUrl) {
+            const directRec = await getDownloadedTrack(offlineStorageId).catch(() => null);
+            if (directRec?.audioBlob && directRec.audioBlob.size > 0 && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+              resolvedBlobUrl = URL.createObjectURL(directRec.audioBlob);
+            }
+          }
+          if (resolvedBlobUrl) {
+            audioSource = resolvedBlobUrl;
           }
           if (coverBlobUrl) {
             trackToPlay = { ...trackToPlay, coverUrl: coverBlobUrl };
@@ -2557,14 +2711,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (!curr) return;
 
     // Ensure audio element has source loaded (e.g. after page refresh)
-    const isDownloadedSync = Boolean(await resolveDownloadedTrackIdAsync(curr));
+    const matchedOfflineId = await resolveDownloadedTrackIdAsync(curr);
+    const isDownloadedSync = Boolean(matchedOfflineId);
+    const offlineId = matchedOfflineId || curr.id;
 
     const shouldStartPlaying =
       (nativeAudioActiveRef.current ? !isPlayingRef.current : audio.paused) &&
       !isPlayingRef.current &&
       !isRetryingPlayRef.current;
     if (shouldStartPlaying) {
-      if (curr.source === "spotify" && (!curr.pageUrl || !curr.pageUrl.includes("youtube"))) {
+      if (curr.source === "spotify" && !isDownloadedSync && (!curr.pageUrl || !curr.pageUrl.includes("youtube"))) {
         try {
           const resolved = await resolveSpotifyTrackStream(curr);
           if (resolved) {
@@ -2582,10 +2738,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       if (isDownloadedSync) {
         setOfflineNotice(null);
-        setCurrentlyPlayingTrackId(curr.id);
-        let cachedBlob = getCachedAudioBlobUrl(curr.id);
+        setCurrentlyPlayingTrackId(offlineId);
+        let cachedBlob = getCachedAudioBlobUrl(offlineId);
         if (!cachedBlob) {
-          cachedBlob = await getDownloadedTrackBlobUrl(curr.id);
+          cachedBlob = await getDownloadedTrackBlobUrl(offlineId);
         }
         if (cachedBlob && audio.src !== cachedBlob) {
           const curT = audio.currentTime;
@@ -2597,9 +2753,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             } catch {}
           }
         }
-        let cachedCover = getCachedCoverBlobUrl(curr.id);
+        let cachedCover = getCachedCoverBlobUrl(offlineId);
         if (!cachedCover) {
-          cachedCover = await getDownloadedCoverBlobUrl(curr.id);
+          cachedCover = await getDownloadedCoverBlobUrl(offlineId);
         }
         if (cachedCover && curr.coverUrl !== cachedCover) {
           if (curr.coverUrl && !curr.coverUrl.startsWith("blob:")) {

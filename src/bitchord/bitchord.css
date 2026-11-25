@@ -366,19 +366,16 @@
 
 @keyframes bc-automix-sheen {
   0% {
-    transform: translate3d(-45%, 0, 0);
+    transform: translate3d(-100%, 0, 0);
   }
   100% {
-    transform: translate3d(45%, 0, 0);
+    transform: translate3d(100%, 0, 0);
   }
 }
 
 @keyframes bc-automix-flow {
   0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
+    background-position: 200% 50%;
   }
   100% {
     background-position: 0% 50%;
@@ -406,28 +403,29 @@
 .bc-automix-bar {
   background: linear-gradient(
     90deg,
-    #10b981 0%,
-    #22c55e 22%,
-    #ef4444 48%,
-    #f43f5e 66%,
-    #22c55e 86%,
-    #10b981 100%
+    #059669 0%,
+    #10b981 22%,
+    #34d399 42%,
+    #ffffff 54%,
+    #a7f3d0 66%,
+    #10b981 84%,
+    #059669 100%
   );
   background-size: 200% 100%;
   animation:
-    bc-automix-flow 2.8s ease-in-out infinite,
+    bc-automix-flow 1.8s linear infinite,
     bc-automix-breathe 1.6s ease-in-out infinite;
-  box-shadow: 0 0 14px rgba(16, 185, 129, 0.45), 0 0 16px rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.52), 0 0 6px rgba(255, 255, 255, 0.35);
 }
 
 .bc-automix-sheen {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.75) 50%,
+    rgba(255, 255, 255, 0.85) 50%,
     transparent 100%
   );
-  animation: bc-automix-sheen 1s linear infinite alternate;
+  animation: bc-automix-sheen 1.2s linear infinite;
   will-change: transform;
 }
 

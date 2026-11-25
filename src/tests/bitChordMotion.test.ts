@@ -134,6 +134,27 @@ describe("BitChord Motion Physics & Contracts", () => {
     expect(shellSrc).toContain("draggable={false}");
     expect(shellSrc).toContain("bc-bottom-fade-scrim");
     expect(shellSrc).toContain("bc-page-enter");
+    expect(shellSrc).toContain("Math.abs(dx) < 22");
+
+    const miniSrc = fs.readFileSync(
+      path.resolve(__dirname, "../bitchord/BitChordMiniPlayer.tsx"),
+      "utf8",
+    );
+    expect(miniSrc).toContain("text-start");
+    expect(miniSrc).toContain("<bdi>");
+
+    const cssSrc = fs.readFileSync(
+      path.resolve(__dirname, "../bitchord/bitchord.css"),
+      "utf8",
+    );
+    expect(cssSrc).toContain(".bc-automix-bar");
+    expect(cssSrc).toContain("#10b981");
+    expect(cssSrc).not.toContain("#ef4444");
+    expect(cssSrc).not.toContain("#f43f5e");
+    expect(cssSrc).toContain("background-position: 200% 50%");
+
+    expect(nowPlayingSrc).toContain("gap-1.5");
+    expect(nowPlayingSrc).toContain("ساندکلود");
 
     const artistSrc = fs.readFileSync(
       path.resolve(__dirname, "../bitchord/BitChordArtistSheet.tsx"),

@@ -28,7 +28,6 @@ import { usePlayer } from "@/context/PlayerContext";
 import { checkBackendHealth } from "@/lib/api";
 import { triggerHapticFeedback } from "@/lib/hapticFeedback";
 import {
-  getServerConnectivityStatus,
   subscribeServerConnectivity,
   type ServerConnectivityStatus,
 } from "@/lib/mobileBackend";
@@ -104,6 +103,7 @@ function FloatingLiquidTabBar({
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
+    startY: number;
     startTab: number;
     moved: boolean;
     lastHapticTab: number;
@@ -302,10 +302,12 @@ function FloatingLiquidTabBar({
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!e.isPrimary || e.button !== 0) return;
+    suppressClickRef.current = false;
     const s = stateRef.current;
     dragRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
+      startY: e.clientY,
       startTab: safeActive,
       moved: false,
       lastHapticTab: safeActive,
@@ -321,9 +323,10 @@ function FloatingLiquidTabBar({
     const track = trackRef.current;
     if (!drag || drag.pointerId !== e.pointerId || !track) return;
     const dx = e.clientX - drag.startX;
-    if (!drag.moved && Math.abs(dx) < 8) return;
-
+    const dy = e.clientY - drag.startY;
+    // Require deliberate horizontal swipe (>= 22px & horizontally dominant) so mobile taps never hijack Settings/other tabs
     if (!drag.moved) {
+      if (Math.abs(dx) < 22 || Math.abs(dx) <= Math.abs(dy) * 1.4) return;
       drag.moved = true;
       suppressClickRef.current = true;
       try {
@@ -337,9 +340,10 @@ function FloatingLiquidTabBar({
       startLoop();
     }
 
-    const stepPx = Math.max(1, track.offsetWidth / n);
-    const deltaTabs = (dir === "rtl" ? -dx : dx) / stepPx;
-    const clamped = Math.max(0, Math.min(n - 1, drag.startTab + deltaTabs));
+    const rect = track.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const rel = dir === "rtl" ? (rect.right - e.clientX) / width : (e.clientX - rect.left) / width;
+    const clamped = Math.max(0, Math.min(n - 1, rel * n - 0.5));
     stateRef.current.dragTarget = clamped;
 
     const approx = Math.round(clamped);
@@ -464,12 +468,8 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
   const { isOffline, isPlaying, currentTrack, volume, togglePlay, setVolume } = usePlayer();
   const [quickQuery, setQuickQuery] = useState("");
   const [artistView, setArtistView] = useState<{ name: string; seedTrack: Track | null } | null>(null);
-  const [backendOnline, setBackendOnline] = useState<boolean>(() =>
-    typeof navigator !== "undefined" ? navigator.onLine : true,
-  );
-  const [connectivityStatus, setConnectivityStatus] = useState<ServerConnectivityStatus>(() =>
-    getServerConnectivityStatus(),
-  );
+  const [backendOnline, setBackendOnline] = useState<boolean>(true);
+  const [connectivityStatus, setConnectivityStatus] = useState<ServerConnectivityStatus>("online");
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // Wire global Artist Profile overlay & persistent Sleep Timer manager for New UI

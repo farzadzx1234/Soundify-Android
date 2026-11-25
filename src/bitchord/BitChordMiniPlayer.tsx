@@ -35,18 +35,15 @@ function MiniPlayerLyricOrArtist({ fallback }: { fallback: string }) {
   const { activeLyricIndex } = usePlayerProgress();
   if (isCrossfading) {
     return (
-      <p
-        dir="auto"
-        className="bc-automix-label-pulse truncate text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-300 leading-tight"
-      >
-        {lang === "fa" ? "در حال میکس..." : "Soundify Mix mixing..."}
+      <p className="bc-automix-label-pulse truncate text-start text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-300 leading-tight">
+        <bdi>{lang === "fa" ? "در حال میکس..." : "Soundify Mix mixing..."}</bdi>
       </p>
     );
   }
   const activeLine = activeLyricIndex >= 0 ? lyrics[activeLyricIndex]?.text?.trim() : null;
   return (
-    <p dir="auto" className="truncate text-[11.5px] font-medium text-slate-600 dark:text-white/65 leading-tight">
-      {activeLine || fallback}
+    <p className="truncate text-start text-[11.5px] font-medium text-slate-600 dark:text-white/65 leading-tight">
+      <bdi>{activeLine || fallback}</bdi>
     </p>
   );
 }
@@ -409,9 +406,9 @@ export function BitChordMiniPlayer() {
                 />
               </div>
 
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-bold text-[13px] text-slate-900 dark:text-white leading-snug tracking-[0.01em]">
-                  {title}
+              <div className="min-w-0 flex-1 text-start">
+                <p className="truncate text-start font-bold text-[13px] text-slate-900 dark:text-white leading-snug tracking-[0.01em]">
+                  <bdi>{title}</bdi>
                 </p>
                 <MiniPlayerLyricOrArtist fallback={artist} />
               </div>

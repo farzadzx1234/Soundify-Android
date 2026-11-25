@@ -91,6 +91,11 @@ const GENERIC_PROVIDER_ALBUMS = new Set([
   "single",
   "singles",
   "آفلاین ساندیفای",
+  "ساندکلود",
+  "یوتیوب",
+  "یوتیوب موزیک",
+  "اسپاتیفای",
+  "آهنگ یوتیوب",
 ]);
 
 function isGenuineAlbumLabel(albumText: string | undefined | null): boolean {
@@ -2041,7 +2046,7 @@ export function BitChordNowPlaying() {
                       <QuotesIcon size={21} weight="fill" aria-hidden="true" />
                     </button>
 
-                    <div className="inline-flex items-center rounded-full bg-white/12 border border-white/10 overflow-hidden h-10 p-0.5">
+                    <div className="inline-flex items-center gap-1.5 rounded-full bg-white/12 border border-white/12 backdrop-blur-md h-11 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
                       <button
                         type="button"
                         onClick={() => {
@@ -2050,8 +2055,10 @@ export function BitChordNowPlaying() {
                         }}
                         aria-label={t("shuffle")}
                         aria-pressed={shuffle}
-                        className={`h-full px-4 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                          shuffle ? "bg-white/25 text-white" : "text-white/70 hover:text-white"
+                        className={`h-9 min-w-[44px] px-3.5 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${
+                          shuffle
+                            ? "bg-white/28 text-white shadow-[0_2px_10px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                            : "text-white/70 hover:text-white hover:bg-white/10"
                         }`}
                       >
                         <ShuffleIcon size={18} weight="bold" aria-hidden="true" />
@@ -2065,8 +2072,10 @@ export function BitChordNowPlaying() {
                         }}
                         aria-label={`${t("repeat")}: ${repeat}`}
                         aria-pressed={repeat !== "off"}
-                        className={`h-full px-4 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                          repeat !== "off" ? "bg-white/25 text-white" : "text-white/70 hover:text-white"
+                        className={`h-9 min-w-[44px] px-3.5 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${
+                          repeat !== "off"
+                            ? "bg-white/28 text-white shadow-[0_2px_10px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                            : "text-white/70 hover:text-white hover:bg-white/10"
                         }`}
                       >
                         {repeat === "one" ? (
@@ -2084,8 +2093,10 @@ export function BitChordNowPlaying() {
                         }}
                         aria-label={lang === "fa" ? "ساندیفای میکس" : "Soundify Mix"}
                         aria-pressed={autoMixEnabled}
-                        className={`h-full px-4 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                          autoMixEnabled ? "bg-white/25 text-white" : "text-white/70 hover:text-white"
+                        className={`h-9 min-w-[44px] px-3.5 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${
+                          autoMixEnabled
+                            ? "bg-white/28 text-white shadow-[0_2px_10px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                            : "text-white/70 hover:text-white hover:bg-white/10"
                         }`}
                       >
                         <InfinityIcon size={18} weight="bold" aria-hidden="true" />

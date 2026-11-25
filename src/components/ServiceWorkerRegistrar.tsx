@@ -41,7 +41,11 @@ export function ServiceWorkerRegistrar() {
       return;
     }
 
-    // Standard Web / PWA only
+    // Standard Web / PWA only (avoid localhost/127.0.0.1 so local previews do not trigger Capacitor's SW self-destruct loop)
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return;
+    }
     navigator.serviceWorker.register("/sw.js").catch(() => {
       // Ignore registration error in unsupported/insecure contexts
     });

@@ -29,7 +29,6 @@ import { DevicePickerPopover } from "./DevicePickerPopover";
 import { PlaylistPickerSheet } from "./PlaylistPickerSheet";
 import { checkBackendHealth } from "@/lib/api";
 import {
-  getServerConnectivityStatus,
   subscribeServerConnectivity,
   type ServerConnectivityStatus,
 } from "@/lib/mobileBackend";
@@ -45,8 +44,6 @@ const BitChordShell = dynamic(
   () => import("@/bitchord/BitChordShell").then((m) => m.BitChordShell),
   { ssr: false },
 );
-
-const subscribeNoop = () => () => {};
 
 const NowPlayingOverlay = dynamic(
   () => import("./NowPlayingOverlay").then((m) => m.NowPlayingOverlay),
@@ -75,8 +72,11 @@ function LazyAuthDialog() {
   return <AuthDialog />;
 }
 
+const subscribeNoop = () => () => {};
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const bitChordActive = useSyncExternalStore(subscribeNoop, isBitChordBootActive, () => false);
+
   if (bitChordActive) {
     return <BitChordShell>{children}</BitChordShell>;
   }
@@ -90,12 +90,8 @@ function DefaultAppShell({ children }: { children: React.ReactNode }) {
   const { lang, dir, toggleLang, t } = useI18n();
   const { isOffline } = usePlayer();
   const [quickQuery, setQuickQuery] = useState("");
-  const [backendOnline, setBackendOnline] = useState<boolean>(() =>
-    typeof navigator !== "undefined" ? navigator.onLine : true,
-  );
-  const [connectivityStatus, setConnectivityStatus] = useState<ServerConnectivityStatus>(() =>
-    getServerConnectivityStatus(),
-  );
+  const [backendOnline, setBackendOnline] = useState<boolean>(true);
+  const [connectivityStatus, setConnectivityStatus] = useState<ServerConnectivityStatus>("online");
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {

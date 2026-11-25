@@ -9,6 +9,7 @@ import {
   ClockCounterClockwiseIcon,
   GlobeHemisphereWestIcon,
   HardDrivesIcon,
+  LinkIcon,
   LockSimpleIcon,
   MagnifyingGlassIcon,
   MusicNotesSimpleIcon,
@@ -26,10 +27,12 @@ import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/context/I18nContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { Button, Glass, GlassSegmented, SearchField } from "@/components/GlassControls";
+import { ExternalPlaylistImporter } from "@/components/ExternalPlaylistImporter";
 import { ExternalTrackCard } from "@/components/ExternalTrackCard";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
 import { filterSensitiveTracks, isSearchQuerySensitive } from "@/lib/contentFilter";
+import { detectPlaylistLink } from "@/lib/externalPlaylist";
 import { sortExternalTracksByReleaseDate } from "@/lib/externalSort";
 import type { Playlist, Track } from "@/lib/types";
 
@@ -314,6 +317,12 @@ function SearchPageInner() {
   // External Search State
   const [externalTracks, setExternalTracks] = useState<Track[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
+  const [playlistImporterOpen, setPlaylistImporterOpen] = useState(false);
+
+  const detectedPlaylistLink = useMemo(
+    () => (canAccessGlobal && searchSource === "external" ? detectPlaylistLink(debouncedQuery) : null),
+    [canAccessGlobal, searchSource, debouncedQuery],
+  );
   const [externalError, setExternalError] = useState<string | null>(null);
   const [extSortMode, setExtSortMode] = useState<"releaseDate" | "relevance">("releaseDate");
   const [extPage, setExtPage] = useState(1);
@@ -378,6 +387,12 @@ function SearchPageInner() {
   // Input change handler
   const handleInputChange = (val: string) => {
     setInputValue(val);
+    if (canAccessGlobal && searchSource !== "external" && detectPlaylistLink(val)) {
+      setSearchSource("external");
+      setDebouncedQuery(val);
+      syncUrl(val, "external", extSubSource);
+      return;
+    }
     if (!val.trim()) {
       // Immediate clear for instant visual and catalog reset
       setDebouncedQuery("");
@@ -445,7 +460,7 @@ function SearchPageInner() {
         return;
       }
 
-      if (!cleanQ || cleanQ.length < 2) {
+      if (!cleanQ || cleanQ.length < 2 || detectPlaylistLink(cleanQ)) {
         setExternalTracks([]);
         setExternalLoading(false);
         setExternalError(null);
@@ -1054,7 +1069,35 @@ function SearchPageInner() {
       {/* ========================================================================= */}
       {canAccessGlobal && searchSource === "external" && (
         <div className="space-y-4">
-          {!inputValue.trim() || inputValue.trim().length < 2 ? (
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setPlaylistImporterOpen((prev) => !prev)}
+              className="sf-press inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] dark:bg-white/[0.08] hover:bg-black/[0.1] dark:hover:bg-white/[0.12] border border-black/[0.06] dark:border-white/[0.1] px-3.5 py-2 min-h-[38px] text-xs font-bold text-[var(--sf-text)] cursor-pointer transition-colors"
+            >
+              <LinkIcon size={14} weight="bold" className="text-emerald-500 shrink-0" aria-hidden="true" />
+              <span>
+                {playlistImporterOpen
+                  ? pickText("Hide Playlist Link Importer", "بستن بارگذار لینک پلی‌لیست")
+                  : pickText("Load YouTube / Spotify / SoundCloud Playlist Link", "بارگذاری با لینک پلی‌لیست (یوتیوب / اسپاتیفای / ساندکلود)")}
+              </span>
+            </button>
+          </div>
+
+          {detectedPlaylistLink ? (
+            <ExternalPlaylistImporter
+              externalUrl={detectedPlaylistLink.normalizedUrl}
+              hideUrlInput={true}
+              onRequestAuth={openAuthDialog}
+              onRequestGlobalAccess={() => setAccessModalOpen(true)}
+              onClear={() => handleInputChange("")}
+            />
+          ) : playlistImporterOpen ? (
+            <ExternalPlaylistImporter
+              onRequestAuth={openAuthDialog}
+              onRequestGlobalAccess={() => setAccessModalOpen(true)}
+            />
+          ) : !inputValue.trim() || inputValue.trim().length < 2 ? (
             <Glass className="rounded-3xl p-10 text-center space-y-4">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-sm">
                 <GlobeHemisphereWestIcon size={30} weight="duotone" aria-hidden="true" />

@@ -13,6 +13,7 @@ import {
   ClockCounterClockwiseIcon,
   HeartIcon,
   HardDriveIcon,
+  LinkIcon,
   ListDashesIcon,
   ListPlusIcon,
   MagnifyingGlassIcon,
@@ -49,6 +50,7 @@ import { PlaylistMosaic } from "@/components/PlaylistMosaic";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { OptimizedTrackImage } from "@/components/OptimizedTrackImage";
 import { VirtualizedTrackGrid } from "@/components/VirtualizedTrackGrid";
+import { ExternalPlaylistImporter } from "@/components/ExternalPlaylistImporter";
 import type { Playlist, Track } from "@/lib/types";
 
 type LibraryTab = "downloaded" | "liked" | "reposts" | "playlists" | "history";
@@ -91,6 +93,7 @@ export default function LibraryPage() {
   const [newPlaylistDesc, setNewPlaylistDesc] = useState("");
   const [newPlaylistAccent, setNewPlaylistAccent] = useState("#6366f1");
   const [createPlaylistOpen, setCreatePlaylistOpen] = useState(false);
+  const [importPlaylistLinkOpen, setImportPlaylistLinkOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [playlistPendingDelete, setPlaylistPendingDelete] = useState<{ id: string; title: string; isCustom: boolean } | null>(null);
   const [actionErr, setActionErr] = useState("");
@@ -992,21 +995,51 @@ export default function LibraryPage() {
         ) : tab === "playlists" ? (
         /* Playlists Section (Spotify-style Custom Playlists + Smart Artist Mixes) */
         <div className="space-y-6">
-          {/* Header + Create Custom Playlist CTA */}
-          <div className="flex items-center justify-between gap-3">
+          {/* Header + Create Custom Playlist + Import Link CTAs */}
+          <div className="flex items-center justify-between gap-2.5 flex-wrap">
             <h2 className="text-base sm:text-lg font-extrabold text-[var(--sf-text)]">
               {pickText("Your Playlists", "پلی‌لیست‌های اختصاصی شما")}
             </h2>
-            <Button
-              type="button"
-              variant="filled"
-              onClick={() => setCreatePlaylistOpen((prev) => !prev)}
-              icon={<PlusIcon size={17} weight="bold" aria-hidden="true" />}
-              className="!min-h-[40px] !px-4 text-xs font-bold"
-            >
-              {pickText("New Playlist", "پلی‌لیست جدید")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="glass"
+                onClick={() => {
+                  setImportPlaylistLinkOpen((prev) => !prev);
+                  setCreatePlaylistOpen(false);
+                }}
+                icon={<LinkIcon size={16} weight="bold" className="text-emerald-500" aria-hidden="true" />}
+                className="!min-h-[40px] !px-3.5 text-xs font-bold"
+              >
+                {pickText("Import URL", "لینک پلی‌لیست")}
+              </Button>
+              <Button
+                type="button"
+                variant="filled"
+                onClick={() => {
+                  setCreatePlaylistOpen((prev) => !prev);
+                  setImportPlaylistLinkOpen(false);
+                }}
+                icon={<PlusIcon size={17} weight="bold" aria-hidden="true" />}
+                className="!min-h-[40px] !px-4 text-xs font-bold"
+              >
+                {pickText("New Playlist", "پلی‌لیست جدید")}
+              </Button>
+            </div>
           </div>
+
+          {importPlaylistLinkOpen && (
+            <ExternalPlaylistImporter
+              onRequestAuth={openAuthDialog}
+              onPlaylistSaved={({ cloudId, playlist: savedPl }) => {
+                if (cloudId) {
+                  setPlaylists((prev) =>
+                    prev.some((p) => p.id === cloudId) ? prev : [{ ...savedPl, id: cloudId }, ...prev],
+                  );
+                }
+              }}
+            />
+          )}
 
           <div className="sf-collapse" data-open={createPlaylistOpen ? "true" : "false"}>
             <div className="sf-collapse-inner">
@@ -1127,7 +1160,9 @@ export default function LibraryPage() {
                 );
               })}
 
-              {playlists.map((pl) => (
+              {playlists
+                .filter((pl) => !customPlaylists.some((cp) => cp.cloudPlaylistId === pl.id))
+                .map((pl) => (
                 <div
                   key={pl.id}
                   className="group sf-content-card rounded-3xl p-3.5 flex items-center justify-between gap-3"

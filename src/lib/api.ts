@@ -10,6 +10,7 @@ import type {
   DeviceInfo,
   EncryptedEnvelope,
   ExternalMusicSource,
+  ExternalPlaylistResponse,
   ExternalTrackCandidate,
   LibraryLikesBatchPayload,
   LibraryLikesBatchResponse,
@@ -1750,12 +1751,90 @@ export const api = {
       },
     );
   },
-  addTrackToPlaylist(playlistId: string, trackId: string) {
+  addTrackToPlaylist(
+    playlistId: string,
+    trackId: string,
+    trackMeta?: Partial<Pick<Track, "title" | "artistName" | "durationSec" | "coverUrl" | "pageUrl" | "source" | "album">>,
+  ) {
     return apiFetch<{ ok: boolean; playlistId: string; trackId: string }>(
       `/api/mobile/v1/playlists/${encodeURIComponent(playlistId)}/tracks`,
       {
         method: "POST",
-        body: JSON.stringify({ trackId }),
+        body: JSON.stringify({ trackId, ...(trackMeta || {}) }),
+      },
+    );
+  },
+  async fetchExternalPlaylist(
+    url: string,
+    options?: { limit?: number; forceRefresh?: boolean },
+  ): Promise<ExternalPlaylistResponse> {
+    const useNativeAudio = isNativeAudioAvailable();
+    const res = await apiFetch<ExternalPlaylistResponse>("/api/external/playlist", {
+      method: "POST",
+      body: JSON.stringify({
+        url: url.trim(),
+        limit: options?.limit ?? 80,
+        forceRefresh: options?.forceRefresh === true,
+      }),
+    });
+    const normalizedTracks = filterSensitiveTracks((res.tracks || []).map(normalizeTrack)).map((tr) => {
+      const next = { ...tr };
+      if (next.audioUrl && next.audioUrl.includes("/api/stream/external")) {
+        if (useNativeAudio) {
+          next.audioUrl = next.audioUrl
+            .replace(/([?&])fastStart=[^&]*&?/gi, "$1")
+            .replace(/[?&]$/, "")
+            .replace(/\?&/, "?");
+        } else if (!next.audioUrl.includes("fastStart=")) {
+          next.audioUrl = `${next.audioUrl}${next.audioUrl.includes("?") ? "&" : "?"}fastStart=true`;
+        }
+      }
+      externalTracksCache.set(next.id, next);
+      return next;
+    });
+    return {
+      ...res,
+      playlist: {
+        ...res.playlist,
+        coverUrl: resolveMediaUrl(res.playlist.coverUrl || normalizedTracks[0]?.coverUrl || ""),
+        coverUrls: (res.playlist.coverUrls || []).map((c) => resolveMediaUrl(c)).filter(Boolean),
+        trackCount: normalizedTracks.length,
+      },
+      tracks: normalizedTracks,
+      total: normalizedTracks.length,
+    };
+  },
+  importExternalPlaylist(payload: {
+    title: string;
+    titleFa?: string;
+    description?: string;
+    descriptionFa?: string;
+    accentColor?: string;
+    sourceUrl?: string;
+    tracks: Track[];
+  }) {
+    return apiFetch<{ ok: boolean; playlist: Playlist; savedTrackCount: number }>(
+      "/api/mobile/v1/external/playlist/import",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          title: payload.title,
+          titleFa: payload.titleFa || payload.title,
+          description: payload.description || "",
+          descriptionFa: payload.descriptionFa || payload.description || "",
+          accentColor: payload.accentColor || "#4F46E5",
+          sourceUrl: payload.sourceUrl || "",
+          tracks: payload.tracks.slice(0, 120).map((t) => ({
+            id: t.id,
+            title: t.title,
+            artistName: t.artistName,
+            durationSec: t.durationSec,
+            coverUrl: t.coverUrl,
+            pageUrl: t.pageUrl,
+            source: t.source,
+            album: t.album,
+          })),
+        }),
       },
     );
   },

@@ -50,6 +50,29 @@ export interface Track {
   qualityLabel?: string;
 }
 
+export interface ExternalPlaylistMetadata {
+  id: string;
+  title: string;
+  titleFa: string;
+  description: string;
+  descriptionFa: string;
+  creator: string;
+  source: "youtube" | "soundcloud" | "spotify";
+  sourceUrl: string;
+  coverUrl: string;
+  coverUrls: string[];
+  accentColor: string;
+  trackCount: number;
+}
+
+export interface ExternalPlaylistResponse {
+  playlist: ExternalPlaylistMetadata;
+  tracks: Track[];
+  total: number;
+  error?: string;
+  code?: string;
+}
+
 export interface LyricLine {
   timeMs: number;
   text: string;

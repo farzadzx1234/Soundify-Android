@@ -24,6 +24,8 @@ export interface CustomPlaylistRecord {
   description: string;
   descriptionFa: string;
   accentColor: string;
+  sourceUrl?: string;
+  cloudPlaylistId?: string;
   createdAt: string;
   updatedAt: string;
   tracks: Track[];
@@ -203,6 +205,8 @@ export function createCustomPlaylist(input: {
   title: string;
   description?: string;
   accentColor?: string;
+  sourceUrl?: string;
+  cloudPlaylistId?: string;
   initialTracks?: Track[];
 }): CustomPlaylistRecord {
   const cleanTitle = input.title.trim() || "My Playlist";
@@ -221,6 +225,8 @@ export function createCustomPlaylist(input: {
     description: cleanDesc,
     descriptionFa: cleanDesc,
     accentColor: input.accentColor || "#6366f1",
+    ...(input.sourceUrl ? { sourceUrl: input.sourceUrl } : {}),
+    ...(input.cloudPlaylistId ? { cloudPlaylistId: input.cloudPlaylistId } : {}),
     createdAt: now,
     updatedAt: now,
     tracks: uniqueTracks,
@@ -229,6 +235,16 @@ export function createCustomPlaylist(input: {
   const current = readCustomPlaylists();
   writeCustomPlaylists([record, ...current]);
   return record;
+}
+
+export function linkCloudPlaylistToCustom(localId: string, cloudPlaylistId: string): void {
+  if (!localId || !cloudPlaylistId) return;
+  const current = readCustomPlaylists();
+  const idx = current.findIndex((p) => p.id === localId);
+  if (idx === -1) return;
+  const nextList = [...current];
+  nextList[idx] = { ...current[idx], cloudPlaylistId };
+  writeCustomPlaylists(nextList);
 }
 
 export function updateCustomPlaylist(

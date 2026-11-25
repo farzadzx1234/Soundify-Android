@@ -268,10 +268,31 @@ function SearchPageInner() {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       setPlaceholderIndex((prev) => (prev + 1) % PLACEHOLDER_SUGGESTIONS_FA.length);
-    }, 3600);
-    return () => clearInterval(timer);
+    };
+    let timer: ReturnType<typeof setInterval> | null = setInterval(tick, 3600);
+    const onVisibility = () => {
+      if (typeof document === "undefined") return;
+      if (document.hidden) {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      } else if (!timer) {
+        timer = setInterval(tick, 3600);
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
   }, []);
 
   const activePlaceholder = useMemo(() => {

@@ -165,4 +165,50 @@ describe("BitChord Motion Physics & Contracts", () => {
     expect(artistSrc).toContain("#09090b 100%");
     expect(artistSrc).not.toContain("aspect-square bg-slate-800");
   });
+
+  it("unifies Liquid Glass controls, eliminates heavy card blur & lag, and optimizes native battery drain", () => {
+    const cssSrc = fs.readFileSync(
+      path.resolve(__dirname, "../bitchord/bitchord.css"),
+      "utf8",
+    );
+    expect(cssSrc).toContain(".bc-segmented-glass");
+    expect(cssSrc).toContain(".bc-segmented-pill");
+    expect(cssSrc).toContain(".bc-menu-glass");
+    expect(cssSrc).toContain(".sf-tab-pill[data-active=\"true\"]");
+    expect(cssSrc).toContain("backdrop-filter: none;");
+    expect(cssSrc).toContain("html[data-app-state=\"background\"]");
+    expect(cssSrc).not.toContain("scale3d(0.988, 0.988, 1)");
+
+    const controlsSrc = fs.readFileSync(
+      path.resolve(__dirname, "../components/GlassControls.tsx"),
+      "utf8",
+    );
+    expect(controlsSrc).toContain("bc-switch");
+    expect(controlsSrc).toContain("bc-menu-glass");
+    expect(controlsSrc).toContain("bc-segmented-glass");
+    expect(controlsSrc).toContain("bc-segmented-pill");
+
+    const librarySrc = fs.readFileSync(
+      path.resolve(__dirname, "../app/library/page.tsx"),
+      "utf8",
+    );
+    const exploreSrc = fs.readFileSync(
+      path.resolve(__dirname, "../app/explore/page.tsx"),
+      "utf8",
+    );
+    expect(librarySrc).toContain("sf-tab-pill");
+    expect(exploreSrc).toContain("sf-tab-pill");
+
+    const serviceJavaPath = path.resolve(
+      __dirname,
+      "../../android/app/src/main/java/com/soundify/app/media/SoundifyMediaService.java",
+    );
+    const serviceSrc = fs.readFileSync(serviceJavaPath, "utf8");
+    expect(serviceSrc).toContain("isScreenInteractive()");
+    expect(serviceSrc).toContain("isRemoteStreamUrl(");
+    expect(serviceSrc).toContain("lastNotificationSignature");
+    expect(serviceSrc).toContain("WIFI_MODE_FULL_LOW_LATENCY");
+    expect(serviceSrc).toContain("WAKE_MODE_LOCAL");
+    expect(serviceSrc).not.toContain("WAKE_MODE_NETWORK");
+  });
 });

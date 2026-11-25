@@ -80,24 +80,26 @@
   border-color: rgba(255, 255, 255, 0.45) !important;
 }
 
-/* Scoped surface & card polish with specular Liquid Glass rim highlights */
+/* Scoped surface & card polish without expensive full-card backdrop blur (HIG: glass for floating chrome only) */
 :root[data-ui-skin="bitchord"] .sf-content-surface,
 :root[data-ui-skin="bitchord"] .sf-glass {
   border-radius: 24px;
-  backdrop-filter: blur(20px) saturate(1.55);
-  -webkit-backdrop-filter: blur(20px) saturate(1.55);
+  background: linear-gradient(180deg, rgba(28, 29, 36, 0.86) 0%, rgba(19, 20, 26, 0.92) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.08),
-    0 14px 36px rgba(0, 0, 0, 0.36);
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 12px 30px rgba(0, 0, 0, 0.34);
 }
 
 :root[data-ui-skin="bitchord"][data-resolved-theme="light"] .sf-content-surface,
 :root[data-ui-skin="bitchord"][data-resolved-theme="light"] .sf-glass {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(247, 248, 252, 0.94) 100%);
+  border: 1px solid rgba(15, 23, 42, 0.08);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 0 0 0.5px rgba(15, 23, 42, 0.08),
-    0 10px 28px rgba(15, 23, 42, 0.08);
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 10px 24px rgba(15, 23, 42, 0.07);
 }
 
 :root[data-ui-skin="bitchord"] .track-list-row {
@@ -350,14 +352,165 @@
 }
 
 /* Liquid Glass Context Menu */
-.bc-glass-menu {
-  background: rgba(30, 30, 36, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+.bc-glass-menu,
+:root[data-ui-skin="bitchord"] .bc-menu-glass {
+  background: rgba(24, 24, 30, 0.78);
+  border: 0.5px solid rgba(255, 255, 255, 0.18);
   box-shadow:
-    inset 0 1.25px 0 rgba(255, 255, 255, 0.26),
-    0 28px 70px rgba(0, 0, 0, 0.68);
-  backdrop-filter: blur(24px) saturate(1.85);
-  -webkit-backdrop-filter: blur(24px) saturate(1.85);
+    inset 0 1.25px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.08),
+    0 22px 54px rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(18px) saturate(1.85) brightness(1.04);
+  -webkit-backdrop-filter: blur(18px) saturate(1.85) brightness(1.04);
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-menu-glass {
+  background: rgba(252, 252, 255, 0.8);
+  border: 0.5px solid rgba(15, 23, 42, 0.09);
+  box-shadow:
+    inset 0 1.25px 0 rgba(255, 255, 255, 0.96),
+    0 18px 44px rgba(15, 23, 42, 0.16);
+}
+
+/* Unified Liquid Glass Segmented Controls, Switches, Tabs & Dialogs */
+:root[data-ui-skin="bitchord"] .bc-segmented-glass {
+  position: relative;
+  isolation: isolate;
+  background: rgba(24, 24, 30, 0.54) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.06),
+    0 8px 22px rgba(0, 0, 0, 0.34) !important;
+  backdrop-filter: blur(16px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-segmented-glass {
+  background: rgba(245, 246, 250, 0.72) !important;
+  border: 0.5px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 6px 18px rgba(15, 23, 42, 0.09) !important;
+}
+
+:root[data-ui-skin="bitchord"] .bc-segmented-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.1) 35%,
+    rgba(255, 255, 255, 0.03) 70%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+:root[data-ui-skin="bitchord"] .bc-segmented-pill:not(.bg-white) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.12) 100%) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.24) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    0 3px 12px rgba(0, 0, 0, 0.28) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-segmented-pill:not(.bg-white) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.84) 100%) !important;
+  border: 0.5px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 3px 10px rgba(15, 23, 42, 0.1) !important;
+}
+
+:root[data-ui-skin="bitchord"] .bc-switch-track {
+  border: 0.5px solid rgba(255, 255, 255, 0.16);
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-switch-track {
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+:root[data-ui-skin="bitchord"] .bc-menu-trigger {
+  border: 0.5px solid transparent;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s var(--bc-ease-spring);
+}
+
+:root[data-ui-skin="bitchord"] .bc-menu-trigger[aria-expanded="true"],
+:root[data-ui-skin="bitchord"] .bc-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-menu-trigger[aria-expanded="true"],
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .bc-menu-trigger:hover {
+  background: rgba(15, 23, 42, 0.06) !important;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+:root[data-ui-skin="bitchord"] .sf-tab-pill {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  color: rgba(244, 244, 248, 0.82) !important;
+  transition: transform 0.18s var(--bc-ease-spring), background-color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+:root[data-ui-skin="bitchord"] .sf-tab-pill[data-active="true"] {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.14) 100%) !important;
+  border: 0.5px solid rgba(255, 255, 255, 0.34) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1.25px 0 rgba(255, 255, 255, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.32) !important;
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .sf-tab-pill {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border: 0.5px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 2px 8px rgba(15, 23, 42, 0.06);
+  color: #334155 !important;
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .sf-tab-pill[data-active="true"] {
+  background: linear-gradient(180deg, #18181b 0%, #09090b 100%) !important;
+  border: 0.5px solid rgba(15, 23, 42, 0.88) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 4px 12px rgba(15, 23, 42, 0.2) !important;
+}
+
+:root[data-ui-skin="bitchord"] .sf-dialog,
+:root[data-ui-skin="bitchord"] .sf-picker-dialog > div,
+:root[data-ui-skin="bitchord"] .sf-device-picker-dialog > div {
+  background: rgba(22, 22, 28, 0.78) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    0 24px 64px rgba(0, 0, 0, 0.72) !important;
+  backdrop-filter: blur(22px) saturate(1.85) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.85) !important;
+}
+
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .sf-dialog,
+:root[data-ui-skin="bitchord"][data-resolved-theme="light"] .sf-picker-dialog > div {
+  background: rgba(252, 252, 255, 0.84) !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+  box-shadow:
+    inset 0 1.25px 0 rgba(255, 255, 255, 0.96),
+    0 20px 54px rgba(15, 23, 42, 0.18) !important;
 }
 
 /* ==========================================================================
@@ -440,17 +593,28 @@
 @keyframes bc-page-enter {
   from {
     opacity: 0;
-    transform: translate3d(0, 12px, 0) scale3d(0.988, 0.988, 1);
+    transform: translate3d(0, 6px, 0);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 :root[data-ui-skin="bitchord"] .bc-page-enter {
-  animation: bc-page-enter 0.34s var(--bc-ease-spring) both;
+  animation: bc-page-enter 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
   backface-visibility: hidden;
+}
+
+:root[data-ui-skin="bitchord"] .bc-page-enter > .sf-fade-up {
+  animation: none !important;
+}
+
+html[data-app-state="background"] .bc-ambient-breathe,
+html[data-app-state="background"] .bc-automix-bar,
+html[data-app-state="background"] .bc-automix-sheen,
+html[data-app-state="background"] .bc-automix-label-pulse {
+  animation-play-state: paused !important;
 }
 
 @keyframes bc-sheet-in {

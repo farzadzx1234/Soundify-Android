@@ -90,8 +90,8 @@ public class SoundifyMediaService extends Service {
     public static final String ACTION_PLAY_NATIVE_STREAM = "com.soundify.app.action.PLAY_NATIVE_STREAM";
     public static final String ACTION_MEDIA_BUTTON = "android.intent.action.MEDIA_BUTTON";
 
-    private static final String APP_USER_AGENT = "Soundify-Android/1.0.46";
-    private static final String APP_VERSION_HEADER = "1.0.46";
+    private static final String APP_USER_AGENT = "Soundify-Android/1.0.47";
+    private static final String APP_VERSION_HEADER = "1.0.47";
 
     private static final String CHANNEL_ID = "soundify_media_playback";
     private static final int NOTIFICATION_ID = 2001;
@@ -164,6 +164,9 @@ public class SoundifyMediaService extends Service {
     private volatile String nativeRepeatMode = "off";
     private volatile boolean nativeShuffle = false;
     private volatile boolean nativeAutoMixEnabled = true;
+    private volatile PowerManager powerManager;
+    private long lastNativeBridgeStateEmitMs = 0L;
+    private String lastNotificationSignature = "";
     private static final class NativeQueueEntry {
         final String id;
         final String url;
@@ -412,11 +415,21 @@ public class SoundifyMediaService extends Service {
                 if (durMs > 0 && durMs != androidx.media3.common.C.TIME_UNSET) {
                     currentDurationSec = durMs / 1000.0;
                 }
-                applyPlaybackState();
-                emitNativeState("state", null);
-
                 // Autonomous screen-off queue pre-buffer so AutoMix & Loop never stall when Chromium JS sleeps
                 double quickRemSec = currentDurationSec > 0 ? Math.max(0.0, currentDurationSec - currentPositionSec) : 999.0;
+                boolean screenInteractive = isScreenInteractive();
+                boolean transitionImminent =
+                    isCrossfading ||
+                    pendingCrossfade ||
+                    nextDeckIntroScanning ||
+                    nextDeckIntroScanStartedPlayback ||
+                    (quickRemSec <= 25.0) ||
+                    (currentDurationSec <= 0.0 && currentPositionSec >= 8.0);
+                applyPlaybackState();
+                if (screenInteractive || transitionImminent || (nowMs - lastNativeBridgeStateEmitMs) >= 2000L) {
+                    emitNativeState("state", null);
+                }
+
                 if (
                     !"one".equals(nativeRepeatMode) &&
                     !isCrossfading &&
@@ -625,7 +638,8 @@ public class SoundifyMediaService extends Service {
                     resetOutroCounters();
                 }
 
-                mainHandler.postDelayed(this, 250L);
+                long nextTickMs = (screenInteractive || transitionImminent) ? 250L : 1000L;
+                mainHandler.postDelayed(this, nextTickMs);
             }
         }
     };
@@ -1421,9 +1435,24 @@ public class SoundifyMediaService extends Service {
         audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
     }
 
+    private boolean isScreenInteractive() {
+        try {
+            return powerManager == null || powerManager.isInteractive();
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    private boolean isRemoteStreamUrl(String url) {
+        if (url == null) return false;
+        String trimmed = url.trim().toLowerCase();
+        return trimmed.startsWith("http://") || trimmed.startsWith("https://");
+    }
+
     private void initWakeLock() {
         try {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            this.powerManager = pm;
             if (pm != null) {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG);
                 wakeLock.setReferenceCounted(false);
@@ -1432,7 +1461,10 @@ public class SoundifyMediaService extends Service {
         try {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wm != null) {
-                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG);
+                int wifiMode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                wifiLock = wm.createWifiLock(wifiMode, WIFI_LOCK_TAG);
                 wifiLock.setReferenceCounted(false);
             }
         } catch (Exception ignored) {}
@@ -1446,8 +1478,13 @@ public class SoundifyMediaService extends Service {
             }
         } catch (Exception ignored) {}
         try {
-            if (wifiLock != null && !wifiLock.isHeld()) {
-                wifiLock.acquire();
+            boolean needsWifi = isRemoteStreamUrl(lastNativeStreamUrl);
+            if (wifiLock != null) {
+                if (needsWifi && !wifiLock.isHeld()) {
+                    wifiLock.acquire();
+                } else if (!needsWifi && wifiLock.isHeld()) {
+                    wifiLock.release();
+                }
             }
         } catch (Exception ignored) {}
     }
@@ -1978,6 +2015,16 @@ public class SoundifyMediaService extends Service {
 
     private synchronized void updateNotification() {
         try {
+            String nextSignature =
+                isPlaying + "|" + isForeground + "|" +
+                (currentTitle != null ? currentTitle : "") + "|" +
+                (currentArtist != null ? currentArtist : "") + "|" +
+                (currentAlbum != null ? currentAlbum : "") + "|" +
+                (currentCoverUrl != null ? currentCoverUrl : "") + "|" +
+                (cachedArtworkBitmap != null && !cachedArtworkBitmap.isRecycled() ? cachedArtworkBitmap.hashCode() : 0);
+            if (isPlaying && isForeground && nextSignature.equals(lastNotificationSignature)) {
+                return;
+            }
             Notification notification = buildNotification();
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
@@ -1987,6 +2034,7 @@ public class SoundifyMediaService extends Service {
             } else {
                 nm.notify(NOTIFICATION_ID, notification);
             }
+            lastNotificationSignature = nextSignature;
         } catch (Throwable ignored) {}
     }
 
@@ -2162,13 +2210,14 @@ public class SoundifyMediaService extends Service {
 
             nativePlayer.setAudioAttributes(buildMediaAudioAttributes(), true);
             nativePlayer.setHandleAudioBecomingNoisy(true);
-            nativePlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK);
+            nativePlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL);
             nativePlayer.setRepeatMode("one".equals(nativeRepeatMode) ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
             nativePlayer.addListener(primaryPlayerListener);
         }
     }
 
     private void emitNativeState(String eventType, PlaybackException error) {
+        lastNativeBridgeStateEmitMs = SystemClock.elapsedRealtime();
         JSObject payload = getNativeStateSnapshot();
         payload.put("event", eventType);
         if (error != null) {
@@ -2343,7 +2392,7 @@ public class SoundifyMediaService extends Service {
             if (nextDeckPlayer == null) {
                 nextDeckDsp = new AutoMixDspProcessor();
                 nextDeckPlayer = buildDspExoPlayer(nextDeckDsp);
-                nextDeckPlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK);
+                nextDeckPlayer.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL);
             }
             if (nextDeckDsp != null) {
                 nextDeckDsp.resetTrackStats();

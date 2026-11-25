@@ -427,12 +427,12 @@ export function Switch({
           if (!disabled) onCheckedChange(!checked);
         }}
         style={{ WebkitTapHighlightColor: "transparent", touchAction: "pan-y" }}
-        className="relative inline-flex h-[26px] w-[60px] shrink-0 items-center rounded-full border-0 p-0 cursor-pointer select-none after:absolute after:-inset-y-2.5 after:-inset-x-1 after:content-[''] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--sf-accent)] disabled:opacity-35 disabled:cursor-default"
+        className="bc-switch relative inline-flex h-[26px] w-[60px] shrink-0 items-center rounded-full border-0 p-0 cursor-pointer select-none after:absolute after:-inset-y-2.5 after:-inset-x-1 after:content-[''] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--sf-accent)] disabled:opacity-35 disabled:cursor-default"
       >
         {/* Track Base */}
         <span
           aria-hidden="true"
-          className="absolute inset-0 rounded-full transition-colors duration-200 ease-out"
+          className="bc-switch-track absolute inset-0 rounded-full transition-colors duration-200 ease-out"
           style={{
             backgroundColor: fillVisible
               ? "var(--lg-on, #34c759)"
@@ -444,7 +444,7 @@ export function Switch({
         {/* Strictly Contained iOS 26 Liquid Glass Pill Thumb */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute top-[2px] left-[2px] h-[22px] w-[36px] rounded-full"
+          className="bc-switch-thumb pointer-events-none absolute top-[2px] left-[2px] h-[22px] w-[36px] rounded-full"
           style={{
             transform: `translate3d(${translateX}px, 0, 0) scale(${lifted ? 1.08 : 1})`,
             transition: dragProgress !== null
@@ -596,7 +596,7 @@ export function Menu({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={handleToggle}
-        className="sf-btn inline-flex h-11 w-11 sm:h-9 sm:w-9 min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] items-center justify-center rounded-full text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] cursor-pointer transition-colors"
+        className="sf-btn bc-menu-trigger inline-flex h-11 w-11 sm:h-9 sm:w-9 min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] items-center justify-center rounded-full text-[var(--sf-muted)] hover:text-[var(--sf-text)] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] cursor-pointer transition-colors"
       >
         <DotsThreeIcon size={18} weight="bold" aria-hidden="true" />
       </button>
@@ -615,7 +615,7 @@ export function Menu({
               transformOrigin: menuPos.origin,
               maxWidth: "min(230px, calc(100vw - 24px))",
             }}
-            className="sf-glass-chrome sf-popover-in z-[115] min-w-[180px] rounded-2xl p-1.5 shadow-2xl bg-white/95 dark:bg-[#0e101c]/95 border border-black/[0.08] dark:border-white/12 dark:shadow-[0_16px_40px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl"
+            className="sf-glass-chrome bc-menu-glass sf-popover-in z-[115] min-w-[180px] rounded-2xl p-1.5 shadow-2xl bg-white/95 dark:bg-[#0e101c]/95 border border-black/[0.08] dark:border-white/12 dark:shadow-[0_16px_40px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl"
           >
             {items.map((item, idx) =>
               item === "separator" ? (
@@ -774,7 +774,7 @@ export function GlassSegmented({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={`relative max-w-full select-none rounded-full ${
+      className={`bc-segmented-glass relative max-w-full select-none rounded-full ${
         fullWidth ? "overflow-hidden" : "overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       } ${
         darkSurface
@@ -791,7 +791,7 @@ export function GlassSegmented({
         {indicator.ready && (
           <div
             aria-hidden="true"
-            className={`pointer-events-none absolute top-0 left-0 h-full rounded-full ${
+            className={`bc-segmented-pill pointer-events-none absolute top-0 left-0 h-full rounded-full ${
               darkSurface && whiteActivePill
                 ? "bg-white shadow-[0_2px_12px_rgba(255,255,255,0.28),0_3px_10px_rgba(0,0,0,0.35)]"
                 : darkSurface

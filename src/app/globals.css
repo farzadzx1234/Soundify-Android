@@ -289,7 +289,15 @@ body {
 
 #main-content {
   -webkit-overflow-scrolling: touch;
-  transform: translateZ(0);
+}
+
+/* Pause decorative & loading CSS animations when app enters Android background */
+html[data-app-state="background"] .animate-pulse,
+html[data-app-state="background"] .animate-spin,
+html[data-app-state="background"] .animate-bounce,
+html[data-app-state="background"] .sf-float-orb,
+html[data-app-state="background"] .sf-animated-gradient {
+  animation-play-state: paused !important;
 }
 
 /* Match native caret and text selection indicators with theme accent */

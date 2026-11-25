@@ -484,7 +484,8 @@ export default function LibraryPage() {
                       setSelectMode(false);
                       setSelectedTrackIds(new Set());
                     }}
-                    className={`min-h-[40px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs sm:text-[13px] font-bold transition-all cursor-pointer select-none active:scale-95 shrink-0 ${
+                    data-active={isActive ? "true" : "false"}
+                    className={`sf-tab-pill min-h-[40px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs sm:text-[13px] font-bold transition-all cursor-pointer select-none active:scale-95 shrink-0 ${
                       isActive
                         ? "bg-indigo-600 text-white shadow-sm shadow-indigo-500/25 border border-indigo-500"
                         : "bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-[var(--sf-muted)] hover:text-[var(--sf-text)] border border-black/[0.06] dark:border-white/[0.08]"

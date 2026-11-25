@@ -86,7 +86,7 @@ interface NavTabItem {
  * - Acceleration-coupled squash & stretch (STRETCH = 0.16, SQUASH = 0.5)
  * - Horizontal drag across tabs with haptic boundary ticks & spring settle
  */
-function FloatingLiquidTabBar({
+const FloatingLiquidTabBar = React.memo(function FloatingLiquidTabBar({
   navItems,
   activeTabIndex,
   dir,
@@ -458,6 +458,53 @@ function FloatingLiquidTabBar({
       </div>
     </nav>
   );
+});
+
+const MemoBitChordBackdrop = React.memo(BitChordBackdrop);
+
+function BitChordSleepTimerSync() {
+  const { isPlaying, currentTrack, volume, togglePlay, setVolume } = usePlayer();
+  const stateRef = useRef({ isPlaying, volume, togglePlay, setVolume });
+
+  useEffect(() => {
+    stateRef.current = { isPlaying, volume, togglePlay, setVolume };
+  }, [isPlaying, volume, togglePlay, setVolume]);
+
+  useEffect(() => {
+    notifySleepTimerTrackChanged(currentTrack?.id);
+  }, [currentTrack?.id]);
+
+  useEffect(() => {
+    let fadeTimer: number | null = null;
+    registerSleepTimerExpireHandler((shouldFadeOut) => {
+      const { isPlaying: playingNow, volume: startVol, togglePlay: toggleNow, setVolume: setVolNow } = stateRef.current;
+      if (!playingNow) return;
+      if (!shouldFadeOut) {
+        toggleNow();
+        return;
+      }
+      const steps = 12;
+      let step = 0;
+      if (fadeTimer) window.clearInterval(fadeTimer);
+      fadeTimer = window.setInterval(() => {
+        step += 1;
+        const nextVol = Math.max(0.02, startVol * (1 - step / steps));
+        setVolNow(nextVol);
+        if (step >= steps) {
+          if (fadeTimer) window.clearInterval(fadeTimer);
+          fadeTimer = null;
+          stateRef.current.togglePlay();
+          window.setTimeout(() => stateRef.current.setVolume(startVol), 250);
+        }
+      }, 220);
+    });
+    return () => {
+      if (fadeTimer) window.clearInterval(fadeTimer);
+      registerSleepTimerExpireHandler(null);
+    };
+  }, []);
+
+  return null;
 }
 
 export function BitChordShell({ children }: { children: React.ReactNode }) {
@@ -465,14 +512,14 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, openAuthDialog, logout } = useAuth();
   const { lang, dir, toggleLang, t } = useI18n();
-  const { isOffline, isPlaying, currentTrack, volume, togglePlay, setVolume } = usePlayer();
+  const { isOffline, currentTrack } = usePlayer();
   const [quickQuery, setQuickQuery] = useState("");
   const [artistView, setArtistView] = useState<{ name: string; seedTrack: Track | null } | null>(null);
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [connectivityStatus, setConnectivityStatus] = useState<ServerConnectivityStatus>("online");
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // Wire global Artist Profile overlay & persistent Sleep Timer manager for New UI
+  // Wire global Artist Profile overlay for New UI
   useEffect(() => {
     const onOpenArtist = (e: Event) => {
       const detail = (e as CustomEvent<OpenArtistDetail>).detail;
@@ -483,40 +530,6 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
     window.addEventListener(OPEN_ARTIST_PROFILE_EVENT, onOpenArtist);
     return () => window.removeEventListener(OPEN_ARTIST_PROFILE_EVENT, onOpenArtist);
   }, []);
-
-  useEffect(() => {
-    notifySleepTimerTrackChanged(currentTrack?.id);
-  }, [currentTrack?.id]);
-
-  useEffect(() => {
-    let fadeTimer: number | null = null;
-    registerSleepTimerExpireHandler((shouldFadeOut) => {
-      if (!isPlaying) return;
-      if (!shouldFadeOut) {
-        togglePlay();
-        return;
-      }
-      const startVol = volume;
-      const steps = 12;
-      let step = 0;
-      if (fadeTimer) window.clearInterval(fadeTimer);
-      fadeTimer = window.setInterval(() => {
-        step += 1;
-        const nextVol = Math.max(0.02, startVol * (1 - step / steps));
-        setVolume(nextVol);
-        if (step >= steps) {
-          if (fadeTimer) window.clearInterval(fadeTimer);
-          fadeTimer = null;
-          togglePlay();
-          window.setTimeout(() => setVolume(startVol), 250);
-        }
-      }, 220);
-    });
-    return () => {
-      if (fadeTimer) window.clearInterval(fadeTimer);
-      registerSleepTimerExpireHandler(null);
-    };
-  }, [isPlaying, setVolume, togglePlay, volume]);
 
   // Keep data-ui-skin="bitchord" locked on <html> even across hydration recovery passes
   useLayoutEffect(() => {
@@ -683,7 +696,8 @@ export function BitChordShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="relative z-0 min-h-dvh flex flex-col lg:flex-row overflow-x-clip">
-      <BitChordBackdrop />
+      <MemoBitChordBackdrop />
+      <BitChordSleepTimerSync />
 
       <a href="#main-content" className="skip-link">
         {t("skipToContent")}

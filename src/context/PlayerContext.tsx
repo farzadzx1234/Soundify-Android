@@ -5190,8 +5190,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const curr = currentTrackRef.current;
 
       if (typeof state.duration === "number" && Number.isFinite(state.duration) && state.duration > 0) {
-        durationRef.current = state.duration;
-        setDuration(state.duration);
+        if (Math.abs(durationRef.current - state.duration) > 0.2) {
+          durationRef.current = state.duration;
+          setDuration(state.duration);
+        }
       }
       if (typeof state.position === "number" && Number.isFinite(state.position) && state.position >= 0) {
         const inCrossfadeGuard =
@@ -5245,11 +5247,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           isPlayingRef.current = state.isPlaying;
         }
       } else if (state.event === "state") {
-        if (typeof state.isBuffering === "boolean") {
+        if (typeof state.isBuffering === "boolean" && isBufferingRef.current !== state.isBuffering) {
           setIsBuffering(state.isBuffering);
           isBufferingRef.current = state.isBuffering;
         }
-        if (typeof state.isPlaying === "boolean") {
+        if (typeof state.isPlaying === "boolean" && isPlayingRef.current !== state.isPlaying) {
           setIsPlaying(state.isPlaying);
           isPlayingRef.current = state.isPlaying;
         }
